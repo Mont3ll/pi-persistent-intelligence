@@ -216,10 +216,10 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (event) => {
-    // ── Inbox review overlay — first turn only, permission-prompt style ─────────
-    // Shows a floating overlay before the first agent turn when pending inbox
-    // candidates exceed the configured threshold. User can approve auto-eligible
-    // ops, open the full review panel, or skip. Non-blocking: Escape skips cleanly.
+    // ── Inbox review prompt — first turn only ────────────────────────────
+    // When pending inbox candidates ≥ threshold and ctx.ui.custom is available,
+    // renders the inbox review in the prompt/editor area (same as /curate-memory)
+    // before the first agent turn. Escape / 's' dismisses cleanly.
     if (!inboxOverlayShown && sessionCtx?.hasUI && sessionCtx.ui.custom) {
       inboxOverlayShown = true; // set before await so parallel turns don't double-trigger
       const cfg = loadConfig(root);
@@ -232,6 +232,8 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
           (c) => (c.confidence ?? 0) >= threshold && (c.evidence_refs?.length ?? 0) >= 2
         );
 
+        // ── Inbox review prompt — renders inline in the editor area,
+        //    same as /curate-memory's PatchReviewPanel. No floating modal.
         try {
           const action = await sessionCtx.ui.custom<InboxOverlayAction>(
             (_tui, theme: any, _kb, done) => {
@@ -251,7 +253,6 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
                 done,
               );
             },
-            { overlay: true, overlayOptions: { anchor: "top-center", width: 64, maxHeight: 14 } },
           );
 
           if (action === "approve" && autoEligible.length > 0) {

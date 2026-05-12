@@ -1,24 +1,14 @@
 /**
- * InboxReviewOverlay — permission-prompt-style floating overlay for inbox curation.
+ * InboxReviewPrompt — inline prompt for inbox curation.
  *
  * Triggered automatically before the first agent turn when pending inbox
- * candidates exceed the configured threshold. Presents a compact review UI
- * without interrupting the user — Escape / 's' dismisses cleanly.
- *
- * Rendering:
- *  ╭──────────────────────────────────────────────────╮
- *  │  📬 Memory Inbox  (3 candidates)                 │
- *  ├──────────────────────────────────────────────────┤
- *  │  ✓ conf 0.92  Use bun not npm for this project   │
- *  │  ✓ conf 0.87  Always write tests first           │
- *  │  ~ conf 0.78  Consider Redis for session cache   │
- *  │                                                  │
- *  │  [a] Apply 2 auto-eligible  [r] Review  [s] Skip │
- *  ╰──────────────────────────────────────────────────╯
+ * candidates exceed the configured threshold. Renders in the prompt/editor
+ * area (same as /curate-memory's PatchReviewPanel), not as a floating overlay.
+ * Escape / 's' dismisses cleanly without blocking the session.
  *
  * Return values:
  *   "approve"  — apply auto-eligible ops immediately
- *   "review"   — open full PatchReviewPanel
+ *   "review"   — user should run /curate-memory for the full panel
  *   "skip"     — dismiss; candidates stay in inbox
  *   null       — Escape / cancelled
  */
@@ -57,7 +47,6 @@ function fallbackTheme(): OverlayTheme {
 }
 
 export class InboxReviewOverlay {
-  readonly width = 64;
   focused = false;
 
   private selected: 0 | 1 | 2 = 0; // 0=approve, 1=review, 2=skip
@@ -92,9 +81,10 @@ export class InboxReviewOverlay {
 
   invalidate(): void { /* pi TUI calls this to signal re-render */ }
 
-  render(_termWidth: number): string[] {
+  render(termWidth: number): string[] {
     const th = this.th;
-    const W = this.width;
+    // Fill the editor area width, same as PatchReviewPanel. Clamp to a readable range.
+    const W = Math.max(60, Math.min(termWidth > 0 ? termWidth : 80, 120));
     const inner = W - 2;
 
     const pad = (text: string, len = inner): string => {
