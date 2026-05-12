@@ -105,7 +105,7 @@ export class InboxReviewOverlay {
 
   render(termWidth: number): string[] {
     const th = this.th;
-    const W = Math.max(60, Math.min(termWidth > 0 ? termWidth : 80, 140));
+    const W = Math.max(60, termWidth > 0 ? termWidth : 80); // full terminal width, same as PatchReviewPanel
     const sep = th.border("─".repeat(W));
     const lines: string[] = [];
 

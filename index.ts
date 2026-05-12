@@ -70,11 +70,8 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   let sessionStore = new SessionStore(root);
   sessionStore.load();
 
-  // Track whether the inbox overlay has been shown this session
+  // inboxOverlayShown: reset per session so the prompt shows once each time pi opens
   let inboxOverlayShown = false;
-
-  // Track ctx so the overlay can be triggered from before_agent_start
-  let sessionCtx: UiContext | null = null;
   let syncTimer: ReturnType<typeof setInterval> | null = null;
   let syncDebounce: ReturnType<typeof setTimeout> | null = null;
   const fsWatchers: ReturnType<typeof fsWatch>[] = [];
@@ -92,7 +89,6 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
     ensureMemoryDirs(root);
     sessionCwd = ctx.cwd ?? process.cwd();
-    sessionCtx = ctx;           // capture for overlay trigger in before_agent_start
     inboxOverlayShown = false;  // reset per session
     await setupQmd(root);
 
@@ -216,12 +212,12 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     if (ctx.hasUI) ctx.ui.notify("Persistent Intelligence ready", "info");
   });
 
-  pi.on("before_agent_start", async (event) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     // ── Inbox review prompt — first turn only ────────────────────────────
     // When pending inbox candidates ≥ threshold and ctx.ui.custom is available,
     // renders the inbox review in the prompt/editor area (same as /curate-memory)
     // before the first agent turn. Escape / 's' dismisses cleanly.
-    if (!inboxOverlayShown && sessionCtx?.hasUI && sessionCtx.ui.custom) {
+    if (!inboxOverlayShown && ctx.hasUI && ctx.ui.custom) {
       inboxOverlayShown = true;
       const cfg = loadConfig(root);
       const threshold = cfg.curator.autoCurateHighThreshold ?? 0.85;
@@ -245,14 +241,14 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
               success:  (s: string) => theme.fg("success", s),
               warning:  (s: string) => theme.fg("warning", s),
               dim:      (s: string) => theme.fg("dim",     s),
-              content:  (s: string) => theme.fg("content", s),
+              content:  (s: string) => theme.fg("text", s),
               selected: (s: string) => theme.fg("accent",  s),
             }
           : undefined;
 
         try {
           // Step 1: inbox summary prompt
-          const action = await sessionCtx.ui.custom<InboxOverlayAction>(
+          const action = await ctx.ui.custom<InboxOverlayAction>(
             (tui, theme, _kb, done) => createInboxReviewComponent(
               { candidates: pending, autoEligibleCount: autoEligible.length, highThreshold: threshold },
               done,
@@ -272,7 +268,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
             if (eligibleIds.length > 0) {
               applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
               await updateQmd();
-              sessionCtx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
+              ctx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
             }
 
           } else if (action === "review") {
@@ -280,22 +276,22 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
             const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
             const patch = curateInbox(root, { now: nowIso(), mode: "propose", vaultPath });
             if (patch.ops.length > 0) {
-              const selectedIds = await sessionCtx.ui.custom<string[] | null>(
+              const selectedIds = await ctx.ui.custom<string[] | null>(
                 (tui, theme, _kb, done) =>
                   createPatchReviewComponent(patch, done, tui as any, undefined, theme),
               );
               if (selectedIds && selectedIds.length > 0) {
                 applyPatch(root, patch, { selectedOpIds: selectedIds, now: nowIso() });
                 await updateQmd();
-                sessionCtx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s) from review.`, "success");
+                ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s) from review.`, "success");
               }
             } else {
-              sessionCtx.ui.notify("No candidates meet curation thresholds.", "info");
+              ctx.ui.notify("No candidates meet curation thresholds.", "info");
             }
           }
           // "skip" / null: candidates stay in inbox, session continues
         } catch {
-          sessionCtx.ui.notify(buildInboxNotification(pending, autoEligible.length), "info");
+          ctx.ui.notify(buildInboxNotification(pending, autoEligible.length), "info");
         }
       }
     }
@@ -530,15 +526,33 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       const mode = args.includes("--mode=auto") ? "auto" : args.includes("--mode=supervised") ? "supervised" : "propose";
       const vaultPath = process.env.PI_VAULT_PATH;
       const patch = curateInbox(root, { now: nowIso(), mode, vaultPath });
+
       if (mode === "auto") {
         const applied = applyPatch(root, patch, { selectedOpIds: patch.ops.filter((op) => op.default_selected && op.risk !== "high").map((op) => op.op_id), now: nowIso() });
         await updateQmd();
-        ctx.ui.notify(`Applied ${applied.applied_ops.length} memory ops from ${applied.patch_id}`, "success");
+        ctx.ui.notify(`Applied ${applied.applied_ops.length} memory op(s) from ${applied.patch_id}`, "success");
+
+      } else if (patch.ops.length === 0) {
+        ctx.ui.notify("No candidates meet curation thresholds.", "info");
+
+      } else if (ctx.ui.custom) {
+        // Interactive patch review panel — full terminal width, same as inbox review prompt
+        const selectedIds = await ctx.ui.custom<string[] | null>(
+          (tui, theme, _kb, done) =>
+            createPatchReviewComponent(patch, done, tui as any, undefined, theme),
+        );
+        if (selectedIds && selectedIds.length > 0) {
+          applyPatch(root, patch, { selectedOpIds: selectedIds, now: nowIso() });
+          await updateQmd();
+          ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
+        } else if (selectedIds === null) {
+          ctx.ui.notify("Curation cancelled — no changes made.", "info");
+        }
       } else {
+        // Headless fallback
         ctx.ui.notify(`${patch.patch_id}: ${patch.summary}`, "info");
         if (patch.ops.length > 0) {
-          const hints = patch.ops.map((op) => `  ${op.op_id}: ${op.rationale}`).join("\n");
-          ctx.ui.notify(`Ops:\n${hints}`, "info");
+          ctx.ui.notify(patch.ops.map((op) => `  ${op.op_id}: ${op.rationale}`).join("\n"), "info");
         }
       }
     },
