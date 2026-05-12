@@ -42,7 +42,8 @@ import { runConsolidation } from "./src/consolidator";
 import { loadConfig } from "./src/config";
 import { SessionStore, buildSessionSearchTools, buildSessionContextBlock, SESSION_SYNC_INTERVAL_MS } from "./src/session-search";
 import { isChildProcess } from "./src/sessions/store";
-import { InboxReviewOverlay, buildInboxNotification, type InboxOverlayAction } from "./src/tui/InboxReviewOverlay";
+import { InboxReviewOverlay, createInboxReviewComponent, buildInboxNotification, type InboxOverlayAction } from "./src/tui/InboxReviewOverlay";
+import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 
 function nowIso(): string { return new Date().toISOString(); }
 function shortId(prefix: string): string {
@@ -221,7 +222,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     // renders the inbox review in the prompt/editor area (same as /curate-memory)
     // before the first agent turn. Escape / 's' dismisses cleanly.
     if (!inboxOverlayShown && sessionCtx?.hasUI && sessionCtx.ui.custom) {
-      inboxOverlayShown = true; // set before await so parallel turns don't double-trigger
+      inboxOverlayShown = true;
       const cfg = loadConfig(root);
       const threshold = cfg.curator.autoCurateHighThreshold ?? 0.85;
       const promptThreshold = cfg.curator.inboxPromptThreshold ?? 3;
@@ -229,33 +230,35 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
       if (pending.length >= promptThreshold) {
         const autoEligible = pending.filter(
-          (c) => (c.confidence ?? 0) >= threshold && (c.evidence_refs?.length ?? 0) >= 2
+          (c) => (c.confidence ?? 0) >= threshold && (c.evidence_refs?.length ?? 0) >= 2,
         );
 
-        // ── Inbox review prompt — renders inline in the editor area,
-        //    same as /curate-memory's PatchReviewPanel. No floating modal.
+        const buildTheme = (theme: any) => theme
+          ? {
+              border:   (s: string) => theme.fg("border",  s),
+              title:    (s: string) => theme.fg("accent",  s),
+              accent:   (s: string) => theme.fg("accent",  s),
+              success:  (s: string) => theme.fg("success", s),
+              warning:  (s: string) => theme.fg("warning", s),
+              dim:      (s: string) => theme.fg("dim",     s),
+              content:  (s: string) => theme.fg("content", s),
+              selected: (s: string) => theme.fg("accent",  s),
+            }
+          : undefined;
+
         try {
+          // Step 1: inbox summary prompt
           const action = await sessionCtx.ui.custom<InboxOverlayAction>(
-            (_tui, theme: any, _kb, done) => {
-              const overlayTheme = theme
-                ? {
-                    border: (s: string) => theme.fg("border", s),
-                    title: (s: string) => theme.fg("accent", s),
-                    accent: (s: string) => theme.fg("accent", s),
-                    success: (s: string) => theme.fg("success", s),
-                    warning: (s: string) => theme.fg("warning", s),
-                    dim: (s: string) => theme.fg("dim", s),
-                  }
-                : undefined;
-              return new InboxReviewOverlay(
-                { candidates: pending, autoEligibleCount: autoEligible.length, highThreshold: threshold },
-                overlayTheme,
-                done,
-              );
-            },
+            (tui, theme, _kb, done) => createInboxReviewComponent(
+              { candidates: pending, autoEligibleCount: autoEligible.length, highThreshold: threshold },
+              done,
+              tui as { requestRender(): void },
+              buildTheme(theme),
+            ),
           );
 
           if (action === "approve" && autoEligible.length > 0) {
+            // Apply auto-eligible ops
             const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
             const patch = curateInbox(root, { now: nowIso(), mode: "auto", vaultPath });
             const eligibleIds = patch.ops
@@ -265,15 +268,29 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
             if (eligibleIds.length > 0) {
               applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
               await updateQmd();
-              sessionCtx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s) from inbox.`, "success");
+              sessionCtx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
             }
+
           } else if (action === "review") {
-            // Notify the user — they can run /curate-memory for the full panel
-            sessionCtx.ui.notify("Run /curate-memory to open the full review panel.", "info");
+            // Step 2: open PatchReviewPanel for per-op selection
+            const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
+            const patch = curateInbox(root, { now: nowIso(), mode: "propose", vaultPath });
+            if (patch.ops.length > 0) {
+              const selectedIds = await sessionCtx.ui.custom<string[] | null>(
+                (tui, theme, _kb, done) =>
+                  createPatchReviewComponent(patch, done, tui as any, undefined, theme),
+              );
+              if (selectedIds && selectedIds.length > 0) {
+                applyPatch(root, patch, { selectedOpIds: selectedIds, now: nowIso() });
+                await updateQmd();
+                sessionCtx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s) from review.`, "success");
+              }
+            } else {
+              sessionCtx.ui.notify("No candidates meet curation thresholds.", "info");
+            }
           }
-          // "skip" or null: do nothing, candidates stay in inbox
+          // "skip" / null: candidates stay in inbox, session continues
         } catch {
-          // Overlay unavailable (e.g. RPC mode) — fall back to notification
           sessionCtx.ui.notify(buildInboxNotification(pending, autoEligible.length), "info");
         }
       }

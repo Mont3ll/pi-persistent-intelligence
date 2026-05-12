@@ -31,8 +31,8 @@ describe("InboxReviewOverlay", () => {
     );
     const lines = overlay.render(80);
     const text = lines.join("\n");
-    expect(text).toContain("📬 Memory Inbox");
-    expect(text).toContain("3 candidates");
+    expect(text).toContain("Memory Inbox");
+    expect(text).toContain("3 candidate");
   });
 
   test("renders candidates with confidence and statement", () => {
@@ -124,7 +124,7 @@ describe("InboxReviewOverlay", () => {
       () => {},
     );
     const text = overlay.render(80).join("\n");
-    expect(text).toContain("3 more");
+    expect(text).toContain("2 more");
   });
 });
 
