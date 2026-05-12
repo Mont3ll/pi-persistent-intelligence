@@ -229,8 +229,12 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       const pending = listCandidates(root).filter((c) => c.status === "new");
 
       if (pending.length >= promptThreshold) {
+        // Auto-eligible for the overlay = confidence above threshold.
+        // The curator enforces minEvidenceCount (≥2) when actually promoting to L2,
+        // so the overlay count accurately previews high-confidence candidates while
+        // governance is maintained at apply time.
         const autoEligible = pending.filter(
-          (c) => (c.confidence ?? 0) >= threshold && (c.evidence_refs?.length ?? 0) >= 2,
+          (c) => (c.confidence ?? 0) >= threshold,
         );
 
         const buildTheme = (theme: any) => theme
