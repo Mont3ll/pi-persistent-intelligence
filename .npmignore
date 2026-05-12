@@ -1,0 +1,22 @@
+# Development and test files
+test/
+*.test.ts
+*.spec.ts
+
+# Build artifacts
+node_modules/
+dist/
+.cache/
+
+# Development config
+bun.lock
+tsconfig.json
+.github/
+.gitignore
+
+# Internal docs/drafts
+NOTES.md
+TODO.md
+
+# Bun lockfile (npm users don't need it)
+bun.lockb
