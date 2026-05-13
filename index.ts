@@ -18,6 +18,7 @@ type ExtensionAPI = {
   on(name: string, handler: (event: any, ctx: UiContext) => Promise<any> | any): void;
   exec(command: string, args: string[], options?: { timeout?: number; cwd?: string; signal?: AbortSignal }): Promise<ExecResult>;
   getAllTools(): Array<{ name: string }>;
+  sendUserMessage(content: string, options?: { deliverAs?: "steer" | "followUp" | "nextTurn" }): void;
   registerTool(definition: {
     name: string;
     label: string;
@@ -43,6 +44,7 @@ import { loadConfig } from "./src/config";
 import { SessionStore, buildSessionSearchTools, buildSessionContextBlock, SESSION_SYNC_INTERVAL_MS } from "./src/session-search";
 import { isChildProcess } from "./src/sessions/store";
 import { createInboxReviewComponent, buildInboxNotification, type InboxOverlayAction } from "./src/tui/InboxReviewOverlay";
+import { maybeCorrectionSignal, extractCorrectionCandidate } from "./src/corrections";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 
 function nowIso(): string { return new Date().toISOString(); }
@@ -258,21 +260,13 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
             }
 
           } else if (action === "review") {
-            // ── Step 2: PatchReviewPanel (same as /curate-memory) ───────
-            const patch = curateInbox(root, { now: nowIso(), mode: "propose", vaultPath, minEvidenceCount: 1 });
-            if (patch.ops.length > 0) {
-              const selectedIds = await ctx.ui.custom<string[] | null>(
-                (tui, theme, _kb, done) =>
-                  createPatchReviewComponent(patch, done, tui as any, undefined, theme),
-              );
-              if (selectedIds && selectedIds.length > 0) {
-                applyPatch(root, patch, { selectedOpIds: selectedIds, now: nowIso() });
-                await updateQmd();
-                ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
-              }
-            } else {
-              ctx.ui.notify("No candidates meet curation thresholds.", "info");
-            }
+            // Schedule /curate-memory as a follow-up after the current agent turn.
+            // Cannot safely chain a second ctx.ui.custom() from before_agent_start —
+            // the TUI exits custom-component mode after the first resolves, causing
+            // the second call to fail silently and kick off the agent turn instead.
+            // sendUserMessage with deliverAs:"followUp" delivers after the agent finishes,
+            // triggering the /curate-memory command handler (which reliably shows PatchReviewPanel).
+            pi.sendUserMessage("/curate-memory", { deliverAs: "followUp" });
           }
           // "skip" / null — candidates stay in inbox, session continues
         } catch {
@@ -310,6 +304,17 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         if (text.trim()) {
           pendingUserMessages.push(text);
           if (pendingUserMessages.length > 60) pendingUserMessages.shift();
+
+          // Automatic correction capture — detects "don't use X", "prefer Y over Z",
+          // "always use Z" etc. in user messages and adds them as inbox candidates
+          // without requiring explicit memory_write calls. Confidence-gated:
+          // strong corrections (≥0.85) become auto-eligible; weaker ones held for review.
+          if (maybeCorrectionSignal(text)) {
+            const candidate = extractCorrectionCandidate(text, todayString(), sessionCwd);
+            if (candidate) {
+              appendCandidate(root, candidate);
+            }
+          }
         }
       } else if (msg.role === "assistant") {
         const text = extractText(msg.content);
