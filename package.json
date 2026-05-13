@@ -1,6 +1,6 @@
 {
   "name": "pi-persistent-intelligence",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Governed long-term memory, built-in session search, and Obsidian vault integration for the pi coding agent.",
   "license": "MIT",
   "repository": {
