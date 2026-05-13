@@ -100,6 +100,8 @@ function candidateToRecord(candidate: CaptureCandidate, now: string): MemoryReco
     supersedes: [],
     superseded_by: [],
     vault_ref: null,
+    // Propagate ruleType from candidate (set by correction detection or manual capture)
+    ruleType: candidate.ruleType,
   };
 }
 

@@ -15,6 +15,7 @@ export interface MemoryPaths {
   runtime: { dir: string; context: string; selected: string };
   reports: string;
   sessions: string;
+  search: string;
 }
 
 export function defaultRoot(home = process.env.HOME ?? homedir()): string {
@@ -72,6 +73,7 @@ export function resolvePaths(root = defaultRoot()): MemoryPaths {
     runtime: { dir: join(root, "runtime"), context: join(root, "runtime", "context.md"), selected: join(root, "runtime", "selected_memory.json") },
     reports: join(root, "reports"),
     sessions: join(root, "sessions"),
+    search: join(root, "search"),
   };
 }
 
@@ -90,6 +92,7 @@ export function ensureMemoryDirs(root = defaultRoot()): MemoryPaths {
     paths.runtime.dir,
     paths.reports,
     paths.sessions,
+    paths.search,
   ]) {
     mkdirSync(dir, { recursive: true });
   }

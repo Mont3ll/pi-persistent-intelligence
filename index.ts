@@ -36,7 +36,7 @@ import { appendCandidate, listCandidates } from "./src/inbox";
 import { curateInbox } from "./src/curator";
 import { maintainMemory } from "./src/maintainer";
 import { applyPatch } from "./src/patch";
-import { buildRetrievalContext } from "./src/retriever";
+import { buildRetrievalContext, syncFtsIndex } from "./src/retriever";
 import { renderMemoryToDisk } from "./src/render";
 import { setupQmd, updateQmd, runQmd, qmdSearchArgs, qmdCollectionName, type MemorySearchMode } from "./src/qmd";
 import { runConsolidation } from "./src/consolidator";
@@ -46,6 +46,9 @@ import { isChildProcess } from "./src/sessions/store";
 import { createInboxReviewComponent, buildInboxNotification, type InboxOverlayAction } from "./src/tui/InboxReviewOverlay";
 import { maybeCorrectionSignal, extractCorrectionCandidate } from "./src/corrections";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
+import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
+import { MemoryFtsIndex } from "./src/search/fts";
+import { loadActiveRecords } from "./src/store";
 
 function nowIso(): string { return new Date().toISOString(); }
 function shortId(prefix: string): string {
@@ -68,6 +71,10 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   const pendingAssistantMessages: string[] = [];
   let sessionCwd = process.cwd();
 
+  // FTS index — synced after every canonical mutation
+  let ftsIndex = new MemoryFtsIndex(root + "/search/memory-fts.db");
+  syncFtsIndex(root, ftsIndex);
+
   // Session store — recreated at session_start if root changes
   let sessionStore = new SessionStore(root);
   sessionStore.load();
@@ -85,9 +92,13 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     const newRoot = resolveRoot(ctx.cwd);
     if (newRoot !== root) {
       root = newRoot;
+      ftsIndex.close();
+      ftsIndex = new MemoryFtsIndex(root + "/search/memory-fts.db");
       sessionStore = new SessionStore(root);
       sessionStore.load();
     }
+    // Sync FTS with current records on session start
+    syncFtsIndex(root, ftsIndex);
 
     ensureMemoryDirs(root);
     sessionCwd = ctx.cwd ?? process.cwd();
@@ -256,6 +267,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
             if (eligibleIds.length > 0) {
               applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
               await updateQmd();
+      syncFtsIndex(root, ftsIndex);
               ctx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
             }
 
@@ -281,6 +293,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       today: todayString(),
       useQmd: true,
       qmdCollection: qmdCollectionName,
+      ftsIndex,
     });
     const sessionBlock = buildSessionContextBlock(sessionStore, todayString());
     const combined = sessionBlock
@@ -409,6 +422,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     pendingAssistantMessages.length = 0;
 
     await updateQmd();
+      syncFtsIndex(root, ftsIndex);
   });
 
   // ─── Core memory tools ───────────────────────────────────────────────
@@ -427,6 +441,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       if (params.target === "daily") {
         appendDailyLog(root, todayString(), params.content);
         await updateQmd();
+      syncFtsIndex(root, ftsIndex);
         return { content: [{ type: "text", text: `Appended to daily log ${todayString()}.` }], details: {} };
       }
       const candidate = {
@@ -462,16 +477,35 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   pi.registerTool({
     name: "memory_search",
     label: "Memory Search",
-    description: "Search PI memory through qmd (keyword, semantic, or deep hybrid).",
+    description: "Search PI memory. mode=keyword (default, uses built-in FTS — instant, no external deps), mode=semantic (qmd embeddings), mode=deep (qmd hybrid reranking).",
     parameters: Type.Object({
       query: Type.String(),
       mode: Type.Optional(Type.Union([Type.Literal("keyword"), Type.Literal("semantic"), Type.Literal("deep")])),
       limit: Type.Optional(Type.Number()),
     }),
     async execute(_id, params) {
+      const limit = params.limit ?? 8;
       const mode = (params.mode ?? "keyword") as MemorySearchMode;
-      const result = await runQmd(qmdSearchArgs(params.query, mode, params.limit ?? 5), 60_000);
-      return { content: [{ type: "text", text: result.stdout || "No results." }], details: {} };
+
+      // keyword mode: use built-in FTS (no external deps, instant)
+      if (mode === "keyword" && ftsIndex.isAvailable) {
+        const results = ftsIndex.search(params.query, limit);
+        if (results.length > 0) {
+          const lines = results.map((r) =>
+            `- ${r.id} [${r.layer}, conf ${r.confidence.toFixed(2)}${r.ruleType ? ", " + r.ruleType : ""}] ${r.statement}`
+          );
+          return { content: [{ type: "text", text: lines.join("\n") }], details: { results } };
+        }
+        return { content: [{ type: "text", text: "No results." }], details: {} };
+      }
+
+      // semantic / deep: delegate to qmd
+      try {
+        const result = await runQmd(qmdSearchArgs(params.query, mode, limit), 60_000);
+        return { content: [{ type: "text", text: result.stdout || "No results." }], details: {} };
+      } catch {
+        return { content: [{ type: "text", text: "qmd unavailable. Try mode=keyword." }], details: {} };
+      }
     },
   });
 
@@ -510,6 +544,49 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
+
+  pi.registerCommand("memory-learnings", {
+    description: "Browse and manage long-term memory records in an interactive TUI table",
+    handler: async (_args, ctx) => {
+      if (!ctx.ui.custom) {
+        // Headless fallback: list records as text
+        const records = loadActiveRecords(root);
+        const lines = records.map((r) =>
+          `[${r.layer}, conf ${r.confidence.toFixed(2)}${r.ruleType ? ", " + r.ruleType : ""}] ${r.statement}`
+        );
+        ctx.ui.notify(lines.join("\n") || "No memory records.", "info");
+        return;
+      }
+      const records = loadActiveRecords(root)
+        .filter((r) => r.status === "active")
+        .sort((a, b) => b.confidence - a.confidence);
+
+      const result = await ctx.ui.custom<import("./src/tui/MemoryListPanel").ListPanelResult | null>(
+        (tui, theme, _kb, done) => createMemoryListComponent(records, done, tui as { requestRender(): void }, theme),
+      );
+
+      if (result?.action === "deprecate") {
+        const { loadLayerRecords, replaceLayerRecords } = await import("./src/store");
+        for (const layer of ["L1", "L2"] as const) {
+          const layerRecords = loadLayerRecords(root, layer);
+          if (!layerRecords.some((r) => r.id === result.recordId)) continue;
+          replaceLayerRecords(root, layer,
+            layerRecords.map((r) => r.id === result.recordId
+              ? { ...r, status: "deprecated" as const, updated_at: new Date().toISOString().slice(0, 10) }
+              : r
+            )
+          );
+          renderMemoryToDisk(root);
+          syncFtsIndex(root, ftsIndex);
+          await updateQmd();
+              syncFtsIndex(root, ftsIndex);
+          ctx.ui.notify(`Deprecated: ${result.recordId}`, "success");
+          break;
+        }
+      }
+    },
+  });
+
   pi.registerCommand("curate-memory", {
     description: "Curate inbox into patch proposals (with vault_ref hints)",
     handler: async (args, ctx) => {
@@ -520,6 +597,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       if (mode === "auto") {
         const applied = applyPatch(root, patch, { selectedOpIds: patch.ops.filter((op) => op.default_selected && op.risk !== "high").map((op) => op.op_id), now: nowIso() });
         await updateQmd();
+      syncFtsIndex(root, ftsIndex);
         ctx.ui.notify(`Applied ${applied.applied_ops.length} memory op(s) from ${applied.patch_id}`, "success");
 
       } else if (patch.ops.length === 0) {
@@ -534,6 +612,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         if (selectedIds && selectedIds.length > 0) {
           applyPatch(root, patch, { selectedOpIds: selectedIds, now: nowIso() });
           await updateQmd();
+      syncFtsIndex(root, ftsIndex);
           ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
         } else if (selectedIds === null) {
           ctx.ui.notify("Curation cancelled — no changes made.", "info");
@@ -556,6 +635,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       if (mode === "auto") {
         const applied = applyPatch(root, patch, { selectedOpIds: patch.ops.filter((op) => op.default_selected && op.risk !== "high").map((op) => op.op_id), now: nowIso() });
         await updateQmd();
+      syncFtsIndex(root, ftsIndex);
         ctx.ui.notify(`Applied ${applied.applied_ops.length} maintenance ops from ${applied.patch_id}`, "success");
       } else {
         ctx.ui.notify(`${patch.patch_id}: ${patch.summary}`, "info");
@@ -568,6 +648,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       renderMemoryToDisk(root);
       await updateQmd();
+      syncFtsIndex(root, ftsIndex);
       ctx.ui.notify("Rendered memory markdown projection", "success");
     },
   });
@@ -584,6 +665,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       try {
         const result = await runConsolidation(root, pendingUserMessages, pendingAssistantMessages, todayString(), sessionCwd, pi, model);
         await updateQmd();
+      syncFtsIndex(root, ftsIndex);
         if (result.candidates_added > 0) {
           ctx.ui.notify(`Added ${result.candidates_added} candidate(s) to inbox (${result.candidates_skipped_dedup} deduped). Run /curate-memory to review.`, "success");
         } else {
@@ -601,6 +683,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       const { added, updated, removed } = sessionStore.sync();
       const exported = sessionStore.exportMarkdown(join(root, "sessions", "summaries"));
       await updateQmd();
+      syncFtsIndex(root, ftsIndex);
       ctx.ui.notify(`Session sync: ${added} added, ${updated} updated, ${removed} removed. Exported ${exported} markdown summaries. Total: ${sessionStore.size()}.`, "success");
     },
   });
@@ -613,6 +696,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       const { added } = fresh.sync();
       const exported = fresh.exportMarkdown(join(root, "sessions", "summaries"));
       await updateQmd();
+      syncFtsIndex(root, ftsIndex);
       ctx.ui.notify(`Re-indexed ${added} sessions. Exported ${exported} markdown summaries.`, "success");
     },
   });

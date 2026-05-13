@@ -12,7 +12,7 @@
  *   < 0.65 → ignored
  */
 
-import type { CaptureCandidate } from "./types";
+import type { CaptureCandidate, MemoryRuleType } from "./types";
 
 // ─── Detection patterns ───────────────────────────────────────────────────────
 
@@ -81,17 +81,26 @@ export function extractCorrectionCandidate(
   const confidence = correctionConfidence(text);
   if (confidence < MIN_CONFIDENCE) return null;
 
-  // Truncate very long messages — corrections are usually short
   const statement = text.trim().slice(0, 300).replace(/\s+/g, " ");
+
+  // Infer ruleType from the correction pattern for better retrieval and injection
+  const lower = statement.toLowerCase();
+  const ruleType: MemoryRuleType =
+    /\b(don['\u2019]?t|do not|never|avoid|stop)\s+use\b/.test(lower) ? "avoid_pattern" :
+    /\b(prefer|favor|use .+ instead|instead of)\b/.test(lower)       ? "prefer_pattern" :
+    /\bthis\s+(project|repo|codebase)\s+uses\b/.test(lower)          ? "convention" :
+    /\b(always|never)\b/.test(lower) && /\b(use|write|add|run|edit|modify)\b/.test(lower) ? "convention" :
+    "correction";
 
   return {
     id: `cap_corr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     created_at: new Date().toISOString(),
     source: { type: "user_correction", ref: `daily/${today}.md`, cwd },
     text: statement,
-    tags: ["correction", "workflow"],
+    tags: ["correction", ruleType],
     evidence_refs: [`daily/${today}.md`],
     confidence,
     status: "new",
+    ruleType,
   };
 }

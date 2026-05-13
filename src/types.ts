@@ -1,7 +1,22 @@
 export type MemoryLayer = "L1" | "L2" | "L3";
 export type MemoryStatus = "active" | "deprecated" | "superseded" | "promoted";
 export type Stability = "low" | "semi-stable" | "stable";
-export type EvidenceType = "artifact" | "conversation" | "commit" | "source" | "manual";
+export type EvidenceType = "artifact" | "conversation" | "commit" | "source" | "manual" | "user_correction";
+
+/**
+ * Typed rule categories — adapted from pi-code-intelligence's LearningRuleType.
+ * Enables better filtering, retrieval priority, and hard-rule injection.
+ */
+export type MemoryRuleType =
+  | "workflow"        // process / how-to-work patterns
+  | "preference"      // tool, language, or style preferences
+  | "convention"      // project-specific conventions ("this project uses X")
+  | "architecture"    // architectural decisions
+  | "avoid_pattern"   // explicit "don't use X" corrections
+  | "prefer_pattern"  // explicit "prefer Y over X" corrections
+  | "testing"         // testing conventions
+  | "correction"      // user-stated corrections (catch-all)
+  | "tool";           // tool-specific patterns
 
 export interface EvidenceRef {
   type: EvidenceType | string;
@@ -37,6 +52,8 @@ export interface MemoryRecord {
   supersedes: string[];
   superseded_by: string[];
   vault_ref: string | null;
+  /** Optional typed rule category — set by correction detection and manual capture */
+  ruleType?: MemoryRuleType;
 }
 
 export interface CaptureCandidate {
@@ -48,6 +65,8 @@ export interface CaptureCandidate {
   evidence_refs: string[];
   confidence?: number;
   status: "new" | "patched" | "rejected";
+  /** Optional rule type hint from correction detection */
+  ruleType?: MemoryRuleType;
 }
 
 export type PatchOpType = "add" | "update" | "supersede" | "deprecate" | "decay" | "reject_candidate" | "promote_to_vault_candidate";
@@ -106,5 +125,6 @@ export function isMemoryRecord(value: unknown): value is MemoryRecord {
   if (!Array.isArray(value.supersedes) || !Array.isArray(value.superseded_by)) return false;
   if (typeof value.status !== "string") return false;
   if (value.vault_ref !== null && typeof value.vault_ref !== "string") return false;
+  // ruleType is optional — no validation required for backward compat
   return true;
 }

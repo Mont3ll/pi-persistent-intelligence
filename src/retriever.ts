@@ -1,10 +1,14 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadActiveRecords } from "./store";
 import { ensureMemoryDirs } from "./paths";
 import { listScratchpadItems } from "./scratchpad";
 import { readDailyLog } from "./daily";
 import { runQmd, qmdSearchArgs } from "./qmd";
+import { shouldInjectMemoryContext } from "./injection-filter";
+import { renderHardRulesBlock } from "./rules";
+import { MemoryFtsIndex } from "./search/fts";
+import { mergeHybridResults, parseQmdMemoryIds } from "./search/hybrid";
 import type { MemoryRecord } from "./types";
 
 export interface RetrievalOptions {
@@ -12,9 +16,10 @@ export interface RetrievalOptions {
   today: string;
   maxDailyChars?: number;
   maxRecords?: number;
-  maxTotalChars?: number;      // dynamic budget cap (default 14_000)
-  useQmd?: boolean;            // use qmd semantic search for L2 selection
+  maxTotalChars?: number;
+  useQmd?: boolean;
   qmdCollection?: string;
+  ftsIndex?: MemoryFtsIndex;
 }
 
 export interface RetrievalContext {
@@ -22,15 +27,13 @@ export interface RetrievalContext {
   selectedMemory: MemoryRecord[];
 }
 
-// ─── Staleness helpers ────────────────────────────────────────────────
+// ─── Staleness helpers ────────────────────────────────────────────────────────
 
 function daysSince(dateStr: string): number {
   try {
     const then = new Date(dateStr).getTime();
     return Math.max(0, Math.floor((Date.now() - then) / 86_400_000));
-  } catch {
-    return 0;
-  }
+  } catch { return 0; }
 }
 
 function stalenessTag(record: MemoryRecord): string {
@@ -42,66 +45,82 @@ function stalenessTag(record: MemoryRecord): string {
 
 function renderRecordBrief(record: MemoryRecord): string {
   const stale = stalenessTag(record);
-  return `- ${record.id} [${record.layer}, conf ${record.confidence.toFixed(2)}${stale}] ${record.statement}`;
+  const ruleTag = record.ruleType ? ` [${record.ruleType}]` : "";
+  return `- ${record.id} [${record.layer}, conf ${record.confidence.toFixed(2)}${stale}${ruleTag}] ${record.statement}`;
 }
 
-// ─── Relevance selection ─────────────────────────────────────────────
+// ─── Relevance selection ─────────────────────────────────────────────────────
 
 function promptTerms(prompt: string): Set<string> {
-  return new Set(prompt.toLowerCase().split(/[^a-z0-9-]+/).filter((term) => term.length > 2));
+  return new Set(prompt.toLowerCase().split(/[^a-z0-9-]+/).filter((t) => t.length > 2));
 }
 
 function isRelevantByTerms(record: MemoryRecord, terms: Set<string>): boolean {
   if (record.layer === "L1") return true;
-  const haystack = `${record.tags.join(" ")} ${record.statement}`.toLowerCase();
-  return [...terms].some((term) => haystack.includes(term));
+  const haystack = `${record.tags.join(" ")} ${record.statement} ${record.ruleType ?? ""}`.toLowerCase();
+  return [...terms].some((t) => haystack.includes(t));
 }
 
-/** Try to parse qmd JSON search results into record IDs */
-function parseQmdRecordIds(stdout: string): string[] {
-  try {
-    const data = JSON.parse(stdout) as { results?: Array<{ path?: string; file?: string }> };
-    return (data.results ?? []).map((r) => {
-      const path = r.path ?? r.file ?? "";
-      const match = path.match(/mem_[a-z0-9_]+/);
-      return match?.[0] ?? "";
-    }).filter(Boolean);
-  } catch {
-    return [];
-  }
+/** Parse qmd JSON to extract record IDs */
+function parseQmdIds(stdout: string): string[] {
+  return parseQmdMemoryIds(stdout);
 }
 
-async function selectMemoryWithQmd(
+/**
+ * Select relevant L2 records using hybrid FTS + qmd semantic search.
+ * Falls back through: hybrid → FTS-only → term-matching.
+ */
+async function selectMemoryHybrid(
   root: string,
   prompt: string,
-  collection: string,
   maxRecords: number,
+  ftsIndex?: MemoryFtsIndex,
+  useQmd?: boolean,
+  qmdCollection?: string,
 ): Promise<MemoryRecord[]> {
   const allRecords = loadActiveRecords(root);
   const l1 = allRecords.filter((r) => r.layer === "L1");
+  const l2 = allRecords.filter((r) => r.layer === "L2");
 
-  try {
-    const result = await runQmd(qmdSearchArgs(prompt, "semantic", maxRecords + l1.length, collection), 5_000);
-    const ids = parseQmdRecordIds(result.stdout);
-    if (ids.length > 0) {
-      const byId = new Map(allRecords.map((r) => [r.id, r]));
-      const semantic = ids.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : [])).filter((r) => r.layer !== "L1");
-      return [...l1, ...semantic].slice(0, maxRecords);
+  // Try hybrid (FTS + qmd semantic)
+  if (ftsIndex?.isAvailable) {
+    const ftsResults = ftsIndex.search(prompt, maxRecords * 2);
+    let semanticIds: string[] = [];
+
+    if (useQmd && qmdCollection) {
+      try {
+        const result = await runQmd(qmdSearchArgs(prompt, "semantic", maxRecords, qmdCollection), 5_000);
+        semanticIds = parseQmdIds(result.stdout);
+      } catch { /* qmd unavailable — use FTS only */ }
     }
-  } catch {
-    // qmd unavailable or no results — fall through to term matching
+
+    const recordMap = new Map(
+      l2.map((r) => [r.id, { statement: r.statement, layer: r.layer as "L1" | "L2", confidence: r.confidence, ruleType: r.ruleType }]),
+    );
+
+    const merged = mergeHybridResults(ftsResults, semanticIds, recordMap, maxRecords);
+    const selectedL2 = merged.flatMap((h) => {
+      const rec = l2.find((r) => r.id === h.id);
+      return rec ? [rec] : [];
+    });
+
+    return [...l1, ...selectedL2].slice(0, maxRecords);
   }
 
+  // FTS-only fallback
+  if (ftsIndex?.isAvailable) {
+    const ftsResults = ftsIndex.search(prompt, maxRecords);
+    const ftsIds = new Set(ftsResults.map((r) => r.id));
+    const selectedL2 = l2.filter((r) => ftsIds.has(r.id)).slice(0, maxRecords - l1.length);
+    return [...l1, ...selectedL2];
+  }
+
+  // Term-matching fallback (original approach)
   const terms = promptTerms(prompt);
   return allRecords.filter((r) => isRelevantByTerms(r, terms)).slice(0, maxRecords);
 }
 
-function selectMemoryByTerms(root: string, prompt: string, maxRecords: number): MemoryRecord[] {
-  const terms = promptTerms(prompt);
-  return loadActiveRecords(root).filter((r) => isRelevantByTerms(r, terms)).slice(0, maxRecords);
-}
-
-// ─── Daily digest ─────────────────────────────────────────────────────
+// ─── Daily digest ─────────────────────────────────────────────────────────────
 
 export function buildDailyDigest(dailyContent: string, maxChars: number): string {
   if (!dailyContent.trim()) return "";
@@ -130,7 +149,7 @@ export function buildDailyDigest(dailyContent: string, maxChars: number): string
   return dailyContent.slice(-maxChars);
 }
 
-// ─── Dynamic budget assembler ─────────────────────────────────────────
+// ─── Dynamic budget assembler ─────────────────────────────────────────────────
 
 function assembleWithBudget(sections: Array<{ label: string; content: string }>, maxTotal: number): string {
   const parts: string[] = [];
@@ -138,11 +157,11 @@ function assembleWithBudget(sections: Array<{ label: string; content: string }>,
 
   for (const { label, content } of sections) {
     if (!content.trim()) {
-      parts.push(label, content.trim() || "_empty_", "");
+      parts.push(label, "_empty_", "");
       continue;
     }
     const remaining = maxTotal - used;
-    if (remaining <= 50) break; // reserve 50 chars for header
+    if (remaining <= 50) break;
     const capped = content.length > remaining ? content.slice(0, remaining - 20) + "\n... (truncated)" : content;
     parts.push(label, capped, "");
     used += capped.length + label.length;
@@ -151,24 +170,42 @@ function assembleWithBudget(sections: Array<{ label: string; content: string }>,
   return parts.join("\n");
 }
 
-// ─── Main retrieval function ─────────────────────────────────────────
+// ─── Main retrieval function ─────────────────────────────────────────────────
 
 export async function buildRetrievalContext(root: string, options: RetrievalOptions): Promise<RetrievalContext> {
+  // Skip injection for trivial prompts — saves tokens and avoids noise
+  if (!shouldInjectMemoryContext(options.prompt)) {
+    return { markdown: "", selectedMemory: [] };
+  }
+
   const paths = ensureMemoryDirs(root);
   const maxTotal = options.maxTotalChars ?? 14_000;
   const maxRecords = options.maxRecords ?? 12;
 
-  const selectedMemory = options.useQmd && options.qmdCollection
-    ? await selectMemoryWithQmd(root, options.prompt, options.qmdCollection, maxRecords)
-    : selectMemoryByTerms(root, options.prompt, maxRecords);
+  const selectedMemory = await selectMemoryHybrid(
+    root,
+    options.prompt,
+    maxRecords,
+    options.ftsIndex,
+    options.useQmd,
+    options.qmdCollection,
+  );
 
   const scratchpadItems = listScratchpadItems(root).filter((item) => !item.done);
   const daily = readDailyLog(root, options.today);
   const dailyDigest = buildDailyDigest(daily, options.maxDailyChars ?? 3000);
 
+  // Hard rules: high-confidence typed corrections injected prominently
+  const allRecords = loadActiveRecords(root);
+  const hardRulesBlock = renderHardRulesBlock(allRecords);
+
   const header = "# Persistent Intelligence Context";
 
   const content = assembleWithBudget([
+    {
+      label: "## Hard Rules",
+      content: hardRulesBlock.replace("## Hard Rules\n", "").trim(),
+    },
     {
       label: "## Selected Memory",
       content: selectedMemory.length
@@ -199,7 +236,7 @@ export function readRuntimeContext(root: string): string {
 }
 
 /**
- * Suggest vault_ref values by matching candidate tags against vault concept/entity filenames.
+ * Suggest vault_ref values from vault concept/entity pages matching candidate tags.
  */
 export function suggestVaultRefs(tags: string[], vaultPath?: string): string[] {
   const vaultDir = vaultPath ?? process.env.PI_VAULT_PATH;
@@ -218,4 +255,22 @@ export function suggestVaultRefs(tags: string[], vaultPath?: string): string[] {
     } catch { /* ignore */ }
   }
   return [...new Set(candidates)].slice(0, 3);
+}
+
+/**
+ * Sync the FTS index with current active records.
+ * Call after any canonical mutation (applyPatch, session_start).
+ */
+export function syncFtsIndex(root: string, ftsIndex: MemoryFtsIndex): void {
+  const records = loadActiveRecords(root);
+  ftsIndex.sync(
+    records.map((r) => ({
+      id: r.id,
+      layer: r.layer,
+      ruleType: r.ruleType,
+      confidence: r.confidence,
+      statement: r.statement,
+      tags: r.tags,
+    })),
+  );
 }
