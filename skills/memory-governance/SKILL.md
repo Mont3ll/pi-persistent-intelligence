@@ -12,93 +12,101 @@ Persistent Intelligence separates operational context from durable beliefs.
 | Information | Destination |
 |---|---|
 | Active task or reminder | `scratchpad` |
-| Session note, recent decision, in-progress context | `memory_write target=daily` |
-| Durable workflow/playbook/preference | `memory_write target=long_term` as candidate, then `/curate-memory` |
-| Research source, citation-backed domain claim, concept page | Obsidian vault under AGENTS.md protocol |
+| Session note, recent decision, in-progress context | `memory_write target=daily` with `#decision` tag |
+| Durable workflow/playbook/preference | `memory_write target=long_term` → inbox → `/curate-memory` |
+| Explicit correction ("don't use X", "prefer Y over Z") | Captured automatically via correction detection |
+| Research source, citation-backed domain claim | Obsidian vault under AGENTS.md protocol |
 | Stable dev pattern observed in 2+ projects for 30+ days | `promote_to_vault_candidate` patch op |
+
+## Automatic correction capture
+
+You do NOT need to call `memory_write` for corrections. If you say "don't use echo >> for file writes, use sed instead", the system automatically detects the correction signal in `agent_end`, infers `ruleType: "avoid_pattern"`, and adds a candidate to the inbox. Strong corrections (confidence ≥ 0.85) are auto-applied at session end.
+
+Tag patterns detected: "don't/do not use X", "prefer/favor X over Y", "use X instead of Y", "always/never [verb]", "this project uses X", "never edit/modify".
 
 ## L1 vs L2
 
 L1 identity/preference memory is rare and high risk:
 - requires 3+ evidence instances
-- confidence >= 0.85
+- confidence ≥ 0.85
 - must include a falsifiable change condition
-- never auto-apply
+- **never** auto-applied
 
 L2 playbook memory is the productive layer:
-- requires 2+ evidence instances
-- confidence >= 0.75
-- includes tags, evidence, stability, review cadence, change condition
+- requires 2+ evidence instances at apply time (1 accepted for inbox display)
+- confidence ≥ 0.75
+- includes ruleType, tags, evidence, stability, review cadence, change condition
 
-## Never write canonical long-term memory directly
+## Rule types
 
-Long-term memory is JSONL canonical storage. `rendered/MEMORY.md` is generated. Do not edit rendered markdown directly.
+Use the `ruleType` tag hint when calling `memory_write target=long_term` for better injection:
 
-Use:
+```bash
+memory_write target=long_term \
+  content="Use bun not npm for TypeScript projects." \
+  tags='["prefer_pattern","tooling"]' \
+  confidence=0.88
+```
+
+High-confidence records with `ruleType` in `["avoid_pattern","prefer_pattern","correction","convention"]` are promoted to **hard rules** — injected above general memory with `⚠️`/`✓`/`📌` prefixes.
+
+## Curation modes
 
 ```text
-memory_write target=long_term
-/curate-memory
-/apply-memory-patch
+memory_write target=long_term   →  inbox candidate
+LLM consolidation (session end) →  inbox candidate (Jaccard-deduped)
+Automatic correction capture    →  inbox candidate (instant)
+                                          ↓
+                              tiered auto-curation (session end):
+                               conf ≥ 0.85  →  auto-applied to L2
+                               conf < 0.85  →  held in inbox
+                                          ↓
+                     inbox review panel (next session start, if ≥ 3 pending)
+                               [a] approve  [r] /curate-memory  [s] skip
+                                          ↓
+                     /curate-memory → PatchReviewPanel → applyPatch
 ```
 
-## Context injection (cache-aware)
-
-Memory is injected as a **per-turn custom message** (`customType: pi-persistent-intelligence-context`), not by mutating the system prompt. This preserves the provider KV-cache prefix and avoids 10× cost penalties on cache-miss turns. The block is hidden from the TUI (`display: false`).
-
-## Daily log digest
-
-The injected daily log section is a **structured digest** — `#decision` markers, `##` headings, and session counts — not the raw log tail. Tag notable decisions explicitly:
-
-```
-memory_write target=daily content="#decision switched to custom message injection for KV-cache"
-```
-
-## LLM consolidation at session end
-
-On `session_shutdown`, if ≥ 3 user messages accumulated, pi-persistent-intelligence spawns `pi --print` to extract candidates and adds them to the inbox. Candidates require `/curate-memory` before entering canonical memory. Use `/consolidate-memory` to trigger manually mid-session.
-
-Override the consolidation model:
+## Memory search
 
 ```bash
-export PI_MEMORY_CONSOLIDATION_MODEL="claude-haiku-4-5-20251001"
+memory_search "memory governance"        # built-in FTS, instant, no deps
+memory_search "vault promotion" --mode=semantic   # qmd semantic (needs embeddings)
 ```
 
-## Session history search
+The built-in FTS index (`bun:sqlite`) is always available. Semantic search requires qmd embeddings to be generated (`qmd embed`).
 
-pi-persistent-intelligence does not include session history search. Install pi-session-search for this capability:
+## Session decisions
 
+Tag important decisions in daily notes:
 ```bash
-pi install npm:pi-session-search
+memory_write target=daily content="#decision use canonical JSONL not markdown as source of truth"
 ```
 
-Or install the full pi-total-recall bundle:
-
+Surface later:
 ```bash
-pi install npm:pi-total-recall
+session_decisions --days=30
 ```
-
-Run `/setup-session-search` for guided instructions. The `session_search` shim tool provides guidance when pi-session-search is not installed.
 
 ## Vault promotion
 
 Promote only when:
-1. observed in 2+ independent projects
-2. stable for at least 30 days
-3. reusable as domain knowledge, not merely personal preference
-4. citation/provenance can be represented in the vault
+1. Observed in 2+ independent projects
+2. Stable for at least 30 days
+3. Reusable as domain knowledge, not merely personal preference
+4. Citation/provenance can be represented in the vault
 
-Vault creation remains governed by the vault `AGENTS.md` workflow.
+Set `PI_VAULT_PATH` to enable `vault_ref` auto-suggestions during `/curate-memory`.
 
-When `PI_VAULT_PATH` is set, `/curate-memory` automatically suggests matching `[[vault-page]]` refs in the patch op rationale. Review and apply the `vault_ref` field manually when accepting the patch.
+## KV-cache efficiency
 
-## vault_ref cross-links
+Memory injection uses a per-turn custom message (not systemPrompt mutation). The system prompt stays stable across turns — preserving the provider's KV-cache prefix and saving 10× on cache-hit turns. Never inject memory by mutating systemPrompt.
 
-When a PI memory record refers to a concept in the vault, set `vault_ref: "[[Page Title]]"` in the canonical JSONL. This creates a bidirectional link: the memory is traceable to the vault concept, and the vault concept's `# cited by` should reference the memory context.
+## Context injection priority
 
-## Paradox of Supervision (from Cognitive Debt in Agentic Coding)
-
-Over-delegating to AI erodes the very skills needed to supervise it. Memory governance is a human-in-the-loop discipline:
-- review consolidation candidates before accepting them into L2
-- decay keeps stale memories from compounding into false beliefs
-- patch governance ensures you can trace why a belief entered the system
+Under the 14 KB budget:
+1. **Hard rules** — high-confidence typed corrections (⚠️/✓/📌 prefixed)
+2. **L1 identity** — always included
+3. **Scratchpad** — active task items
+4. **L2 selected** — FTS/hybrid matched records (staleness-tagged)
+5. **Daily digest** — `#decision` markers and session count
