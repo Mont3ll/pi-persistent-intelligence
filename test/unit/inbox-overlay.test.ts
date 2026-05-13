@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { InboxReviewOverlay, buildInboxNotification } from "../../src/tui/InboxReviewOverlay";
+import { InboxReviewOverlay, buildInboxNotification, themeFromInbox } from "../../src/tui/InboxReviewOverlay";
 import type { CaptureCandidate } from "../../src/types";
 
 function candidate(id: string, confidence: number, text = "test pattern"): CaptureCandidate {
@@ -26,7 +26,7 @@ describe("InboxReviewOverlay", () => {
     let result: string | null = null;
     const overlay = new InboxReviewOverlay(
       { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
-      undefined,
+      themeFromInbox(undefined),
       (action) => { result = action; },
     );
     const lines = overlay.render(80);
@@ -38,7 +38,7 @@ describe("InboxReviewOverlay", () => {
   test("renders candidates with confidence and statement", () => {
     const overlay = new InboxReviewOverlay(
       { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
-      undefined,
+      themeFromInbox(undefined),
       () => {},
     );
     const lines = overlay.render(80);
@@ -51,7 +51,7 @@ describe("InboxReviewOverlay", () => {
   test("shows auto-eligible badge ✓ for high confidence", () => {
     const overlay = new InboxReviewOverlay(
       { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
-      undefined,
+      themeFromInbox(undefined),
       () => {},
     );
     const text = overlay.render(80).join("\n");
@@ -63,7 +63,7 @@ describe("InboxReviewOverlay", () => {
     let result: string | undefined = "not-set";
     const overlay = new InboxReviewOverlay(
       { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
-      undefined,
+      themeFromInbox(undefined),
       (action) => { result = action ?? "null"; },
     );
     overlay.handleInput("\u001b"); // escape
@@ -74,7 +74,7 @@ describe("InboxReviewOverlay", () => {
     let result: string | undefined;
     const overlay = new InboxReviewOverlay(
       { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
-      undefined,
+      themeFromInbox(undefined),
       (action) => { result = action ?? "null"; },
     );
     overlay.handleInput("a");
@@ -85,7 +85,7 @@ describe("InboxReviewOverlay", () => {
     let result: string | undefined;
     const overlay = new InboxReviewOverlay(
       { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
-      undefined,
+      themeFromInbox(undefined),
       (action) => { result = action ?? "null"; },
     );
     overlay.handleInput("r");
@@ -96,7 +96,7 @@ describe("InboxReviewOverlay", () => {
     let result: string | undefined;
     const overlay = new InboxReviewOverlay(
       { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
-      undefined,
+      themeFromInbox(undefined),
       (action) => { result = action ?? "null"; },
     );
     overlay.handleInput("s");
@@ -107,7 +107,7 @@ describe("InboxReviewOverlay", () => {
     let result: string | undefined;
     const overlay = new InboxReviewOverlay(
       { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
-      undefined,
+      themeFromInbox(undefined),
       (action) => { result = action ?? "null"; },
     );
     // Initial selection is 0 (approve). Move right to review (1).
@@ -120,7 +120,7 @@ describe("InboxReviewOverlay", () => {
     const many = Array.from({ length: 9 }, (_, i) => candidate(`cap_${i}`, 0.8, `Pattern ${i}`));
     const overlay = new InboxReviewOverlay(
       { candidates: many, autoEligibleCount: 0, highThreshold: 0.85 },
-      undefined,
+      themeFromInbox(undefined),
       () => {},
     );
     const text = overlay.render(80).join("\n");

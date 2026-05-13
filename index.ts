@@ -42,7 +42,7 @@ import { runConsolidation } from "./src/consolidator";
 import { loadConfig } from "./src/config";
 import { SessionStore, buildSessionSearchTools, buildSessionContextBlock, SESSION_SYNC_INTERVAL_MS } from "./src/session-search";
 import { isChildProcess } from "./src/sessions/store";
-import { buildInboxNotification } from "./src/tui/InboxReviewOverlay";
+import { createInboxReviewComponent, buildInboxNotification, type InboxOverlayAction } from "./src/tui/InboxReviewOverlay";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 
 function nowIso(): string { return new Date().toISOString(); }
@@ -214,44 +214,69 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
   pi.on("before_agent_start", async (event, ctx) => {
     // ── Inbox review — first turn only ─────────────────────────────────────
-    // When pending inbox candidates ≥ inboxPromptThreshold, open PatchReviewPanel
-    // directly before the first agent turn. Identical component and controls to
-    // /curate-memory — full visual consistency across the extension.
-    //
-    // minEvidenceCount: 1 so all pending candidates appear for human review.
-    // The curator's default (≥2) governs auto-promotion; human review needs no
-    // evidence gate. Governance is enforced at apply time by applyPatch.
+    // Step 1: InboxReviewOverlay summary — ✓/~ badges, [A]/[R]/[S] actions.
+    //         Uses the same theme color mappings as PatchReviewPanel (via
+    //         themeFromInbox) for visual consistency across the extension.
+    // Step 2: If user picks [R] → open PatchReviewPanel for per-op selection
+    //         (identical to /curate-memory propose mode).
+    // minEvidenceCount: 1 — show all candidates for human review; evidence
+    // gate (≥2) still enforced by the curator at apply time.
     if (!inboxOverlayShown && ctx.hasUI && ctx.ui.custom) {
       inboxOverlayShown = true;
       const cfg = loadConfig(root);
+      const threshold = cfg.curator.autoCurateHighThreshold ?? 0.85;
       const promptThreshold = cfg.curator.inboxPromptThreshold ?? 3;
       const pending = listCandidates(root).filter((c) => c.status === "new");
 
       if (pending.length >= promptThreshold) {
+        const autoEligible = pending.filter((c) => (c.confidence ?? 0) >= threshold);
         const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
-        const patch = curateInbox(root, {
-          now: nowIso(),
-          mode: "propose",
-          vaultPath,
-          minEvidenceCount: 1,  // show all candidates; governance at apply time
-        });
 
-        if (patch.ops.length > 0) {
-          try {
-            const selectedIds = await ctx.ui.custom<string[] | null>(
-              (tui, theme, _kb, done) =>
-                createPatchReviewComponent(patch, done, tui as any, undefined, theme),
-            );
-            if (selectedIds && selectedIds.length > 0) {
-              applyPatch(root, patch, { selectedOpIds: selectedIds, now: nowIso() });
+        try {
+          // ── Step 1: summary overlay ──────────────────────────────────
+          const action = await ctx.ui.custom<InboxOverlayAction>(
+            (tui, theme, _kb, done) =>
+              createInboxReviewComponent(
+                { candidates: pending, autoEligibleCount: autoEligible.length, highThreshold: threshold },
+                done,
+                tui as { requestRender(): void },
+                theme,
+              ),
+          );
+
+          if (action === "approve") {
+            // Apply ops for auto-eligible candidates (confidence ≥ threshold)
+            const patch = curateInbox(root, { now: nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
+            const eligibleIds = patch.ops
+              .filter((op) => op.default_selected && op.risk !== "high" &&
+                (op.record?.confidence ?? op.to_record?.confidence ?? 0) >= threshold)
+              .map((op) => op.op_id);
+            if (eligibleIds.length > 0) {
+              applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
               await updateQmd();
-              ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
+              ctx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
             }
-            // null = user dismissed (q/Esc) — candidates stay in inbox
-          } catch {
-            // Headless / RPC fallback
-            ctx.ui.notify(buildInboxNotification(pending, pending.filter(c => (c.confidence ?? 0) >= (cfg.curator.autoCurateHighThreshold ?? 0.85)).length), "info");
+
+          } else if (action === "review") {
+            // ── Step 2: PatchReviewPanel (same as /curate-memory) ───────
+            const patch = curateInbox(root, { now: nowIso(), mode: "propose", vaultPath, minEvidenceCount: 1 });
+            if (patch.ops.length > 0) {
+              const selectedIds = await ctx.ui.custom<string[] | null>(
+                (tui, theme, _kb, done) =>
+                  createPatchReviewComponent(patch, done, tui as any, undefined, theme),
+              );
+              if (selectedIds && selectedIds.length > 0) {
+                applyPatch(root, patch, { selectedOpIds: selectedIds, now: nowIso() });
+                await updateQmd();
+                ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
+              }
+            } else {
+              ctx.ui.notify("No candidates meet curation thresholds.", "info");
+            }
           }
+          // "skip" / null — candidates stay in inbox, session continues
+        } catch {
+          ctx.ui.notify(buildInboxNotification(pending, autoEligible.length), "info");
         }
       }
     }
