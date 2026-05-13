@@ -27,19 +27,24 @@ jobs:
       id-token: write   # for npm provenance
     steps:
       - uses: actions/checkout@v4
+
+      # setup-node MUST run before npm publish — it writes the npm auth config
+      # that picks up NODE_AUTH_TOKEN for registry.npmjs.org
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
       - run: bun install --frozen-lockfile
+
       - name: Publish to npm
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Setup Node for npm auth
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
 
   # Publish to GitHub Packages — makes the GitHub repo "Packages" tab show the package
   publish-github:
@@ -60,8 +65,6 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - name: Set scoped package name for GitHub Packages
-        # GitHub Packages requires a scoped package name (@owner/package)
-        # We publish under @Mont3ll scope while keeping the unscoped name on npm
         run: |
           node -e "
             const pkg = JSON.parse(require('fs').readFileSync('package.json', 'utf-8'));
