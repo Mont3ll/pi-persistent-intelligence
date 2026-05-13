@@ -24,7 +24,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write   # for npm provenance
     steps:
       - uses: actions/checkout@v4
 
@@ -42,7 +41,7 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
