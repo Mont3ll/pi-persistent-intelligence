@@ -72,5 +72,6 @@ jobs:
           "
       - name: Publish to GitHub Packages
         run: npm publish
+        continue-on-error: true   # GitHub Packages rejects re-publish of existing version; treat as non-fatal
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
