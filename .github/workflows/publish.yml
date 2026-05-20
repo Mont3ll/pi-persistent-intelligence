@@ -42,7 +42,8 @@ jobs:
 
       - name: Publish to npm
         run: npm publish --access public
-        # No NODE_AUTH_TOKEN — OIDC authenticates automatically via trusted publisher
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # Publish to GitHub Packages — makes the GitHub repo Packages tab show the package
   publish-github:
