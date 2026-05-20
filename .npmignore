@@ -1,5 +1,6 @@
 # Development and test files
 test/
+eval/
 *.test.ts
 *.spec.ts
 
@@ -17,6 +18,9 @@ tsconfig.json
 # Internal docs/drafts
 NOTES.md
 TODO.md
+
+# Eval artifacts
+reports/
 
 # Bun lockfile (npm users don't need it)
 bun.lockb

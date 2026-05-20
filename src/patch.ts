@@ -1,10 +1,12 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { addMemoryRecord, updateMemoryRecord } from "./store";
+import { addMemoryRecordFromPatch, PATCH_APPLY_CONTEXT, updateMemoryRecord } from "./store";
 import { updateCandidateStatus } from "./inbox";
 import { renderMemoryToDisk } from "./render";
 import { ensureMemoryDirs } from "./paths";
 import { writeVaultPromotionReport } from "./vaultPromotion";
+import { createDeletionTombstone, appendDeletionTombstone } from "./tombstones";
+import { redactEvidenceForMemory } from "./evidence";
 import type { MemoryPatch, PatchOp } from "./types";
 
 export interface ApplyPatchOptions {
@@ -16,23 +18,91 @@ function isSelected(op: PatchOp, selected?: string[]): boolean {
   return selected ? selected.includes(op.op_id) : op.default_selected;
 }
 
+function mergeUnique(existing: string[] | undefined, incoming: string[] | undefined): string[] | undefined {
+  const merged = [...new Set([...(existing ?? []), ...(incoming ?? [])])];
+  return merged.length ? merged : undefined;
+}
+
 function applyOp(root: string, patchId: string, op: PatchOp, now: string): void {
   if (op.op === "add") {
     if (!op.record) throw new Error(`Patch op ${op.op_id} missing record`);
-    addMemoryRecord(root, op.record);
+    addMemoryRecordFromPatch(root, op.record);
     if (op.candidate_id) updateCandidateStatus(root, op.candidate_id, "patched");
     return;
   }
 
-  if (op.op === "decay" || op.op === "update") {
+  if (op.op === "decay" || op.op === "update" || op.op === "update_stability") {
     if (!op.target_id || !op.updates) throw new Error(`Patch op ${op.op_id} missing update fields`);
-    updateMemoryRecord(root, op.target_id, (record) => ({ ...record, ...op.updates }));
+    updateMemoryRecord(root, op.target_id, (record) => ({ ...record, ...op.updates }), PATCH_APPLY_CONTEXT);
+    return;
+  }
+
+  if (op.op === "flag_for_review") {
+    if (!op.target_id || !op.updates) throw new Error(`Patch op ${op.op_id} missing update fields`);
+    updateMemoryRecord(root, op.target_id, (record) => ({ ...record, ...op.updates }), PATCH_APPLY_CONTEXT);
     return;
   }
 
   if (op.op === "deprecate") {
     if (!op.target_id) throw new Error(`Patch op ${op.op_id} missing target_id`);
-    updateMemoryRecord(root, op.target_id, (record) => ({ ...record, status: "deprecated", updated_at: now.slice(0, 10) }));
+    updateMemoryRecord(root, op.target_id, (record) => ({ ...record, status: "deprecated", updated_at: now.slice(0, 10) }), PATCH_APPLY_CONTEXT);
+    return;
+  }
+
+  if (op.op === "contest" || op.op === "uncontest") {
+    if (!op.target_id) throw new Error(`Patch op ${op.op_id} missing target_id`);
+    updateMemoryRecord(root, op.target_id, (record) => ({
+      ...record,
+      status: op.op === "contest" ? "contested" : "active",
+      evidence: op.reason ? [...record.evidence, { type: "manual", ref: patchId, note: op.reason }] : record.evidence,
+      updated_at: now.slice(0, 10),
+    }), PATCH_APPLY_CONTEXT);
+    return;
+  }
+
+  if (op.op === "add_exception") {
+    if (!op.target_id || !op.updates) throw new Error(`Patch op ${op.op_id} missing exception fields`);
+    updateMemoryRecord(root, op.target_id, (record) => ({
+      ...record,
+      applies_when: mergeUnique(record.applies_when, op.updates?.applies_when),
+      does_not_apply_when: mergeUnique(record.does_not_apply_when, op.updates?.does_not_apply_when),
+      known_exceptions: mergeUnique(record.known_exceptions, op.updates?.known_exceptions),
+      updated_at: now.slice(0, 10),
+    }), PATCH_APPLY_CONTEXT);
+    return;
+  }
+
+  if (op.op === "delete") {
+    if (!op.target_id) throw new Error(`Patch op ${op.op_id} missing target_id`);
+    const mode = op.deletion_mode ?? "audit_preserving";
+    const reason = op.deletion_reason ?? "other";
+    let foundContent = "";
+    updateMemoryRecord(root, op.target_id, (record) => {
+      foundContent = JSON.stringify({ statement: record.statement, evidence: record.evidence, tags: record.tags });
+      const tombstone = createDeletionTombstone({
+        resource_id: record.resource_id,
+        profile_id: record.profile_id,
+        deleted_record_id: record.id,
+        deletion_mode: mode,
+        deletion_reason: reason,
+        content: foundContent,
+        now,
+      });
+      appendDeletionTombstone(root, tombstone);
+      if (mode === "privacy_purge") {
+        redactEvidenceForMemory(root, record.id);
+        return {
+          ...record,
+          statement: "[deleted]",
+          tags: [],
+          evidence: [{ type: "deletion", ref: tombstone.id, note: "Content removed by privacy purge." }],
+          confidence: 0,
+          status: "deleted" as const,
+          updated_at: now.slice(0, 10),
+        };
+      }
+      return { ...record, status: "deleted" as const, updated_at: now.slice(0, 10) };
+    }, PATCH_APPLY_CONTEXT);
     return;
   }
 
@@ -48,8 +118,8 @@ function applyOp(root: string, patchId: string, op: PatchOp, now: string): void 
       status: "superseded",
       superseded_by: [...new Set([...record.superseded_by, replacement.id])],
       updated_at: now.slice(0, 10),
-    }));
-    addMemoryRecord(root, replacement);
+    }), PATCH_APPLY_CONTEXT);
+    addMemoryRecordFromPatch(root, replacement);
     return;
   }
 
@@ -103,5 +173,7 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
   };
   writePatchFile(root, appliedPatch);
   renderMemoryToDisk(root);
+  // FTS/qmd sync remains a caller invariant: extension flows call updateQmd()/syncFtsIndex()
+  // after patch application. Keeping this here avoids coupling patch application to an index backend.
   return appliedPatch;
 }

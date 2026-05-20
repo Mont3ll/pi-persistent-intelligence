@@ -35,6 +35,10 @@ import { addScratchpadItem, clearDoneScratchpadItems, listScratchpadItems, markS
 import { appendCandidate, listCandidates } from "./src/inbox";
 import { curateInbox } from "./src/curator";
 import { maintainMemory } from "./src/maintainer";
+import { generateMaintenanceRecommendations, buildStabilityPatchFromRecommendations, generateMaintenanceReport } from "./src/maintenance";
+import { readReinforcementEventsForMemory, summarizeReinforcement } from "./src/reinforcement";
+import { runMetaConsolidation, generateHandoffSnapshot, DEFAULT_META_CONSOLIDATION_CONFIG } from "./src/meta-consolidation";
+import { runMemoryDiagnostics, renderDiagnosticsReport, saveDiagnosticsReport } from "./src/diagnostics";
 import { applyPatch } from "./src/patch";
 import { buildRetrievalContext, syncFtsIndex } from "./src/retriever";
 import { renderMemoryToDisk } from "./src/render";
@@ -49,6 +53,9 @@ import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { loadActiveRecords } from "./src/store";
+import { buildCandidateTrustMetadata } from "./src/trust";
+import { linkExplicitCorrectionToMemory } from "./src/reinforcement";
+import { selectRelevantInquiries, renderInquiryInjectionBlock } from "./src/inquiries";
 
 function nowIso(): string { return new Date().toISOString(); }
 function shortId(prefix: string): string {
@@ -294,11 +301,17 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       useQmd: true,
       qmdCollection: qmdCollectionName,
       ftsIndex,
+      cwd: ctx.cwd ?? sessionCwd,
+      threadId: (event as { session_id?: string; sessionId?: string }).session_id ?? (event as { sessionId?: string }).sessionId ?? "current-session",
     });
     const sessionBlock = buildSessionContextBlock(sessionStore, todayString());
-    const combined = sessionBlock
-      ? `${context.markdown}\n\n## Today's Sessions\n${sessionBlock}`
-      : context.markdown;
+    const inquiries = selectRelevantInquiries(root, {
+      profile_id: context.processorTraces.length > 0 ? (context.selectedMemory[0]?.profile_id ?? undefined) : undefined,
+      current_message: event.prompt ?? "",
+      tags: [],
+    });
+    const inquiryBlock = renderInquiryInjectionBlock(inquiries);
+    const combined = [sessionBlock ? `${context.markdown}\n\n## Today's Sessions\n${sessionBlock}` : context.markdown, inquiryBlock].filter(Boolean).join("\n\n");
 
     if (!combined.trim()) return;
     return {
@@ -323,6 +336,10 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
           // without requiring explicit memory_write calls. Confidence-gated:
           // strong corrections (≥0.85) become auto-eligible; weaker ones held for review.
           if (maybeCorrectionSignal(text)) {
+            try {
+              const selected = JSON.parse((await import("node:fs")).readFileSync(ensureMemoryDirs(root).runtime.selected, "utf-8")) as import("./src/types").MemoryRecord[];
+              linkExplicitCorrectionToMemory(root, text, selected, { thread_id: "current-session", now: nowIso() });
+            } catch { /* best-effort reinforcement linking */ }
             const candidate = extractCorrectionCandidate(text, todayString(), sessionCwd);
             if (candidate) {
               appendCandidate(root, candidate);
@@ -380,7 +397,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     if (autoCurate !== "off") {
       try {
         const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
-        const patch = curateInbox(root, { now: nowIso(), mode: "auto", vaultPath });
+        const patch = curateInbox(root, { now: nowIso(), mode: "auto", vaultPath, governanceMode: cfg.governance.mode });
 
         if (patch.ops.length > 0) {
           // Filter ops to apply based on the autoCurate tier
@@ -397,6 +414,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
           if (eligibleIds.length > 0) {
             const applied = applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
+            syncFtsIndex(root, ftsIndex); // F-03 fix: sync immediately after auto-curation patch
             const skipped = patch.ops.length - eligibleIds.length;
             appendDailyLog(
               root, todayString(),
@@ -453,6 +471,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         evidence_refs: [`daily/${todayString()}.md`],
         confidence: params.confidence ?? 0.7,
         status: "new" as const,
+        ...buildCandidateTrustMetadata("direct_user_instruction", "long_term"),
       };
       appendCandidate(root, candidate);
       return { content: [{ type: "text", text: `Captured long-term memory candidate ${candidate.id}; run /curate-memory to review.` }], details: candidate };
@@ -545,6 +564,34 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   });
 
 
+  pi.registerCommand("memory-diagnostics", {
+    description: "Run memory integrity diagnostics and report findings (severity: ok/info/warning/error)",
+    handler: async (args, ctx) => {
+      const saveReport = args.includes("--save");
+      try {
+        const report = runMemoryDiagnostics(root);
+        const text = renderDiagnosticsReport(report);
+        ctx.ui.notify(text, report.summary.errors > 0 ? "error" : report.summary.warnings > 0 ? "warning" : "success");
+        if (saveReport) {
+          const path = saveDiagnosticsReport(root, report);
+          ctx.ui.notify(`Diagnostics report saved: ${path}`, "info");
+        }
+      } catch (err) {
+        ctx.ui.notify(`Diagnostics failed: ${err}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-inbox", {
+    description: "Show pending inbox candidates awaiting curation",
+    handler: async (_args, ctx) => {
+      const candidates = listCandidates(root).filter((c) => c.status === "new");
+      if (candidates.length === 0) { ctx.ui.notify("Inbox empty.", "info"); return; }
+      const lines = candidates.map((c, i) => `${i + 1}. ${c.id} [conf ${(c.confidence ?? 0).toFixed(2)}${c.ruleType ? ", " + c.ruleType : ""}] ${c.text.slice(0, 80)}`);
+      ctx.ui.notify(`${candidates.length} pending candidate(s):\n${lines.join("\n")}`, "info");
+    },
+  });
+
   pi.registerCommand("memory-learnings", {
     description: "Browse and manage long-term memory records in an interactive TUI table",
     handler: async (_args, ctx) => {
@@ -566,11 +613,11 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       );
 
       if (result?.action === "deprecate") {
-        const { loadLayerRecords, replaceLayerRecords } = await import("./src/store");
+        const { loadLayerRecords, unsafeReplaceLayerRecords } = await import("./src/store");
         for (const layer of ["L1", "L2"] as const) {
           const layerRecords = loadLayerRecords(root, layer);
           if (!layerRecords.some((r) => r.id === result.recordId)) continue;
-          replaceLayerRecords(root, layer,
+          unsafeReplaceLayerRecords(root, layer,
             layerRecords.map((r) => r.id === result.recordId
               ? { ...r, status: "deprecated" as const, updated_at: new Date().toISOString().slice(0, 10) }
               : r
@@ -628,17 +675,119 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("maintain-memory", {
-    description: "Generate maintenance patch for overdue records",
+    description: "Generate maintenance patch for overdue records and reinforcement-based recommendations",
     handler: async (args, ctx) => {
       const mode = args.includes("--mode=auto") ? "auto" : args.includes("--mode=supervised") ? "supervised" : "propose";
+      const showReport = args.includes("--report");
       const patch = maintainMemory(root, { now: nowIso(), mode });
+
+      // Sprint 10: generate reinforcement-based recommendations
+      const records = loadActiveRecords(root);
+      const summaries = records.map((rec) => summarizeReinforcement(readReinforcementEventsForMemory(root, rec.id))).filter((s) => s.counts.explicit_correction > 0 || s.counts.explicit_reinforcement > 0);
+      const maintRecs = generateMaintenanceRecommendations(records, summaries, nowIso());
+      const stabilityPatch = buildStabilityPatchFromRecommendations(maintRecs, nowIso());
+
+      if (showReport) {
+        const report = generateMaintenanceReport(maintRecs, records);
+        ctx.ui.notify(report.slice(0, 2000), "info");
+      }
+
       if (mode === "auto") {
-        const applied = applyPatch(root, patch, { selectedOpIds: patch.ops.filter((op) => op.default_selected && op.risk !== "high").map((op) => op.op_id), now: nowIso() });
-        await updateQmd();
-      syncFtsIndex(root, ftsIndex);
-        ctx.ui.notify(`Applied ${applied.applied_ops.length} maintenance ops from ${applied.patch_id}`, "success");
+        const decayOps = patch.ops.filter((op) => op.default_selected && op.risk !== "high").map((op) => op.op_id);
+        if (decayOps.length > 0) {
+          const applied = applyPatch(root, patch, { selectedOpIds: decayOps, now: nowIso() });
+          await updateQmd();
+          syncFtsIndex(root, ftsIndex);
+          ctx.ui.notify(`Applied ${applied.applied_ops.length} maintenance ops from ${applied.patch_id}`, "success");
+        }
+        const stabilityOps = stabilityPatch.ops.filter((op) => op.default_selected && op.risk !== "high").map((op) => op.op_id);
+        if (stabilityOps.length > 0) {
+          const appliedStability = applyPatch(root, stabilityPatch, { selectedOpIds: stabilityOps, now: nowIso() });
+          syncFtsIndex(root, ftsIndex);
+          ctx.ui.notify(`Applied ${appliedStability.applied_ops.length} stability ops.`, "success");
+        }
+        if (maintRecs.filter((r) => r.requires_review).length > 0) {
+          ctx.ui.notify(`${maintRecs.filter((r) => r.requires_review).length} recommendation(s) require human review.`, "warning");
+        }
       } else {
         ctx.ui.notify(`${patch.patch_id}: ${patch.summary}`, "info");
+        if (maintRecs.length > 0) ctx.ui.notify(`Reinforcement: ${maintRecs.length} maintenance recommendation(s). Use --report to see details.`, "info");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-patches", {
+    description: "List pending patch files",
+    handler: async (_args, ctx) => {
+      const { listPatchFiles, readPatchFile } = await import("./src/patch");
+      const ids = listPatchFiles(root);
+      if (ids.length === 0) { ctx.ui.notify("No patch files.", "info"); return; }
+      const summaries = ids.map((id) => {
+        try { const p = readPatchFile(root, id); return `${id} [${p.status}]: ${p.summary}`; } catch { return id; }
+      });
+      ctx.ui.notify(summaries.join("\n"), "info");
+    },
+  });
+
+  pi.registerCommand("apply-memory-patch", {
+    description: "Apply selected ops from a patch file by id",
+    handler: async (args, ctx) => {
+      const patchId = args.trim().split(/\s+/)[0];
+      if (!patchId) { ctx.ui.notify("Usage: /apply-memory-patch <patch_id>", "warning"); return; }
+      try {
+        const { readPatchFile } = await import("./src/patch");
+        const patch = readPatchFile(root, patchId);
+        const hasDelete = patch.ops.some((op) => op.op === "delete");
+        if (hasDelete) {
+          const applied = applyPatchAndSync(root, patch, { now: nowIso() }, ftsIndex);
+          await updateQmd();
+          ctx.ui.notify(`Applied ${applied.applied_ops.length} op(s) from ${patchId} (FTS synced).`, "success");
+        } else {
+          const applied = applyPatch(root, patch, { now: nowIso() });
+          await updateQmd();
+          syncFtsIndex(root, ftsIndex);
+          ctx.ui.notify(`Applied ${applied.applied_ops.length} op(s) from ${patchId}.`, "success");
+        }
+      } catch (err) {
+        ctx.ui.notify(`Failed to apply patch: ${err}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("meta-consolidation", {
+    description: "Propose L1 abstractions from stable L2 record clusters (always requires human review)",
+    handler: async (args, ctx) => {
+      const withHandoff = args.includes("--handoff");
+      const cfg = loadConfig(root);
+      const metaCfg = { ...DEFAULT_META_CONSOLIDATION_CONFIG, ...cfg.metaConsolidation, enabled: true, cadence: "manual" as const };
+      const profile = (await import("./src/profile")).resolveMemoryProfile(root, sessionCwd);
+      ctx.ui.notify("Running meta-consolidation (no automatic changes)…", "info");
+      try {
+        const run = runMetaConsolidation(root, metaCfg, profile.profile_id, nowIso());
+        ctx.ui.notify(`Meta-consolidation: ${run.clusters.length} cluster(s), ${run.candidates.length} L1 candidate(s) proposed.\nReport: ${run.report_path ?? "(none)"}`, "success");
+        if (run.candidates.length > 0) {
+          ctx.ui.notify(`All ${run.candidates.length} candidate(s) are l1_review_only — manually inspect report and apply patch if desired.`, "warning");
+        }
+        if (withHandoff) {
+          const snapshot = generateHandoffSnapshot(root, { profile_id: profile.profile_id, now: nowIso() });
+          ctx.ui.notify(`Handoff snapshot: ${snapshot.active_l2_count} L2 records, ${snapshot.open_inquiry_count} open inquiries.`, "info");
+        }
+      } catch (err) {
+        ctx.ui.notify(`Meta-consolidation failed: ${err}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-handoff", {
+    description: "Generate a handoff snapshot of current active memory state",
+    handler: async (_args, ctx) => {
+      try {
+        const { resolveMemoryProfile } = await import("./src/profile");
+        const profile = resolveMemoryProfile(root, sessionCwd);
+        const snapshot = generateHandoffSnapshot(root, { profile_id: profile.profile_id, now: nowIso() });
+        ctx.ui.notify(`Handoff snapshot: ${snapshot.active_l2_count} L2 records, ${snapshot.open_inquiry_count} open inquiries, ${snapshot.pending_candidate_count} pending candidates.`, "success");
+      } catch (err) {
+        ctx.ui.notify(`Handoff failed: ${err}`, "error");
       }
     },
   });
@@ -708,4 +857,20 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       ctx.ui.notify("Semantic search: run 'qmd embed' then use session_search with mode=semantic.", "info");
     },
   });
+}
+
+/**
+ * Apply a patch and immediately sync the FTS index.
+ * Callers that need to keep search results consistent after delete/purge operations
+ * should prefer this over calling applyPatch + syncFtsIndex separately.
+ */
+export function applyPatchAndSync(
+  root: string,
+  patch: import("./src/types").MemoryPatch,
+  options: import("./src/patch").ApplyPatchOptions,
+  ftsIndex: MemoryFtsIndex,
+): import("./src/types").MemoryPatch {
+  const result = applyPatch(root, patch, options);
+  syncFtsIndex(root, ftsIndex);
+  return result;
 }

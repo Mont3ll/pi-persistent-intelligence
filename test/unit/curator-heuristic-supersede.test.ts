@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendCandidate } from "../../src/inbox";
-import { addMemoryRecord } from "../../src/store";
+import { unsafeAddMemoryRecord as addMemoryRecord } from "../../src/store";
 import { curateInbox } from "../../src/curator";
 import type { CaptureCandidate, MemoryRecord } from "../../src/types";
 

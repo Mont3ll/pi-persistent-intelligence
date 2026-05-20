@@ -12,7 +12,8 @@
  *   < 0.65 → ignored
  */
 
-import type { CaptureCandidate, MemoryRuleType } from "./types";
+import { buildCandidateTrustMetadata } from "./trust";
+import type { CaptureCandidate, DurabilitySignal, MemoryRuleType } from "./types";
 
 // ─── Detection patterns ───────────────────────────────────────────────────────
 
@@ -36,6 +37,9 @@ const CORRECTION_PATTERNS = [
   /\bthis\s+(?:project|repo|codebase)\s+uses\b/i,
   /\bdon['']?t\s+edit\b/i,
   /\bnever\s+modify\b/i,
+  // Durable-intent patterns: "going forward", "from now on", "in the future"
+  // paired with preference verb — narrow to avoid false positives on temporal 'before'.
+  /\b(?:going\s+forward|from\s+now\s+on|in\s+the\s+future|starting\s+now)\b[^.]*\b(?:prefer|use|always|never|avoid|stop\s+using|switch\s+to)\b/i,
 ];
 
 // Phrases that look like corrections but are conversational filler
@@ -57,8 +61,8 @@ export function maybeCorrectionSignal(text: string): boolean {
 
 export function correctionConfidence(text: string): number {
   const lower = text.trim().toLowerCase();
-  // Strong signals: explicit "always", "never", "do not", "prefer X over Y"
-  if (/\b(always|never|do not|don't|this (?:project|repo|codebase) uses|prefer .+ (?:over|to|instead of)|favor .+ over|use .+ instead)\b/.test(lower)) {
+  // Strong signals: explicit "always", "never", "do not", "prefer X over Y", durable-intent prefixes
+  if (/\b(always|never|do not|don't|this (?:project|repo|codebase) uses|prefer .+ (?:over|to|instead of)|favor .+ over|use .+ instead|going forward|from now on|in the future|starting now)\b/.test(lower)) {
     return /\bhere\b/.test(lower) ? 0.82 : 0.90;
   }
   // Medium signals: "we should", "make sure", "ensure"
@@ -92,6 +96,8 @@ export function extractCorrectionCandidate(
     /\b(always|never)\b/.test(lower) && /\b(use|write|add|run|edit|modify)\b/.test(lower) ? "convention" :
     "correction";
 
+  const durability: DurabilitySignal = /\b(here|for now|this task|this session)\b/.test(lower) ? "task" : "project";
+
   return {
     id: `cap_corr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     created_at: new Date().toISOString(),
@@ -102,5 +108,6 @@ export function extractCorrectionCandidate(
     confidence,
     status: "new",
     ruleType,
+    ...buildCandidateTrustMetadata("user_correction", durability),
   };
 }

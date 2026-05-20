@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
-import { addMemoryRecord } from "../../src/store";
+import { unsafeAddMemoryRecord as addMemoryRecord } from "../../src/store";
 import { maintainMemory } from "../../src/maintainer";
 import { buildRetrievalContext } from "../../src/retriever";
 import { addScratchpadItem } from "../../src/scratchpad";
@@ -76,5 +76,50 @@ describe("retriever", () => {
     expect(context.markdown).toContain("review the memory patch");
     expect(context.markdown).toContain("#decision qmd is used for vault search.");
     expect(context.selectedMemory.map((r) => r.id)).toEqual(["mem_identity", "mem_qmd"]);
+  });
+
+  test("preserves legacy injection while exposing processor traces", async () => {
+    const root = tempRoot();
+    ensureMemoryDirs(root);
+    addMemoryRecord(root, record("mem_identity", "L1", "2026-12-01", ["preferences"]));
+    addMemoryRecord(root, record("mem_qmd", "L2", "2026-12-01", ["qmd", "vault"]));
+
+    const context = await buildRetrievalContext(root, {
+      prompt: "how should qmd search work?",
+      today: "2026-05-08",
+      maxDailyChars: 500,
+      cwd: root,
+      threadId: "thread-test",
+    });
+
+    expect(context.selectedMemory.map((r) => r.id)).toEqual(["mem_identity", "mem_qmd"]);
+    expect(context.processorTraces.map((trace) => trace.processor)).toEqual([
+      "StatusFilterProcessor",
+      "ProfileScopeProcessor",
+      "BasicScopeProcessor",
+      "NegativeScopeProcessor",
+    ]);
+  });
+
+  test("does not inject project-scoped memory from a different project", async () => {
+    const root = tempRoot();
+    ensureMemoryDirs(root);
+    addMemoryRecord(root, record("mem_current", "L2", "2026-12-01", ["qmd"], "Current project qmd workflow."));
+    addMemoryRecord(root, {
+      ...record("mem_other", "L2", "2026-12-01", ["qmd"], "Other project qmd workflow."),
+      scope: { type: "project", project: "other-project" },
+    });
+
+    const context = await buildRetrievalContext(root, {
+      prompt: "qmd workflow",
+      today: "2026-05-08",
+      maxDailyChars: 500,
+      cwd: root,
+      threadId: "thread-test",
+    });
+
+    expect(context.markdown).toContain("mem_current");
+    expect(context.markdown).not.toContain("mem_other");
+    expect(context.processorTraces.find((trace) => trace.processor === "BasicScopeProcessor")?.exclusion_reasons.mem_other).toBe("project_scope_mismatch:other-project");
   });
 });

@@ -35,8 +35,9 @@ function renderRecord(record: MemoryRecord): string {
 }
 
 export function renderMemoryMarkdown(records: MemoryRecord[]): string {
-  const l1 = records.filter((record) => record.layer === "L1");
-  const l2 = records.filter((record) => record.layer === "L2");
+  const visible = records.filter((record) => record.status !== "deleted");
+  const l1 = visible.filter((record) => record.layer === "L1");
+  const l2 = visible.filter((record) => record.layer === "L2");
   const sections = [
     "# Long-Term Memory",
     "",

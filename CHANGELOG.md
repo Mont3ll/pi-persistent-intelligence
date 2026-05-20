@@ -2,108 +2,130 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-05-20
+
+### Added
+
+**Governed memory architecture**
+- Canonical JSONL memory store with L1 (identity), L2 (playbooks), and L3 (daily session context) layers
+- Markdown projections rendered from JSONL; projections are never the source of truth
+- Patch-governed mutation: every durable change writes a patch file before touching canonical JSONL
+- Profile/resource/thread identity: memory records and candidates are profile-scoped; cross-profile injection is hard-blocked
+- Processor pipeline with `StatusFilterProcessor`, `ProfileScopeProcessor`, `BasicScopeProcessor`, and `NegativeScopeProcessor`; each processor emits exclusion traces
+- Normalized memory keys for duplicate detection, conflict detection, and supersession matching
+- Candidate matching: 7 match kinds (`new`, `duplicate`, `strengthens_existing`, `updates_existing`, `potential_conflict`, `supersedes_existing`, `ambiguous`)
+- Contested status, exception fields (`applies_when`, `does_not_apply_when`, `known_exceptions`), and patch ops `contest`, `uncontest`, `add_exception`
+- Store write boundary: public `addMemoryRecord()` enforces patch-apply context; `unsafeAddMemoryRecord()` is available for setup and test use
+
+**Evidence, trust, and verification**
+- `EvidenceRecord` with content-addressed IDs, bounded source excerpts, trust classes, and durability signals
+- 11-class trust hierarchy from `direct_user_instruction` to `third_party_documentation`
+- Promotion eligibility derived from trust class and durability; low-trust and temporary candidates route to review
+- Poisoning risk inference: repository text and generated content flagged and blocked from auto-apply
+- Deterministic candidate verifier: source support, durability, trust boundary, conflict risk, redacted evidence, tombstone re-creation prevention
+
+**Strict governance mode**
+- `governance.mode = "strict"` in config requires trust metadata and verified status before auto-apply
+- Default remains `"compatibility"` for full backward compatibility with existing records
+
+**Deletion and forgetting**
+- `audit_preserving` delete: marks record as deleted; removes from injection and FTS; preserves audit trail
+- `privacy_purge` delete: redacts statement, purges linked evidence content, writes content-free tombstone
+- `applyPatchAndSync()` public helper: applies patch and syncs FTS atomically for delete flows
+- Tombstones prevent re-promotion through any candidate path
+
+**Reinforcement and maintenance**
+- `ReinforcementEvent` with outcome weights (`explicit_reinforcement`, `implicit_success`, `neutral_exposure`, `explicit_correction`)
+- `summarizeReinforcement()` with conservative weighting; one explicit correction outweighs many implicit successes
+- Reinforcement-based maintenance recommendations: `decrease_stability`, `increase_stability`, `review_memory`
+- `/maintain-memory --report` surfaces stability recommendations without auto-mutation
+- `update_stability` patch op for governed stability changes
+
+**Inquiry records**
+- `InquiryRecord` with open/answered/withdrawn/stale lifecycle
+- Deterministic deduplication by normalized question and profile
+- Relevant inquiry selection capped at 3; answered and stale records not surfaced
+- Ambiguous and conflict candidates automatically create open inquiries
+
+**Context-compaction consolidation trigger**
+- `runContextCompactionConsolidation()` creates evidence records and verified candidates from observations before context is lost
+- Does not directly mutate L1 or L2 memory
+
+**Memory diagnostics**
+- `/memory-diagnostics [--save]` command checks store integrity: orphan evidence, tombstoned-in-active, contested-in-hard-rule path, deleted-in-rendered-Markdown, legacy missing fields, duplicate normalized keys, active records referencing redacted evidence
+- Severity levels: `ok`, `info`, `warning`, `error`
+- Clean generated store reports zero errors (verified in eval suite)
+
+**Contested memory warning injection**
+- When context-relevant contested records exist, a warning-only section is injected below regular memory
+- Contested records are never placed under `## Hard Rules`
+- Capped at 2 records; marked `CONTESTED` with review-before-relying warning
+
+**Meta-consolidation reports**
+- `/meta-consolidation [--handoff]` clusters stable active L2 records within a single profile
+- Performs mandatory counterexample search (contested records, tombstones, open inquiries, redacted evidence)
+- Generates review-only L1 candidates; never mutates L1 directly
+- Reports written to `reports/meta-consolidation/`
+
+**Handoff snapshots**
+- `/memory-handoff` generates a snapshot of active memory, open inquiries, contested records, and pending candidates
+- Background reference only; canonical persistent memory remains authoritative
+- Reports written to `reports/handoff/`
+
+**Eval suite**
+- `bun run eval`: 14-category deterministic eval harness with 7 hard invariants
+- Hard invariants: trust boundary, profile leakage, deletion/forgetting, inquiry cap, context-compaction, meta-consolidation safety, diagnostics clean store, contested-not-in-hard-rules
+- All categories and invariants pass before release
+
+**Correction detection improvements**
+- Durable-intent phrase patterns added: "going forward, prefer X before Y", "from now on, always use X", "in the future, prefer..."
+- Temporal "before" without durable-intent prefix remains correctly not detected
+
+**Documentation**
+- Revised README with lifecycle diagram, accurate command and tool tables, governance mode docs, evidence/trust/verification section, deletion section, diagnostics section, contested injection section, meta-consolidation section, safety guarantees table, and limitations
+- `docs/dogfood-checklist.md` for end-to-end manual verification
+- `governance.mode` documented with compatibility and strict behavior
+- Meta-consolidation manual/off-by-default noted
+- L1 never auto-applies stated in multiple places
+
+### Changed
+
+- `/maintain-memory` now also generates reinforcement-based stability recommendations in addition to time-based decay
+- `/memory-patches` and `/apply-memory-patch` commands implemented (were documented but unregistered in earlier versions)
+- `/memory-inbox` command implemented (was documented but unregistered in earlier versions)
+- FTS sync added immediately after session-end auto-curation patch application
+
+### Fixed
+
+- `loadLayerRecords()` documented to clarify it returns all records including deleted (for audit trail); callers who need only active records should use `loadActiveRecords()`
+- `applyPatchAndSync()` added as safe public helper for delete and privacy-purge flows requiring immediate FTS consistency
+
+---
+
 ## [0.7.0] - 2026-05-13
 
 ### Added
 
-**Memory governance**
-- Canonical JSONL memory store: L1 (identity), L2 (playbooks), L3 (daily session context)
-- Patch-governed mutation: every durable change writes a patch file before touching canonical JSONL; full audit trail
-- Inbox candidate system: `memory_write target=long_term` captures to inbox; curation promotes to L2
-- Deterministic curator: promotes eligible candidates to L2 with explicit evidence, confidence, stability, review cadence, and change conditions
-- Deterministic maintainer: confidence-decay patches for overdue records
-- Supersession detection: explicit `supersedes:<id>` tags and heuristic contradiction-cue matching with overlapping-tag scoring
-- Jaccard deduplication on consolidation: skips candidates with ≥ 0.7 token overlap against existing inbox and active records
-
-**Rule type taxonomy**
-- `MemoryRuleType` union with 9 categories: `workflow`, `preference`, `convention`, `architecture`, `avoid_pattern`, `prefer_pattern`, `testing`, `correction`, `tool`
-- All `MemoryRecord` and `CaptureCandidate` types carry an optional `ruleType` field (backward compatible with records written without it)
-- Curator propagates `ruleType` from candidate to promoted L2 record
-
-**Automatic correction capture**
-- Detects correction signals in user messages at conversation end (`agent_end`): "don't use X", "prefer Y over Z", "always/never use X", "this project uses X", etc.
-- Infers `ruleType` from the correction pattern: `avoid_pattern`, `prefer_pattern`, `convention`, or `correction`
-- Confidence-gated: strong corrections (≥ 0.85) become auto-eligible; medium (0.65–0.84) held for `/curate-memory`; below threshold ignored
-- Jaccard dedup prevents the same correction from being captured across sessions
-
-**Tiered auto-curation**
-- `curator.autoCurate`: `"high-only"` (default), `"all-eligible"`, or `"off"`
-- `"high-only"` auto-applies ops with confidence ≥ `autoCurateHighThreshold` (0.85) at session end after consolidation
-- L1 writes and supersede ops never auto-applied regardless of mode
-- Inbox review panel shown at next session start when pending candidates ≥ `inboxPromptThreshold` (default 3)
-
-**Inbox review panel**
-- Same component and controls as `/curate-memory` (PatchReviewPanel)
-- `[r]` schedules `/curate-memory` as a follow-up after the current agent turn using `pi.sendUserMessage`
-- `[a]` applies auto-eligible ops; `[s]` / Esc dismisses without changes
-- Shown before the first agent turn using the per-turn `ctx` from `before_agent_start` (not stale session context)
-
-**Hard rules injection**
-- `extractHardRules()`: selects high-confidence (≥ 0.85) typed correction records
-- Injected above Selected Memory with strong prefixes: `⚠️ AVOID:`, `✓ PREFER:`, `📌 RULE:`
-- Distinguishes durable corrections from soft preferences in the context block
-
-**Injection filter**
-- `shouldInjectMemoryContext()`: skips trivial prompts (single-word acknowledgements, slash commands, very short inputs)
-- Prevents noisy context injection when the user types "ok" or "thanks"
-
-**Built-in FTS5 memory search**
-- `MemoryFtsIndex`: SQLite FTS5 via `bun:sqlite` (always available, no Node 24 dependency, no external tools)
-- Porter stemming, BM25 ranking over statement + tags + ruleType
-- `memory_search mode=keyword` uses FTS directly; `mode=semantic` and `mode=deep` delegate to qmd
-- FTS index synced after every canonical mutation
-
-**Hybrid RRF search**
-- `mergeHybridResults()`: Reciprocal Rank Fusion combining FTS (weight 0.45) and qmd semantic (weight 0.55)
-- Items ranking well in both signals score highest
-- Falls back gracefully: hybrid → FTS-only → term-match
-
-**`/memory-learnings` TUI panel**
-- Interactive table for browsing and managing L2 memory records
-- Columns: layer, ruleType, confidence, staleness indicator, statement
-- `↑↓` navigate, `e` expand full record detail, `d` deprecate record, `q` close
-- Staleness warnings: ⚠️ (30 days+), 🔴 (90 days+)
-
-**Session search (built-in, no Node 24)**
-- `session_search`, `session_list`, `session_read`, `session_decisions` tools
-- BM25 keyword over a local JSONL session index
-- Semantic mode via qmd over exported session markdown summaries
-- `#decision` extraction: `session_decisions` surfaces past `#decision` markers, cross-referenced with PI memory inbox candidates by date
-- File-watch on sessions directory (2-second debounce) with 5-minute interval fallback
-- Disabled automatically in subagent children (`PI_SUBAGENT_DEPTH > 0`, `!stdin.isTTY`)
-
-**KV-cache-friendly context injection**
-- Memory injected as a per-turn custom message (`customType: "pi-persistent-intelligence-context"`, `display: false`)
-- Does not mutate `systemPrompt` — preserves provider KV-cache prefix (10× cost savings on cache-hit turns)
-- Dynamic budget (14 KB default): hard rules → L1 → scratchpad → L2 → daily digest
-- Staleness warnings on injected records: ⚠️ (30 days+), 🔴 (90 days+) with age in days
-
-**LLM consolidation at session end**
-- `pi --print` subprocess extracts durable patterns from the conversation at shutdown
-- Adds candidates to inbox; requires `/curate-memory` or tiered auto-curation before entering canonical memory
-- Jaccard dedup (0.7 threshold) prevents duplicate candidates across sessions
-- Model configurable via `PI_MEMORY_CONSOLIDATION_MODEL`
-
-**Settings.json localPath cascade**
-- `resolveRoot(cwd)` reads `{cwd}/.pi/settings.json` for `pi-persistent-intelligence.localPath` and `pi-pi.localPath` (alias)
-- Root resolved per-session; project-local memory fully isolated from global store
-
-**Vault integration**
-- `vault_ref` field on memory records
-- `promote_to_vault_candidate` patch op
-- `vault_ref` auto-suggestions during curation when `PI_VAULT_PATH` is set
-- Vault-promotion report generation under `reports/`
-- `memory-governance` companion skill
-
-**Dual-registry publish**
-- `.github/workflows/publish.yml`: triggered on `v*` tag push
-- Publishes to `registry.npmjs.org` (npm ecosystem, pi.dev) and `npm.pkg.github.com` (GitHub Packages tab)
-- Both jobs gated on CI passing
-
-**Other**
+- Canonical JSONL memory store with L1 and L2 layers
+- Patch-governed mutation with full audit trail
+- Inbox candidate system with tiered auto-curation
+- Deterministic curator with ruleType propagation
+- Deterministic maintainer with confidence-decay patches
+- Supersession detection
+- Jaccard deduplication on consolidation
+- Rule type taxonomy: 9 categories
+- Automatic correction capture from user messages
+- Tiered auto-curation with configurable thresholds
+- Inbox review panel with keyboard navigation
+- Hard rules injection with priority prefixes
+- Injection filter for trivial prompts
+- Built-in FTS5 memory search via `bun:sqlite`
+- Hybrid RRF search combining FTS and qmd semantic
+- `/memory-learnings` interactive TUI panel
+- Built-in session search with BM25 keyword ranking
+- KV-cache-friendly context injection
+- LLM consolidation at session end
+- Settings.json project-local storage cascade
+- Vault integration with vault_ref field and promotion reports
+- Dual-registry publish workflow (npmjs.com and GitHub Packages)
 - 138 passing tests
-- Interactive patch review TUI (PatchReviewPanel) with keyboard navigation, inline editing, and risk badges
-- Legacy `MEMORY.md` migration importer with quality scoring
-- `/memory-doctor` showing FTS status, session count, auto-curation mode, vault path, inbox count
-- Project identity inference from nearest `package.json`, `.git`, or cwd basename
-- qmd integration: three contexts (`rendered/`, `daily/`, `sessions/summaries/`)

@@ -6,7 +6,7 @@ export interface MemoryPaths {
   root: string;
   config: string;
   schemas: { memory: string; patch: string };
-  memory: { dir: string; L1: string; L2: string; projects: string };
+  memory: { dir: string; profiles: string; evidence: string; tombstones: string; reinforcement: string; inquiries: string; L1: string; L2: string; projects: string };
   rendered: { dir: string; memory: string; projects: string };
   scratchpad: string;
   daily: string;
@@ -61,6 +61,11 @@ export function resolvePaths(root = defaultRoot()): MemoryPaths {
     schemas: { memory: join(root, "schemas", "memory.schema.json"), patch: join(root, "schemas", "patch.schema.json") },
     memory: {
       dir: join(root, "memory"),
+      profiles: join(root, "memory", "profiles.jsonl"),
+      evidence: join(root, "memory", "evidence.jsonl"),
+      tombstones: join(root, "memory", "tombstones.jsonl"),
+      reinforcement: join(root, "memory", "reinforcement.jsonl"),
+      inquiries: join(root, "memory", "inquiries.jsonl"),
       L1: join(root, "memory", "L1.identity.jsonl"),
       L2: join(root, "memory", "L2.playbooks.jsonl"),
       projects: join(root, "memory", "projects"),
@@ -96,7 +101,7 @@ export function ensureMemoryDirs(root = defaultRoot()): MemoryPaths {
   ]) {
     mkdirSync(dir, { recursive: true });
   }
-  for (const file of [paths.memory.L1, paths.memory.L2, paths.inbox.captured]) {
+  for (const file of [paths.memory.profiles, paths.memory.evidence, paths.memory.tombstones, paths.memory.reinforcement, paths.memory.inquiries, paths.memory.L1, paths.memory.L2, paths.inbox.captured]) {
     if (!existsSync(file)) writeFileSync(file, "", "utf-8");
   }
   if (!existsSync(paths.scratchpad)) writeFileSync(paths.scratchpad, "# Scratchpad\n\n", "utf-8");

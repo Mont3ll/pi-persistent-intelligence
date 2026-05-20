@@ -1,0 +1,40 @@
+{
+  "audit_timestamp": "2026-05-20T03:31:43Z",
+  "audited_version": "0.8.0",
+  "commit": "a0dd525",
+  "overall_status": "PASS_WITH_WARNINGS",
+  "release_recommendation": "PUBLISH after fixes applied",
+  "verification": {
+    "bun_test": { "status": "PASS", "tests_passed": 240, "tests_failed": 0, "files": 57, "assertions": 570 },
+    "bun_run_typecheck": { "status": "PASS" },
+    "bun_run_eval": { "status": "PASS", "categories_passed": 12, "categories_total": 12, "hard_invariants": 5 },
+    "npm_pack_dry_run": { "status": "PASS", "files": 52, "unpacked_kb": 310, "leakage": false }
+  },
+  "scenarios": [
+    { "id": "A", "name": "Empty store", "status": "PASS" },
+    { "id": "B", "name": "Correction → curation → injection", "status": "PASS", "note": "Standard correction phrases detected correctly; 'prefer X before Y' intentionally not matched (conservative)" },
+    { "id": "C", "name": "Strict governance", "status": "PASS" },
+    { "id": "D", "name": "Conflict and inquiry", "status": "PASS" },
+    { "id": "E", "name": "Negative scope", "status": "PASS" },
+    { "id": "F", "name": "Privacy purge", "status": "PASS" },
+    { "id": "G", "name": "Reinforcement and maintenance", "status": "PASS" },
+    { "id": "H", "name": "Context compaction", "status": "PASS" },
+    { "id": "I", "name": "Meta-consolidation", "status": "PASS" },
+    { "id": "J", "name": "Handoff snapshot", "status": "PASS" }
+  ],
+  "findings": [
+    { "id": "F-01", "severity": "INFO", "title": "Correction detection: prefer X before Y not matched", "fixed_during_audit": false },
+    { "id": "F-02", "severity": "LOW", "title": "loadLayerRecords returns tombstoned records undocumented", "fixed_during_audit": true },
+    { "id": "F-03", "severity": "LOW", "title": "Session-end auto-curation FTS sync timing", "fixed_during_audit": true },
+    { "id": "F-04", "severity": "INFO", "title": "setup-session-search undocumented", "fixed_during_audit": false }
+  ],
+  "fixes_applied": [
+    { "description": "Added JSDoc to loadLayerRecords documenting tombstone behavior", "file": "src/store.ts" },
+    { "description": "Added syncFtsIndex after session-end auto-curation applyPatch call", "file": "index.ts" }
+  ],
+  "post_fix_verification": {
+    "bun_test": "PASS 240/240",
+    "bun_run_typecheck": "PASS",
+    "bun_run_eval": "PASS 12/12"
+  }
+}

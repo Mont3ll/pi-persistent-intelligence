@@ -3,6 +3,11 @@ import { loadActiveRecords } from "./store";
 import { inferProjectScope } from "./project";
 import { runConfiguredLlmAssist, type LlmAssistConfig } from "./llmAssist";
 import { suggestVaultRefs } from "./retriever";
+import { isAutoApplyEligibleCandidate } from "./trust";
+import { loadConfig } from "./config";
+import { applyCandidateMatch } from "./matching";
+import { attachVerification } from "./verifier";
+import { createInquiryFromCandidate } from "./inquiries";
 import type { CaptureCandidate, MemoryPatch, MemoryRecord, PatchOp } from "./types";
 
 interface CurateOptions {
@@ -12,6 +17,8 @@ interface CurateOptions {
   minEvidenceCount?: number;
   /** Optional path to the Obsidian vault for vault_ref auto-suggestion. */
   vaultPath?: string;
+  /** Governance mode for auto-apply gating; loaded from config if omitted */
+  governanceMode?: "compatibility" | "strict";
 }
 
 function dateOnly(iso: string): string {
@@ -120,12 +127,15 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
   const activeRecords = loadActiveRecords(root);
   const activeIds = new Set(activeRecords.map((record) => record.id));
 
-  const ops: PatchOp[] = eligible.map((candidate, index) => {
+  const ops: PatchOp[] = eligible.map((rawCandidate, index) => {
+    const candidate = attachVerification(root, applyCandidateMatch(rawCandidate, activeRecords));
+    // Automatically create open inquiry for ambiguous/conflict matches where human resolution is needed
+    createInquiryFromCandidate(root, candidate, { profile_id: candidate.profile_id ?? options.vaultPath });
     const llm = llmContradictions.get(candidate.id);
     const explicitTarget = explicitSupersedes(candidate);
     const heuristicTarget = heuristicSupersedes(candidate, activeRecords);
     const targetId = explicitTarget ?? heuristicTarget ?? llm?.target_id ?? null;
-    const record = candidateToRecord(candidate, options.now);
+    const record = { ...candidateToRecord(candidate, options.now), normalized_key: candidate.normalized_key };
     const base = {
       op_id: `op_${String(index + 1).padStart(3, "0")}`,
       candidate_id: candidate.id,
@@ -157,14 +167,20 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       return suggestions.length > 0 ? ` Possible vault_ref: ${suggestions.map((s) => `[[${s}]]`).join(", ")}.` : "";
     })();
 
+    const autoApplyEligible = isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
+    const trustGateNote = autoApplyEligible ? "" : " Trust/match gate requires human review before auto-apply.";
+    const matchNote = candidate.match_kind && candidate.match_kind !== "new"
+      ? ` Match: ${candidate.match_kind}; matched memories: ${(candidate.matched_memory_ids ?? []).join(", ") || "none"}; reasons: ${(candidate.match_reasons ?? []).join("; ") || "none"}. Suggested path: ${candidate.match_kind === "potential_conflict" ? "contest or add_exception" : candidate.match_kind === "supersedes_existing" ? "supersede after review" : candidate.match_kind === "ambiguous" ? "manual merge/review" : "review/update"}.`
+      : "";
+
     return {
       ...base,
       op: "add" as const,
       target: "memory/L2.playbooks.jsonl",
       record,
-      rationale: `Candidate ${candidate.id} meets L2 threshold (${candidate.evidence_refs.length} evidence refs, confidence ${candidate.confidence ?? 0}).${vaultHint}`,
-      risk: "low" as const,
-      default_selected: true,
+      rationale: `Candidate ${candidate.id} meets L2 threshold (${candidate.evidence_refs.length} evidence refs, confidence ${candidate.confidence ?? 0}).${vaultHint}${matchNote}${trustGateNote}`,
+      risk: candidate.poisoning_risk === "high" ? "high" as const : "low" as const,
+      default_selected: autoApplyEligible,
     };
   });
 

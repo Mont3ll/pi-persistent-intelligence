@@ -94,6 +94,67 @@ describe("tiered auto-curation logic", () => {
     expect(loadActiveRecords(dir).length).toBe(2);
   });
 
+  test("all-eligible: review-only and temporary classified candidates are not default-selected", () => {
+    const dir = root();
+    appendCandidate(dir, candidate(0.95, "cap_legacy"));
+    appendCandidate(dir, {
+      ...candidate(0.95, "cap_low_trust"),
+      primary_trust_class: "repository_text",
+      source_trust_weight: 0.25,
+      durability_signal: "project",
+      promotion_eligibility: "review_only",
+      poisoning_risk: "high",
+      poisoning_risk_reasons: ["Repository text cannot auto-promote operational memory."],
+    });
+    appendCandidate(dir, {
+      ...candidate(0.95, "cap_temp"),
+      primary_trust_class: "direct_user_instruction",
+      source_trust_weight: 1,
+      durability_signal: "temporary",
+      promotion_eligibility: "review_only",
+      poisoning_risk: "low",
+      poisoning_risk_reasons: [],
+    });
+
+    const patch = curateInbox(dir, { now: new Date().toISOString(), mode: "auto" });
+    const allIds = patch.ops
+      .filter((op) => op.default_selected && op.risk !== "high")
+      .map((op) => op.candidate_id);
+
+    expect(allIds).toEqual(["cap_legacy"]);
+  });
+
+  test("conflict and ambiguous match candidates are not default-selected", () => {
+    const dir = root();
+    appendCandidate(dir, {
+      ...candidate(0.95, "cap_conflict"),
+      primary_trust_class: "direct_user_instruction",
+      source_trust_weight: 1,
+      durability_signal: "project",
+      promotion_eligibility: "auto_candidate",
+      poisoning_risk: "low",
+      poisoning_risk_reasons: [],
+      match_kind: "potential_conflict",
+      matched_memory_ids: ["mem_1"],
+      match_reasons: ["same key conflict"],
+    });
+    appendCandidate(dir, {
+      ...candidate(0.95, "cap_ambiguous"),
+      primary_trust_class: "direct_user_instruction",
+      source_trust_weight: 1,
+      durability_signal: "project",
+      promotion_eligibility: "auto_candidate",
+      poisoning_risk: "low",
+      poisoning_risk_reasons: [],
+      match_kind: "ambiguous",
+      matched_memory_ids: ["mem_1", "mem_2"],
+      match_reasons: ["multiple matches"],
+    });
+
+    const patch = curateInbox(dir, { now: new Date().toISOString(), mode: "auto" });
+    expect(patch.ops.filter((op) => op.default_selected)).toHaveLength(0);
+  });
+
   test("default config has autoCurate: high-only with threshold 0.85", () => {
     expect(defaultConfig.curator.autoCurate).toBe("high-only");
     expect(defaultConfig.curator.autoCurateHighThreshold).toBe(0.85);

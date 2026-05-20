@@ -7,6 +7,7 @@
 import { appendCandidate, listCandidates } from "./inbox";
 import { loadActiveRecords } from "./store";
 import { tokenize } from "./sessions/bm25";
+import { buildCandidateTrustMetadata } from "./trust";
 import type { CaptureCandidate } from "./types";
 
 export const CONSOLIDATION_PROMPT_TEMPLATE = `You are a memory extraction agent for a governed persistent intelligence system.
@@ -140,6 +141,7 @@ export function applyConsolidation(
       evidence_refs: [`daily/${today}.md`],
       confidence: c.confidence,
       status: "new",
+      ...buildCandidateTrustMetadata("agent_inference", "project"),
     };
     appendCandidate(root, candidate);
     existingStatements.push(c.statement); // prevent within-batch dups too

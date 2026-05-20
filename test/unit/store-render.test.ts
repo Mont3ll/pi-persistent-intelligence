@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
-import { addMemoryRecord, loadActiveRecords } from "../../src/store";
+import { unsafeAddMemoryRecord as addMemoryRecord, loadActiveRecords } from "../../src/store";
 import { renderMemoryMarkdown, renderMemoryToDisk } from "../../src/render";
 import type { MemoryRecord } from "../../src/types";
 

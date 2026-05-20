@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addMemoryRecord, loadAllRecords, loadProjectRecords } from "../../src/store";
+import { unsafeAddMemoryRecord as addMemoryRecord, loadAllRecords, loadProjectRecords } from "../../src/store";
 import { renderMemoryToDisk } from "../../src/render";
 import type { MemoryRecord } from "../../src/types";
 

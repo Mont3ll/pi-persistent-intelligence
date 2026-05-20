@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadActiveRecords } from "./store";
+import { loadActiveRecords, loadAllRecords } from "./store";
 import { ensureMemoryDirs } from "./paths";
 import { listScratchpadItems } from "./scratchpad";
 import { readDailyLog } from "./daily";
@@ -9,7 +9,10 @@ import { shouldInjectMemoryContext } from "./injection-filter";
 import { renderHardRulesBlock } from "./rules";
 import { MemoryFtsIndex } from "./search/fts";
 import { mergeHybridResults, parseQmdMemoryIds } from "./search/hybrid";
-import type { MemoryRecord } from "./types";
+import { resolveMemoryProfile } from "./profile";
+import { runMemoryProcessorPipeline } from "./processors";
+import { extractContestedMemory, renderContestedMemoryBlock } from "./contested-memory";
+import type { MemoryRecord, ProcessorTrace, SessionContext } from "./types";
 
 export interface RetrievalOptions {
   prompt: string;
@@ -20,11 +23,15 @@ export interface RetrievalOptions {
   useQmd?: boolean;
   qmdCollection?: string;
   ftsIndex?: MemoryFtsIndex;
+  cwd?: string;
+  threadId?: string;
 }
 
 export interface RetrievalContext {
   markdown: string;
   selectedMemory: MemoryRecord[];
+  processorTraces: ProcessorTrace[];
+  contestedMemory: MemoryRecord[];
 }
 
 // ─── Staleness helpers ────────────────────────────────────────────────────────
@@ -71,26 +78,26 @@ function parseQmdIds(stdout: string): string[] {
  * Falls back through: hybrid → FTS-only → term-matching.
  */
 async function selectMemoryHybrid(
-  root: string,
+  records: MemoryRecord[],
   prompt: string,
   maxRecords: number,
   ftsIndex?: MemoryFtsIndex,
   useQmd?: boolean,
   qmdCollection?: string,
 ): Promise<MemoryRecord[]> {
-  const allRecords = loadActiveRecords(root);
-  const l1 = allRecords.filter((r) => r.layer === "L1");
-  const l2 = allRecords.filter((r) => r.layer === "L2");
+  const l1 = records.filter((r) => r.layer === "L1");
+  const l2 = records.filter((r) => r.layer === "L2");
+  const eligibleIds = new Set(records.map((r) => r.id));
 
   // Try hybrid (FTS + qmd semantic)
   if (ftsIndex?.isAvailable) {
-    const ftsResults = ftsIndex.search(prompt, maxRecords * 2);
+    const ftsResults = ftsIndex.search(prompt, maxRecords * 2).filter((result) => eligibleIds.has(result.id));
     let semanticIds: string[] = [];
 
     if (useQmd && qmdCollection) {
       try {
         const result = await runQmd(qmdSearchArgs(prompt, "semantic", maxRecords, qmdCollection), 5_000);
-        semanticIds = parseQmdIds(result.stdout);
+        semanticIds = parseQmdIds(result.stdout).filter((id) => eligibleIds.has(id));
       } catch { /* qmd unavailable — use FTS only */ }
     }
 
@@ -117,7 +124,7 @@ async function selectMemoryHybrid(
 
   // Term-matching fallback (original approach)
   const terms = promptTerms(prompt);
-  return allRecords.filter((r) => isRelevantByTerms(r, terms)).slice(0, maxRecords);
+  return records.filter((r) => isRelevantByTerms(r, terms)).slice(0, maxRecords);
 }
 
 // ─── Daily digest ─────────────────────────────────────────────────────────────
@@ -175,15 +182,30 @@ function assembleWithBudget(sections: Array<{ label: string; content: string }>,
 export async function buildRetrievalContext(root: string, options: RetrievalOptions): Promise<RetrievalContext> {
   // Skip injection for trivial prompts — saves tokens and avoids noise
   if (!shouldInjectMemoryContext(options.prompt)) {
-    return { markdown: "", selectedMemory: [] };
+    return { markdown: "", selectedMemory: [], processorTraces: [], contestedMemory: [] };
   }
 
   const paths = ensureMemoryDirs(root);
   const maxTotal = options.maxTotalChars ?? 14_000;
   const maxRecords = options.maxRecords ?? 12;
+  const cwd = options.cwd ?? process.cwd();
+  const profile = resolveMemoryProfile(root, cwd);
+  const sessionContext: SessionContext = {
+    resource_id: profile.resource_id,
+    profile_id: profile.profile_id,
+    thread_id: options.threadId ?? "current-session",
+    project_root: profile.project_identity?.git_root ?? cwd,
+    repository_id: profile.project_identity?.package_name ?? profile.project_identity?.project_id,
+    working_directory: cwd,
+    latest_user_message: options.prompt,
+    recent_files_touched: [],
+    detected_domain_tags: [],
+    is_trivial_prompt: false,
+  };
+  const processed = runMemoryProcessorPipeline(loadAllRecords(root), sessionContext);
 
   const selectedMemory = await selectMemoryHybrid(
-    root,
+    processed.records,
     options.prompt,
     maxRecords,
     options.ftsIndex,
@@ -196,8 +218,12 @@ export async function buildRetrievalContext(root: string, options: RetrievalOpti
   const dailyDigest = buildDailyDigest(daily, options.maxDailyChars ?? 3000);
 
   // Hard rules: high-confidence typed corrections injected prominently
-  const allRecords = loadActiveRecords(root);
-  const hardRulesBlock = renderHardRulesBlock(allRecords);
+  // Contested memory: from all records (including non-active), context-relevant
+  const allForContested = loadAllRecords(root);
+  const contestedMemory = extractContestedMemory(allForContested, options.prompt);
+  const contestedBlock = renderContestedMemoryBlock(contestedMemory, options.prompt);
+
+  const hardRulesBlock = renderHardRulesBlock(processed.records);
 
   const header = "# Persistent Intelligence Context";
 
@@ -219,6 +245,10 @@ export async function buildRetrievalContext(root: string, options: RetrievalOpti
         : "_No open scratchpad items._",
     },
     {
+      label: "## Contested Memory",
+      content: contestedBlock.replace("## Contested Memory\n", "").trim(),
+    },
+    {
       label: `## Daily Log (${options.today})`,
       content: dailyDigest || "_No daily log content._",
     },
@@ -227,7 +257,7 @@ export async function buildRetrievalContext(root: string, options: RetrievalOpti
   const markdown = `${header}\n\n${content}`;
   writeFileSync(paths.runtime.context, markdown, "utf-8");
   writeFileSync(paths.runtime.selected, `${JSON.stringify(selectedMemory, null, 2)}\n`, "utf-8");
-  return { markdown, selectedMemory };
+  return { markdown, selectedMemory, processorTraces: processed.traces, contestedMemory };
 }
 
 export function readRuntimeContext(root: string): string {

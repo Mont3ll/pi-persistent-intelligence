@@ -40,6 +40,12 @@ describe("extractHardRules", () => {
     expect(extractHardRules([rec])).toHaveLength(0);
   });
 
+  test("excludes contested records from authoritative hard rules", () => {
+    const rec = { ...record("r_contested", "avoid_pattern", 0.90, "Avoid Y"), status: "contested" as const };
+    expect(extractHardRules([rec])).toHaveLength(0);
+    expect(renderHardRulesBlock([rec])).toBe("");
+  });
+
   test("caps at MAX_HARD_RULES (8)", () => {
     const records = Array.from({ length: 12 }, (_, i) => record(`r${i}`, "avoid_pattern", 0.90, `Rule ${i}`));
     expect(extractHardRules(records).length).toBeLessThanOrEqual(8);
