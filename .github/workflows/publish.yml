@@ -42,8 +42,6 @@ jobs:
 
       - name: Publish to npm
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # Publish to GitHub Packages — makes the GitHub repo Packages tab show the package
   publish-github:
