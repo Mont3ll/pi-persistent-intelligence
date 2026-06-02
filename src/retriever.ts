@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadActiveRecords, loadAllRecords } from "./store";
+import { loadConfig } from "./config";
+import { listCandidates } from "./inbox";
 import { ensureMemoryDirs } from "./paths";
 import { listScratchpadItems } from "./scratchpad";
 import { readDailyLog } from "./daily";
@@ -25,6 +27,19 @@ export interface RetrievalOptions {
   ftsIndex?: MemoryFtsIndex;
   cwd?: string;
   threadId?: string;
+}
+
+export type InjectionMode = "scoped" | "policy_only" | "wakeup";
+
+export interface InjectionStats {
+  generated_at: string;
+  injectionMode: InjectionMode;
+  charCount: number;
+  selectedMemoryCount: number;
+  hardRuleCount: number;
+  contestedMemoryCount: number;
+  inquiryCount: number;
+  dailyDigestChars: number;
 }
 
 export interface RetrievalContext {
@@ -179,11 +194,55 @@ function assembleWithBudget(sections: Array<{ label: string; content: string }>,
 
 // ─── Main retrieval function ─────────────────────────────────────────────────
 
+function statsPath(root: string): string {
+  return join(ensureMemoryDirs(root).runtime.dir, "injection-stats.json");
+}
+
+function writeInjectionStats(root: string, stats: InjectionStats): void {
+  writeFileSync(statsPath(root), `${JSON.stringify(stats, null, 2)}\n`, "utf-8");
+}
+
+export function readLastInjectionStats(root: string): InjectionStats | null {
+  const file = statsPath(root);
+  if (!existsSync(file)) return null;
+  try { return JSON.parse(readFileSync(file, "utf-8")) as InjectionStats; } catch { return null; }
+}
+
+function hardRuleCount(markdown: string): number {
+  return (markdown.match(/^📌|^AVOID|^PREFER|^RULE/gm) ?? []).length;
+}
+
+function buildPolicyOnlyContext(root: string, mode: InjectionMode): RetrievalContext {
+  const paths = ensureMemoryDirs(root);
+  const cfg = loadConfig(root);
+  const pending = listCandidates(root);
+  const markdown = [
+    "# Persistent Intelligence Context",
+    "",
+    mode === "wakeup" ? "## Wake-up Context" : "## Memory Policy",
+    `- Injection mode: ${mode}`,
+    `- Governance mode: ${cfg.governance.mode}`,
+    "- PI memory exists. Use memory_search or session_search when relevant.",
+    "- Durable changes require patch governance. Do not assume memory without searching.",
+    "- L1 records never auto-apply. Privacy-sensitive content must not be persisted.",
+    mode === "wakeup" ? `- Active memory records: ${loadActiveRecords(root).length}` : "",
+    mode === "wakeup" ? `- Pending candidates: ${Array.isArray(pending) ? pending.filter((c: any) => c.status === "new").length : 0}` : "",
+    "",
+  ].filter(Boolean).join("\n");
+  writeFileSync(paths.runtime.context, markdown, "utf-8");
+  writeFileSync(paths.runtime.selected, "[]\n", "utf-8");
+  writeInjectionStats(root, { generated_at: new Date().toISOString(), injectionMode: mode, charCount: markdown.length, selectedMemoryCount: 0, hardRuleCount: 0, contestedMemoryCount: 0, inquiryCount: 0, dailyDigestChars: 0 });
+  return { markdown, selectedMemory: [], processorTraces: [], contestedMemory: [] };
+}
+
 export async function buildRetrievalContext(root: string, options: RetrievalOptions): Promise<RetrievalContext> {
   // Skip injection for trivial prompts — saves tokens and avoids noise
   if (!shouldInjectMemoryContext(options.prompt)) {
     return { markdown: "", selectedMemory: [], processorTraces: [], contestedMemory: [] };
   }
+
+  const mode = loadConfig(root).retrieval.injectionMode;
+  if (mode === "policy_only" || mode === "wakeup") return buildPolicyOnlyContext(root, mode);
 
   const paths = ensureMemoryDirs(root);
   const maxTotal = options.maxTotalChars ?? 14_000;
@@ -257,6 +316,7 @@ export async function buildRetrievalContext(root: string, options: RetrievalOpti
   const markdown = `${header}\n\n${content}`;
   writeFileSync(paths.runtime.context, markdown, "utf-8");
   writeFileSync(paths.runtime.selected, `${JSON.stringify(selectedMemory, null, 2)}\n`, "utf-8");
+  writeInjectionStats(root, { generated_at: new Date().toISOString(), injectionMode: "scoped", charCount: markdown.length, selectedMemoryCount: selectedMemory.length, hardRuleCount: hardRuleCount(hardRulesBlock), contestedMemoryCount: contestedMemory.length, inquiryCount: 0, dailyDigestChars: dailyDigest.length });
   return { markdown, selectedMemory, processorTraces: processed.traces, contestedMemory };
 }
 

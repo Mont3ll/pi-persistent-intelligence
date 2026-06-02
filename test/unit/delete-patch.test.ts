@@ -114,7 +114,7 @@ describe("delete patch", () => {
     unsafeAddMemoryRecord(dir, record());
     applyPatch(dir, patch("privacy_purge"), { selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z" });
 
-    expect(() => applyPatch(dir, {
+    const result = applyPatch(dir, {
       patch_id: "patch_readd",
       created_at: "2026-05-19T10:00:00.000Z",
       generated_by: "manual",
@@ -125,7 +125,9 @@ describe("delete patch", () => {
       applied_at: null,
       applied_ops: [],
       skipped_ops: [],
-    }, { selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z" })).toThrow(/tombstoned/);
+    }, { selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z" });
+    expect(result.applied_ops).toEqual([]);
+    expect(result.skipped_ops).toContain("op_001");
   });
 
   test("search index rebuild excludes deleted records", () => {

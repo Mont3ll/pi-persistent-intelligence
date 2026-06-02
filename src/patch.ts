@@ -1,12 +1,12 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { addMemoryRecordFromPatch, PATCH_APPLY_CONTEXT, updateMemoryRecord } from "./store";
+import { addMemoryRecordFromPatch, loadAllRecords, PATCH_APPLY_CONTEXT, updateMemoryRecord } from "./store";
 import { updateCandidateStatus } from "./inbox";
 import { renderMemoryToDisk } from "./render";
 import { ensureMemoryDirs } from "./paths";
 import { writeVaultPromotionReport } from "./vaultPromotion";
-import { createDeletionTombstone, appendDeletionTombstone } from "./tombstones";
-import { redactEvidenceForMemory } from "./evidence";
+import { createDeletionTombstone, appendDeletionTombstone, isTombstonedRecord } from "./tombstones";
+import { readEvidenceRecords, redactEvidenceForMemory } from "./evidence";
 import type { MemoryPatch, PatchOp } from "./types";
 
 export interface ApplyPatchOptions {
@@ -21,6 +21,34 @@ function isSelected(op: PatchOp, selected?: string[]): boolean {
 function mergeUnique(existing: string[] | undefined, incoming: string[] | undefined): string[] | undefined {
   const merged = [...new Set([...(existing ?? []), ...(incoming ?? [])])];
   return merged.length ? merged : undefined;
+}
+
+function hasInvalidatedEvidence(root: string, op: PatchOp): boolean {
+  const ids = new Set([...(op.record?.evidence ?? []), ...(op.to_record?.evidence ?? [])].map((ev) => ev.ref));
+  if (ids.size === 0) return false;
+  return readEvidenceRecords(root).some((ev) => ids.has(ev.id) && (ev.redaction_status === "redacted" || ev.redaction_status === "deleted"));
+}
+
+function canApplyOp(root: string, op: PatchOp): boolean {
+  const records = loadAllRecords(root);
+  const byId = new Map(records.map((record) => [record.id, record]));
+  if (op.record && byId.has(op.record.id)) return false;
+  if ((op.record || op.to_record) && hasInvalidatedEvidence(root, op)) return false;
+  if (op.target_id && isTombstonedRecord(root, op.target_id)) return false;
+  if (op.op === "add") return op.record ? !isTombstonedRecord(root, op.record.id) : false;
+  if (["update", "update_stability", "flag_for_review", "decay", "deprecate", "contest", "uncontest", "add_exception"].includes(op.op)) {
+    const target = op.target_id ? byId.get(op.target_id) : undefined;
+    return Boolean(target && target.status !== "deleted" && target.status !== "superseded");
+  }
+  if (op.op === "supersede") {
+    const target = op.target_id ? byId.get(op.target_id) : undefined;
+    return Boolean(target && target.status !== "deleted" && target.status !== "superseded" && op.to_record && !byId.has(op.to_record.id));
+  }
+  if (op.op === "delete") {
+    const target = op.target_id ? byId.get(op.target_id) : undefined;
+    return Boolean(target && target.status !== "deleted");
+  }
+  return true;
 }
 
 function applyOp(root: string, patchId: string, op: PatchOp, now: string): void {
@@ -157,7 +185,7 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
   const applied_ops: string[] = [];
   const skipped_ops: string[] = [];
   for (const op of patch.ops) {
-    if (isSelected(op, options.selectedOpIds)) {
+    if (isSelected(op, options.selectedOpIds) && canApplyOp(root, op)) {
       applyOp(root, patch.patch_id, op, options.now);
       applied_ops.push(op.op_id);
     } else {

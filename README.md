@@ -136,7 +136,10 @@ The `ruleType` field on a memory record affects retrieval priority and hard-rule
 | Command | Description |
 |---|---|
 | `/memory-doctor` | Show memory root, session count, FTS status, governance mode, vault path, inbox count |
-| `/memory-diagnostics [--save]` | Run memory integrity checks; `--save` writes JSON report to `reports/diagnostics/` |
+| `/memory-diagnostics [--save]` | Run integrity, secret, provenance, and re-verification checks; `--save` writes JSON report to `reports/diagnostics/` |
+| `/memory-graph [--save]` | Export a read-only dependency graph of memory, evidence, inquiries, tombstones, candidates, and reinforcement |
+| `/memory-timeline [--memory <id>] [--save]` | Show timeline events and effective validity for one memory or the whole store |
+| `/procedure-candidates [--save]` | Generate review-only procedure candidates from repeated workflow memory |
 | `/memory-inbox` | List pending inbox candidates awaiting curation |
 | `/memory-learnings` | Interactive TUI: browse, expand, or deprecate L2 memory records |
 | `/memory-patches` | List pending patch files |
@@ -146,7 +149,7 @@ The `ruleType` field on a memory record affects retrieval priority and hard-rule
 | `/render-memory` | Regenerate Markdown projection from canonical JSONL |
 | `/consolidate-memory` | Manually trigger session-end LLM extraction |
 | `/meta-consolidation [--handoff]` | Propose L1 patterns from stable L2 clusters (report only; never auto-applies); `--handoff` also generates a snapshot |
-| `/memory-handoff` | Generate a handoff snapshot of current active memory state |
+| `/memory-handoff` | Generate a handoff snapshot of current active memory state; use `--goal <goal>` for goal handoff context |
 | `/session-sync` | Sync session index; export summaries for semantic search |
 | `/session-reindex` | Force full re-parse of all session files |
 
@@ -275,8 +278,51 @@ Diagnostics checks:
 - legacy records missing `profile_id` or `normalized_key` (informational only)
 - duplicate normalized keys within a profile
 - active records referencing redacted or deleted evidence
+- high-confidence secret-like content in memory or evidence stores, with values redacted in output
+- provenance liveness issues such as missing source files and invalidated evidence
+- dependency-based re-verification recommendations
 
 Each finding is severity-tagged: `ok`, `info`, `warning`, or `error`. A clean store produces zero errors.
+
+---
+
+## Safety and explainability reports
+
+PI includes read-only reports for inspecting why memories exist and whether their support is still alive.
+
+```bash
+/memory-graph --save
+/memory-timeline --memory mem_example --save
+/memory-handoff --goal "Finish the release safely"
+```
+
+- **Secret scanning** blocks high-confidence secrets before long-term candidate or evidence persistence where PI controls the write path. Reports redact detected secret values. This is a conservative scanner, not a complete DLP system.
+- **Provenance liveness** flags missing source files, redacted evidence, deleted evidence, and weakened support. It does not delete memories or lower trust automatically.
+- **Dependency graph export** shows relationships between memories, evidence, inquiries, tombstones, candidates, reinforcement events, and supersession. It is a read-only report, not a graph query engine.
+- **Timeline reporting** computes effective validity from creation, update, supersession, and tombstones without mutating legacy records. It is a read-only report, not a temporal database.
+- **Goal handoff** summarizes active memory, inquiries, pending candidates, diagnostics warnings, and validation steps as background reference only.
+- **Procedure candidates** identify repeated workflow memory as review-only procedure drafts. PI never writes skill files automatically.
+
+### Injection modes
+
+The default retrieval mode is `scoped`, which preserves the current selected-memory injection behavior. For lower-token operation, configure:
+
+```json
+{
+  "retrieval": {
+    "injectionMode": "policy_only"
+  }
+}
+```
+
+Supported modes:
+
+- `scoped`: default scoped retrieval and injection
+- `policy_only`: injects compact policy and search guidance, not raw selected memory. Memory is still available through search tools.
+- `wakeup`: injects compact counts, governance mode, and suggested tools
+
+Diagnostics report the last injection mode and character count when runtime stats are available.
+
 
 ---
 

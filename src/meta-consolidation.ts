@@ -6,6 +6,8 @@ import { listCandidates } from "./inbox";
 import { readOpenInquiries } from "./inquiries";
 import { readDeletionTombstones } from "./tombstones";
 import { loadActiveRecords, loadAllRecords, loadLayerRecords } from "./store";
+import { runMemoryDiagnostics } from "./diagnostics";
+import { redactSecretsInObject } from "./secret-scanner";
 import type {
   CandidateMatchKind,
   CounterexampleSearchResult,
@@ -331,4 +333,56 @@ export function generateHandoffSnapshot(root: string, input: HandoffSnapshotInpu
   writeFileSync(join(reportDir, `${stamp}.md`), md.join("\n"), "utf-8");
   writeFileSync(join(reportDir, `${stamp}.json`), JSON.stringify(snapshot, null, 2), "utf-8");
   return snapshot;
+}
+
+export interface GoalHandoffInput {
+  declared_goal: string;
+  constraints?: string[];
+  non_goals?: string[];
+  validation_steps?: string[];
+  profile_id?: string;
+  now?: string;
+}
+
+export interface GoalHandoffSnapshot {
+  intent_id: string;
+  created_at: string;
+  declared_goal: string;
+  constraints: string[];
+  non_goals: string[];
+  validation_steps: string[];
+  active_memory_ids: string[];
+  selected_memory_ids: string[];
+  open_inquiry_ids: string[];
+  pending_candidate_ids: string[];
+  diagnostics_warnings: string[];
+  recent_evidence_ids: string[];
+  recommended_next_actions: string[];
+  background_reference_warning: string;
+}
+
+export function generateGoalHandoffSnapshot(root: string, input: GoalHandoffInput): GoalHandoffSnapshot {
+  const now = input.now ?? new Date().toISOString();
+  const active = loadActiveRecords(root).filter((record) => !input.profile_id || !record.profile_id || record.profile_id === input.profile_id);
+  const openInquiries = readOpenInquiries(root).filter((inq) => !input.profile_id || !inq.profile_id || inq.profile_id === input.profile_id);
+  const pending = listCandidates(root).filter((candidate) => candidate.status === "new" && (!input.profile_id || !candidate.profile_id || candidate.profile_id === input.profile_id));
+  const evidence = readEvidenceRecords(root).slice(-10);
+  const diagnostics = runMemoryDiagnostics(root);
+  const snapshot: GoalHandoffSnapshot = {
+    intent_id: `intent_${createHash("sha256").update(`${input.declared_goal}\n${now}`).digest("hex").slice(0, 12)}`,
+    created_at: now,
+    declared_goal: input.declared_goal,
+    constraints: input.constraints ?? [],
+    non_goals: input.non_goals ?? [],
+    validation_steps: input.validation_steps ?? [],
+    active_memory_ids: active.map((record) => record.id).sort(),
+    selected_memory_ids: [],
+    open_inquiry_ids: openInquiries.map((inq) => inq.id).sort(),
+    pending_candidate_ids: pending.map((candidate) => candidate.id).sort(),
+    diagnostics_warnings: diagnostics.findings.filter((finding) => finding.severity === "warning" || finding.severity === "error").map((finding) => `${finding.code}: ${finding.message}`),
+    recent_evidence_ids: evidence.map((record) => record.id),
+    recommended_next_actions: ["Review diagnostics warnings before relying on this handoff.", "Run the listed validation steps before claiming completion.", "Treat pending candidates as unapproved until patch review."],
+    background_reference_warning: "This is a background reference only. Canonical PI memory and patch governance remain authoritative.",
+  };
+  return redactSecretsInObject(snapshot) as GoalHandoffSnapshot;
 }

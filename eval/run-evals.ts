@@ -614,6 +614,101 @@ function evalContestedNotInHardRules(): EvalResult {
   };
 }
 
+function evalSecretPersistenceBlocked(): EvalResult {
+  const dir = tempRoot("pi-eval-secret-");
+  const { extractCorrectionCandidate } = require("../src/corrections");
+  const { appendEvidenceRecord } = require("../src/evidence");
+  const failures: string[] = [];
+  const secret = "Always use token " + "gh" + "p_" + "abcdefghijklmnopqrstuvwxyz0123456789ABCD";
+  const candidate = extractCorrectionCandidate(secret, "2026-06-01", "/tmp");
+  if (candidate) failures.push("Correction candidate persisted secret-like content.");
+  try {
+    appendEvidenceRecord(dir, { id: "ev_secret", resource_id: "r", profile_id: "p", created_at: "2026-06-01", source_kind: "manual", source_summary: secret, trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: [], redaction_status: "none" });
+    failures.push("Evidence append accepted secret-like content.");
+  } catch { /* expected */ }
+  return { category: "secret_persistence_blocked", description: "High-confidence secrets must not persist in candidates or evidence.", pass: failures.length === 0, metrics: { failures: failures.length }, failures, hard_invariant: true };
+}
+
+function evalProvenanceLiveness(): EvalResult {
+  const dir = tempRoot("pi-eval-live-");
+  const { unsafeAddMemoryRecord } = require("../src/store");
+  const { appendEvidenceRecord } = require("../src/evidence");
+  const { checkProvenanceLiveness } = require("../src/provenance-liveness");
+  appendEvidenceRecord(dir, { id: "ev_live", resource_id: "r", profile_id: "p", created_at: "2026-06-01", source_kind: "file", source_file: join(dir, "missing.md"), source_summary: "missing", trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: ["mem_live"], redaction_status: "none" });
+  unsafeAddMemoryRecord(dir, record("mem_live", "Use missing evidence.", { evidence: [{ type: "manual", ref: "ev_live", note: "support" }] }));
+  const result = checkProvenanceLiveness(dir);
+  const pass = result.findings.some((f: any) => f.code === "source_file_missing") && result.reverification_memory_ids.includes("mem_live");
+  return { category: "provenance_liveness", description: "Missing source context triggers review pressure without mutation.", pass, metrics: { findings: result.findings.length }, failures: pass ? [] : ["Missing file did not produce liveness/reverification finding."] };
+}
+
+function evalDependencyReverification(): EvalResult {
+  const dir = tempRoot("pi-eval-reverify-");
+  const { unsafeAddMemoryRecord } = require("../src/store");
+  const { appendEvidenceRecord } = require("../src/evidence");
+  const { generateReverificationRecommendations } = require("../src/reverification");
+  appendEvidenceRecord(dir, { id: "ev_dead", resource_id: "r", profile_id: "p", created_at: "2026-06-01", source_kind: "manual", source_summary: "gone", trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: ["mem_dep"], redaction_status: "deleted" });
+  unsafeAddMemoryRecord(dir, record("mem_dep", "Use dependent evidence.", { evidence: [{ type: "manual", ref: "ev_dead", note: "support" }] }));
+  const recs = generateReverificationRecommendations(dir);
+  const pass = recs.some((r: any) => r.memory_id === "mem_dep" && r.priority === "high");
+  return { category: "dependency_reverification", description: "Dependent memories are flagged when supporting evidence is invalidated.", pass, metrics: { recommendations: recs.length }, failures: pass ? [] : ["Invalidated evidence did not produce high-priority re-verification."] };
+}
+
+function evalTemporalValidity(): EvalResult {
+  const { getMemoryValidity } = require("../src/timeline");
+  const old = record("mem_old", "Old", { status: "superseded", superseded_by: ["mem_new"] });
+  const replacement = record("mem_new", "New", { created_at: "2026-07-01", supersedes: ["mem_old"] });
+  const validity = getMemoryValidity(old, [], [replacement]);
+  const pass = validity.valid_from === old.created_at && validity.valid_to === "2026-07-01" && validity.invalidated_by === "mem_new";
+  return { category: "temporal_validity", description: "Superseded records produce effective validity without mutating legacy records.", pass, metrics: { has_valid_to: validity.valid_to ? 1 : 0 }, failures: pass ? [] : ["Effective validity was not inferred correctly."], hard_invariant: true };
+}
+
+function evalIntentTraceIntegrity(): EvalResult {
+  const dir = tempRoot("pi-eval-intent-");
+  const { unsafeAddMemoryRecord, loadAllRecords } = require("../src/store");
+  const { generateGoalHandoffSnapshot } = require("../src/meta-consolidation");
+  unsafeAddMemoryRecord(dir, record("mem_goal", "Use goal context."));
+  const before = loadAllRecords(dir).length;
+  const snapshot = generateGoalHandoffSnapshot(dir, { declared_goal: "Do not publish", now: "2026-06-01T00:00:00Z" });
+  const after = loadAllRecords(dir).length;
+  const pass = before === after && snapshot.active_memory_ids.includes("mem_goal") && snapshot.background_reference_warning.includes("background reference");
+  return { category: "intent_trace_integrity", description: "Goal handoff includes context without mutating memory.", pass, metrics: { active_memory_ids: snapshot.active_memory_ids.length }, failures: pass ? [] : ["Goal handoff mutated memory or missed context."] };
+}
+
+function evalConflictAtPatchApply(): EvalResult {
+  const dir = tempRoot("pi-eval-conflict-");
+  const { unsafeAddMemoryRecord, loadAllRecords } = require("../src/store");
+  const { applyPatch } = require("../src/patch");
+  unsafeAddMemoryRecord(dir, record("mem_conflict", "Existing."));
+  const patch = { patch_id: "patch_conflict", created_at: "2026-06-01", generated_by: "manual", mode: "auto", summary: "conflict", ops: [{ op_id: "op_add", op: "add", record: record("mem_conflict", "Duplicate."), risk: "low", default_selected: true }], status: "proposed", applied_at: null, applied_ops: [], skipped_ops: [] };
+  const applied = applyPatch(dir, patch, { now: "2026-06-01T00:00:00Z" });
+  const dupes = loadAllRecords(dir).filter((r: any) => r.id === "mem_conflict").length;
+  const pass = applied.applied_ops.length === 0 && applied.skipped_ops.includes("op_add") && dupes === 1;
+  return { category: "conflict_at_patch_apply", description: "Stale/conflicting patch ops are blocked at apply time.", pass, metrics: { duplicate_records: dupes, skipped_ops: applied.skipped_ops.length }, failures: pass ? [] : ["Conflicting add was not blocked at apply time."], hard_invariant: true };
+}
+
+async function evalPolicyOnlyNoRawMemory(): Promise<EvalResult> {
+  const dir = tempRoot("pi-eval-policy-");
+  writeFileSync(join(dir, "config.json"), JSON.stringify({ retrieval: { injectionMode: "policy_only" } }));
+  unsafeAddMemoryRecord(dir, record("mem_policy", "Raw private workflow text must not inject.", { ruleType: "workflow" }));
+  const ctx = await buildRetrievalContext(dir, { prompt: "workflow", today: "2026-06-01", cwd: dir });
+  const pass = ctx.markdown.includes("PI memory exists") && !ctx.markdown.includes("Raw private workflow text") && ctx.selectedMemory.length === 0;
+  return { category: "policy_only_no_raw_memory", description: "Policy-only mode must not inject raw selected memory records.", pass, metrics: { chars: ctx.markdown.length, selected: ctx.selectedMemory.length }, failures: pass ? [] : ["Policy-only mode leaked raw memory or selected records."], hard_invariant: true };
+}
+
+function evalProcedureCandidateReviewOnly(): EvalResult {
+  const dir = tempRoot("pi-eval-procedure-");
+  const { generateProcedureCandidates } = require("../src/procedure-candidates");
+  const before = loadAllRecords(dir).length;
+  unsafeAddMemoryRecord(dir, record("mem_proc_a", "Run bun test before commit.", { tags: ["workflow", "testing"], stability: "stable", ruleType: "workflow" }));
+  unsafeAddMemoryRecord(dir, record("mem_proc_b", "Run bun run typecheck before push.", { tags: ["workflow", "testing"], stability: "stable", ruleType: "workflow" }));
+  const afterWrites = loadAllRecords(dir).length;
+  const report = generateProcedureCandidates(dir, { minSourceRecords: 2 });
+  const afterReport = loadAllRecords(dir).length;
+  const candidate = report.candidates[0];
+  const pass = afterWrites === before + 2 && afterReport === afterWrites && candidate?.requires_review === true && candidate.source_memory_ids.length === 2;
+  return { category: "procedure_candidate_review_only", description: "Procedure candidates are report-only and require review.", pass, metrics: { candidates: report.candidates.length, source_ids: candidate?.source_memory_ids.length ?? 0 }, failures: pass ? [] : ["Procedure candidate mutated memory or did not require review."] };
+}
+
 async function runEvals(): Promise<void> {
   const start = Date.now();
   const results: EvalResult[] = [];
@@ -636,6 +731,14 @@ async function runEvals(): Promise<void> {
     ["Meta-Consolidation Safety", evalMetaConsolidationSafety],
     ["Diagnostics Clean Store", evalDiagnosticsCleanStore],
     ["Contested Records Not In Hard Rules", evalContestedNotInHardRules],
+    ["Secret Persistence Blocked", evalSecretPersistenceBlocked],
+    ["Provenance Liveness", evalProvenanceLiveness],
+    ["Dependency Reverification", evalDependencyReverification],
+    ["Temporal Validity", evalTemporalValidity],
+    ["Intent Trace Integrity", evalIntentTraceIntegrity],
+    ["Conflict At Patch Apply", evalConflictAtPatchApply],
+    ["Policy Only No Raw Memory", evalPolicyOnlyNoRawMemory],
+    ["Procedure Candidate Review Only", evalProcedureCandidateReviewOnly],
   ];
 
   for (const [label, fn] of evals) {

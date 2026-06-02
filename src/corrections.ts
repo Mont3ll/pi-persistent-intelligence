@@ -13,6 +13,7 @@
  */
 
 import { buildCandidateTrustMetadata } from "./trust";
+import { scanSecrets, shouldBlockPersistence } from "./secret-scanner";
 import type { CaptureCandidate, DurabilitySignal, MemoryRuleType } from "./types";
 
 // ─── Detection patterns ───────────────────────────────────────────────────────
@@ -47,6 +48,9 @@ const CONVERSATIONAL_EXCLUSIONS = [
   /^(?:ok|okay|yes|no|sure|thanks|thank you|sounds good|looks good|never mind|for now)\.?$/i,
   /\b(?:let's|lets|can we|could we|why is|what else|is there|seems logical|never mind|for now)\b/i,
   /\b(?:message to you|your message|without any context)\b/i,
+  // Exclude task/subagent prompts -- these contain correction-like language but are instructions, not corrections
+  /^(?:task:|your goal is|you are a delegated|you are a subagent|<file name=)/i,
+  /\[Read from:.*\.md\]/i,
 ];
 
 const MIN_LENGTH = 10;
@@ -84,6 +88,7 @@ export function extractCorrectionCandidate(
 ): CaptureCandidate | null {
   const confidence = correctionConfidence(text);
   if (confidence < MIN_CONFIDENCE) return null;
+  if (shouldBlockPersistence(scanSecrets(text))) return null;
 
   const statement = text.trim().slice(0, 300).replace(/\s+/g, " ");
 

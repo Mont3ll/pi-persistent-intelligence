@@ -1,6 +1,6 @@
 # PI Persistent Intelligence -- Dogfood Checklist
 
-Manual verification checklist for `pi-persistent-intelligence` 0.8.0. Run through these checks in a real pi session to confirm end-to-end behavior before publishing.
+Manual verification checklist for `pi-persistent-intelligence` 0.9.0 candidate behavior. Run through these checks in a real pi session to confirm end-to-end behavior before publishing.
 
 ---
 
@@ -59,10 +59,17 @@ Manual verification checklist for `pi-persistent-intelligence` 0.8.0. Run throug
 
 ---
 
-## 8. Diagnostics
+## 8. Diagnostics and safety reports
 
 - [ ] Run `/memory-diagnostics` -- no errors on a clean store
 - [ ] Run `/memory-diagnostics --save` -- confirm JSON report written to `reports/diagnostics/`
+- [ ] Run `memory_write target=long_term` with a disposable fake GitHub-style token from the unit tests -- confirm persistence is blocked and no raw token is written
+- [ ] Run `/memory-graph --save` -- confirm JSON report written to `reports/memory-graph/`
+- [ ] Run `/memory-timeline --save` -- confirm JSON report written to `reports/timeline/`
+- [ ] Run `/memory-handoff --goal "Finish validation safely"` -- confirm goal handoff is background reference only
+- [ ] Set `retrieval.injectionMode` to `policy_only`, run `/reload`, and confirm injected context contains policy guidance without raw selected memory
+- [ ] Set `retrieval.injectionMode` to `wakeup`, run `/reload`, and confirm injected context is compact
+- [ ] Run `/procedure-candidates --save` -- confirm report is review-only and no `SKILL.md` file is written
 
 ---
 

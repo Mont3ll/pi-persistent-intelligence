@@ -394,6 +394,10 @@ export interface MemoryRecord {
   updated_at: string;
   review: MemoryReview;
   status: MemoryStatus;
+  valid_from?: string;
+  valid_to?: string;
+  invalidated_by?: string;
+  validity_reason?: string;
   supersedes: string[];
   superseded_by: string[];
   vault_ref: string | null;

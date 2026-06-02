@@ -5,7 +5,11 @@ import { readEvidenceRecords } from "./evidence";
 import { ensureMemoryDirs } from "./paths";
 import { isTombstonedRecord } from "./tombstones";
 import { loadAllRecords } from "./store";
+import { readLastInjectionStats } from "./retriever";
 import { extractHardRules } from "./rules";
+import { scanSecrets, redactSecrets } from "./secret-scanner";
+import { checkProvenanceLiveness } from "./provenance-liveness";
+import { generateReverificationRecommendations } from "./reverification";
 import type { MemoryRecord } from "./types";
 
 export type DiagnosticSeverity = "ok" | "info" | "warning" | "error";
@@ -146,6 +150,32 @@ export function runMemoryDiagnostics(root: string): DiagnosticsReport {
     findings.push(ok("active_record_redacted_evidence", "No active records reference redacted/deleted evidence."));
   }
 
+  // 9. Secret-like content in canonical stores. Messages never include raw matches.
+  const secretAffected: string[] = [];
+  for (const record of allRecords) {
+    if (scanSecrets(JSON.stringify(record)).hasHighConfidenceSecret) secretAffected.push(record.id);
+  }
+  for (const evidence of allEvidence) {
+    if (scanSecrets(JSON.stringify(evidence)).hasHighConfidenceSecret) secretAffected.push(evidence.id);
+  }
+  if (secretAffected.length > 0) findings.push(error("secret_like_content_detected", `${secretAffected.length} record(s) contain high-confidence secret-like content. Values redacted from diagnostics.`, secretAffected));
+  else findings.push(ok("secret_like_content_detected", "No high-confidence secret-like content detected in memory or evidence stores."));
+
+  // 10. Provenance liveness and dependency re-verification.
+  const liveness = checkProvenanceLiveness(root, now);
+  for (const finding of liveness.findings) {
+    const ids = [finding.memory_id, finding.evidence_id].filter((id): id is string => Boolean(id));
+    findings.push(finding.severity === "error" ? error(finding.code, finding.message, ids) : warn(finding.code, finding.message, ids));
+  }
+  const reverify = generateReverificationRecommendations(root);
+  if (reverify.length > 0) findings.push(warn("reverification_recommended", `${reverify.length} memory record(s) should be re-verified due to invalidated dependencies.`, reverify.map((r) => r.memory_id)));
+  else findings.push(ok("reverification_recommended", "No dependency-based re-verification recommendations."));
+
+  // 11. Last injection budget metadata, when available.
+  const stats = readLastInjectionStats(root);
+  if (stats) findings.push(info("last_injection_stats", `Last injection mode ${stats.injectionMode}; ${stats.charCount} chars; selected=${stats.selectedMemoryCount}; hard_rules=${stats.hardRuleCount}; contested=${stats.contestedMemoryCount}; inquiries=${stats.inquiryCount}.`));
+  else findings.push(info("last_injection_stats", "No runtime injection stats recorded yet."));
+
   const summary = {
     ok: findings.filter((f) => f.severity === "ok").length,
     info: findings.filter((f) => f.severity === "info").length,
@@ -168,7 +198,7 @@ export function renderDiagnosticsReport(report: DiagnosticsReport): string {
     "",
   ];
   for (const f of report.findings.filter((f) => f.severity !== "ok")) {
-    lines.push(`${icons[f.severity]} [${f.severity}] ${f.code}: ${f.message}`);
+    lines.push(redactSecrets(`${icons[f.severity]} [${f.severity}] ${f.code}: ${f.message}`));
     if (f.affected_ids?.length) lines.push(`  Affected: ${f.affected_ids.slice(0, 5).join(", ")}${f.affected_ids.length > 5 ? "..." : ""}`);
   }
   if (report.summary.errors === 0 && report.summary.warnings === 0 && report.summary.info === 0) lines.push("✓ All checks passed.");

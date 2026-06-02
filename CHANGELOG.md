@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-06-02
+
+### Added
+
+- Secret scanning before long-term candidate and evidence persistence, with high-confidence secret blocking and report redaction
+- `/memory-graph [--save]` for read-only dependency graph export across memories, evidence, inquiries, tombstones, candidates, and reinforcement events
+- `/memory-timeline [--memory <id>] [--save]` for effective validity and audit timeline reporting
+- Provenance liveness checks in diagnostics for missing source files and invalidated evidence
+- Dependency-based re-verification recommendations in diagnostics
+- Goal handoff mode via `/memory-handoff --goal <goal>`
+- Optional temporal validity fields on memory records: `valid_from`, `valid_to`, `invalidated_by`, and `validity_reason`
+- `retrieval.injectionMode` with `scoped`, `policy_only`, and `wakeup` modes
+- Runtime injection stats surfaced through diagnostics
+- `/procedure-candidates [--save]` for review-only procedure drafts from repeated workflow memory
+
+### Changed
+
+- Patch application now re-checks conflicts at apply time and skips stale unsafe operations instead of blindly applying them
+- Diagnostics now redacts high-confidence secret-like values in rendered output
+- Automatic correction capture ignores task and subagent prompt wrappers to reduce false-positive inbox candidates
+
 ## [0.8.0] - 2026-05-20
 
 ### Added

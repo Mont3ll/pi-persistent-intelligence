@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendJsonl, readJsonl, writeJsonl } from "./jsonl";
 import { ensureMemoryDirs } from "./paths";
+import { scanSecrets, shouldBlockPersistence } from "./secret-scanner";
 import type { EvidenceRecord, EvidenceSourceKind } from "./types";
 
 export const SOURCE_EXCERPT_MAX_CHARS = 1000;
@@ -70,6 +71,8 @@ export function normalizeEvidenceRecord(record: EvidenceRecord): EvidenceRecord 
 
 export function appendEvidenceRecord(root: string, record: EvidenceRecord): EvidenceRecord {
   const paths = ensureMemoryDirs(root);
+  const secretScan = scanSecrets(JSON.stringify(record));
+  if (shouldBlockPersistence(secretScan)) throw new Error("Blocked evidence persistence: high-confidence secret-like content detected.");
   const normalized = normalizeEvidenceRecord(record);
   appendJsonl(paths.memory.evidence, normalized);
   return normalized;

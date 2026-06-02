@@ -37,7 +37,7 @@ import { curateInbox } from "./src/curator";
 import { maintainMemory } from "./src/maintainer";
 import { generateMaintenanceRecommendations, buildStabilityPatchFromRecommendations, generateMaintenanceReport } from "./src/maintenance";
 import { readReinforcementEventsForMemory, summarizeReinforcement } from "./src/reinforcement";
-import { runMetaConsolidation, generateHandoffSnapshot, DEFAULT_META_CONSOLIDATION_CONFIG } from "./src/meta-consolidation";
+import { runMetaConsolidation, generateHandoffSnapshot, generateGoalHandoffSnapshot, DEFAULT_META_CONSOLIDATION_CONFIG } from "./src/meta-consolidation";
 import { runMemoryDiagnostics, renderDiagnosticsReport, saveDiagnosticsReport } from "./src/diagnostics";
 import { applyPatch } from "./src/patch";
 import { buildRetrievalContext, syncFtsIndex } from "./src/retriever";
@@ -56,6 +56,10 @@ import { loadActiveRecords } from "./src/store";
 import { buildCandidateTrustMetadata } from "./src/trust";
 import { linkExplicitCorrectionToMemory } from "./src/reinforcement";
 import { selectRelevantInquiries, renderInquiryInjectionBlock } from "./src/inquiries";
+import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
+import { exportMemoryGraph, renderMemoryGraphSummary, saveMemoryGraphReport } from "./src/memory-graph";
+import { buildMemoryTimeline, renderMemoryTimeline, saveMemoryTimelineReport } from "./src/timeline";
+import { generateProcedureCandidates, renderProcedureCandidateReport, saveProcedureCandidateReport } from "./src/procedure-candidates";
 
 function nowIso(): string { return new Date().toISOString(); }
 function shortId(prefix: string): string {
@@ -230,6 +234,40 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     }
 
     if (ctx.hasUI) ctx.ui.notify("Persistent Intelligence ready", "info");
+
+    // ── Version update check ──────────────────────────────────────────
+    // Check npm registry for a newer version once per session, non-blocking.
+    // Skipped in subagents and headless mode.
+    if (ctx.hasUI && !isChildProcess()) {
+      (async () => {
+        try {
+          const { readFileSync } = await import("node:fs");
+          const { join: pathJoin } = await import("node:path");
+          const pkgPath = pathJoin(import.meta.dir, "package.json");
+          const currentVersion: string = (JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string }).version;
+          const response = await fetch(`https://registry.npmjs.org/pi-persistent-intelligence/latest`, {
+            signal: AbortSignal.timeout(8_000),
+          });
+          if (!response.ok) return;
+          const data = await response.json() as { version?: string };
+          const latestVersion = data.version;
+          if (typeof latestVersion !== "string" || !latestVersion.trim()) return;
+
+          // Simple semver comparison: split on . and compare numerically
+          const parseVer = (v: string) => v.replace(/^v/, "").split(".").map(Number);
+          const current = parseVer(currentVersion);
+          const latest = parseVer(latestVersion);
+          const isNewer = latest[0] > current[0] || (latest[0] === current[0] && latest[1] > current[1]) || (latest[0] === current[0] && latest[1] === current[1] && latest[2] > current[2]);
+
+          if (isNewer) {
+            ctx.ui.notify(
+              `pi-persistent-intelligence ${latestVersion} is available (you have ${currentVersion}).\nRun: pi install npm:pi-persistent-intelligence`,
+              "warning",
+            );
+          }
+        } catch { /* best-effort: network unavailable, offline, etc. */ }
+      })();
+    }
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
@@ -265,10 +303,13 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
           );
 
           if (action === "approve") {
-            // Apply ops for auto-eligible candidates (confidence ≥ threshold)
+            // Apply ops for candidates meeting confidence threshold.
+            // Intentionally does not filter on default_selected -- pressing 'a' is an
+            // explicit user approval for all eligible ops, including review_only classified
+            // ones that would otherwise stay in inbox indefinitely.
             const patch = curateInbox(root, { now: nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
             const eligibleIds = patch.ops
-              .filter((op) => op.default_selected && op.risk !== "high" &&
+              .filter((op) => op.risk !== "high" &&
                 (op.record?.confidence ?? op.to_record?.confidence ?? 0) >= threshold)
               .map((op) => op.op_id);
             if (eligibleIds.length > 0) {
@@ -279,13 +320,35 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
             }
 
           } else if (action === "review") {
-            // Schedule /curate-memory as a follow-up after the current agent turn.
-            // Cannot safely chain a second ctx.ui.custom() from before_agent_start —
-            // the TUI exits custom-component mode after the first resolves, causing
-            // the second call to fail silently and kick off the agent turn instead.
-            // sendUserMessage with deliverAs:"followUp" delivers after the agent finishes,
-            // triggering the /curate-memory command handler (which reliably shows PatchReviewPanel).
-            pi.sendUserMessage("/curate-memory", { deliverAs: "followUp" });
+            // Chain a second ctx.ui.custom() call to show PatchReviewPanel.
+            // The first ctx.ui.custom() (inbox overlay) must fully resolve before
+            // calling the second -- they are sequential, not concurrent.
+            // We are still inside before_agent_start at this point.
+            if (ctx.ui.custom) {
+              try {
+                const cfg2 = loadConfig(root);
+                const vaultPath2 = cfg2.vault.path ?? process.env.PI_VAULT_PATH;
+                const reviewPatch = curateInbox(root, { now: nowIso(), mode: "propose", vaultPath: vaultPath2, minEvidenceCount: 1 });
+                if (reviewPatch.ops.length > 0) {
+                  const selectedIds = await ctx.ui.custom<string[] | null>(
+                    (tui, theme, _kb, done) =>
+                      createPatchReviewComponent(reviewPatch, done, tui as any, undefined, theme),
+                  );
+                  if (selectedIds && selectedIds.length > 0) {
+                    applyPatch(root, reviewPatch, { selectedOpIds: selectedIds, now: nowIso() });
+                    await updateQmd();
+                    syncFtsIndex(root, ftsIndex);
+                    ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
+                  }
+                } else {
+                  ctx.ui.notify("No candidates meet curation thresholds.", "info");
+                }
+              } catch {
+                ctx.ui.notify("Type /curate-memory to review pending candidates.", "info");
+              }
+            } else {
+              ctx.ui.notify("Type /curate-memory to review pending candidates.", "info");
+            }
           }
           // "skip" / null — candidates stay in inbox, session continues
         } catch {
@@ -462,11 +525,15 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       syncFtsIndex(root, ftsIndex);
         return { content: [{ type: "text", text: `Appended to daily log ${todayString()}.` }], details: {} };
       }
+      const secretScan = scanSecrets(params.content);
+      if (shouldBlockPersistence(secretScan)) {
+        return { content: [{ type: "text", text: "Blocked long-term memory capture: high-confidence secret-like content detected. Nothing was persisted." }], details: { blocked: true, findings: secretScan.findings.map((f) => ({ kind: f.kind, confidence: f.confidence, preview: f.preview })) } };
+      }
       const candidate = {
         id: shortId("cap"),
         created_at: nowIso(),
         source: { type: "manual", ref: `daily/${todayString()}.md`, cwd: process.cwd() },
-        text: params.content,
+        text: redactSecrets(params.content),
         tags: params.tags ?? [],
         evidence_refs: [`daily/${todayString()}.md`],
         confidence: params.confidence ?? 0.7,
@@ -556,6 +623,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       ctx.ui.notify(`PI memory root: ${paths.root}`, "info");
       ctx.ui.notify(`Session index: ${sessionStore.size()} sessions (file-watch + 5min sync active)`, "success");
       ctx.ui.notify(`Auto-curation: ${cfg.curator.autoCurate} (threshold: ${cfg.curator.autoCurateHighThreshold})`, cfg.curator.autoCurate !== "off" ? "success" : "warning");
+      ctx.ui.notify(`Injection mode: ${cfg.retrieval.injectionMode}`, "info");
       ctx.ui.notify(`Consolidation model: ${process.env.PI_MEMORY_CONSOLIDATION_MODEL ?? "claude-haiku-4-5-20251001 (default)"}`, "info");
       ctx.ui.notify(`Vault: ${process.env.PI_VAULT_PATH ?? cfg.vault.path ?? "not configured (set PI_VAULT_PATH)"}`, (process.env.PI_VAULT_PATH || cfg.vault.path) ? "success" : "warning");
       const pending = listCandidates(root).filter((c) => c.status === "new").length;
@@ -582,13 +650,122 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("memory-graph", {
+    description: "Export governed memory dependency graph (read-only)",
+    handler: async (args, ctx) => {
+      try {
+        const graph = exportMemoryGraph(root, nowIso());
+        const summary = renderMemoryGraphSummary(graph);
+        ctx.ui.notify(summary, "info");
+        if (args.includes("--save")) {
+          const path = saveMemoryGraphReport(root, graph);
+          ctx.ui.notify(`Memory graph saved: ${path}`, "success");
+        }
+      } catch (err) {
+        ctx.ui.notify(`Memory graph failed: ${err}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-timeline", {
+    description: "Show memory timeline report. Usage: /memory-timeline [--memory <id>] [--save]",
+    handler: async (args, ctx) => {
+      try {
+        const parts = args.trim().split(/\s+/).filter(Boolean);
+        const memoryIndex = parts.indexOf("--memory");
+        const memoryId = memoryIndex >= 0 ? parts[memoryIndex + 1] : undefined;
+        const report = buildMemoryTimeline(root, { memoryId }, nowIso());
+        ctx.ui.notify(renderMemoryTimeline(report), "info");
+        if (parts.includes("--save")) {
+          const path = saveMemoryTimelineReport(root, report);
+          ctx.ui.notify(`Memory timeline saved: ${path}`, "success");
+        }
+      } catch (err) {
+        ctx.ui.notify(`Memory timeline failed: ${err}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("procedure-candidates", {
+    description: "Generate review-only procedure candidates from repeated workflow memory",
+    handler: async (args, ctx) => {
+      try {
+        const report = generateProcedureCandidates(root, { now: nowIso() });
+        ctx.ui.notify(renderProcedureCandidateReport(report), report.candidates.length ? "success" : "info");
+        if (args.includes("--save")) {
+          const paths = saveProcedureCandidateReport(root, report);
+          ctx.ui.notify(`Procedure candidate report saved: ${paths.mdPath}`, "success");
+        }
+      } catch (err) {
+        ctx.ui.notify(`Procedure candidates failed: ${err}`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("memory-inbox", {
-    description: "Show pending inbox candidates awaiting curation",
+    description: "Show and interactively review pending inbox candidates",
     handler: async (_args, ctx) => {
       const candidates = listCandidates(root).filter((c) => c.status === "new");
       if (candidates.length === 0) { ctx.ui.notify("Inbox empty.", "info"); return; }
-      const lines = candidates.map((c, i) => `${i + 1}. ${c.id} [conf ${(c.confidence ?? 0).toFixed(2)}${c.ruleType ? ", " + c.ruleType : ""}] ${c.text.slice(0, 80)}`);
-      ctx.ui.notify(`${candidates.length} pending candidate(s):\n${lines.join("\n")}`, "info");
+
+      // Show interactive overlay if TUI is available
+      if (ctx.ui.custom) {
+        const cfg = loadConfig(root);
+        const threshold = cfg.curator.autoCurateHighThreshold ?? 0.85;
+        const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
+        const autoEligible = candidates.filter((c) => (c.confidence ?? 0) >= threshold);
+        try {
+          const action = await ctx.ui.custom<import("./src/tui/InboxReviewOverlay").InboxOverlayAction>(
+            (tui, theme, _kb, done) =>
+              createInboxReviewComponent(
+                { candidates, autoEligibleCount: autoEligible.length, highThreshold: threshold },
+                done,
+                tui as { requestRender(): void },
+                theme,
+              ),
+          );
+          if (action === "approve") {
+            const patch = curateInbox(root, { now: nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
+            const eligibleIds = patch.ops
+              .filter((op) => op.risk !== "high" &&
+                (op.record?.confidence ?? op.to_record?.confidence ?? 0) >= threshold)
+              .map((op) => op.op_id);
+            if (eligibleIds.length > 0) {
+              applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
+              await updateQmd();
+              syncFtsIndex(root, ftsIndex);
+              ctx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
+            } else {
+              ctx.ui.notify("No auto-eligible ops above confidence threshold.", "info");
+            }
+          } else if (action === "review") {
+            // Chain PatchReviewPanel directly
+            const reviewPatch = curateInbox(root, { now: nowIso(), mode: "propose", vaultPath, minEvidenceCount: 1 });
+            if (reviewPatch.ops.length > 0) {
+              const selectedIds = await ctx.ui.custom<string[] | null>(
+                (tui, theme, _kb, done) =>
+                  createPatchReviewComponent(reviewPatch, done, tui as any, undefined, theme),
+              );
+              if (selectedIds && selectedIds.length > 0) {
+                applyPatch(root, reviewPatch, { selectedOpIds: selectedIds, now: nowIso() });
+                await updateQmd();
+                syncFtsIndex(root, ftsIndex);
+                ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
+              }
+            } else {
+              ctx.ui.notify("No candidates meet curation thresholds.", "info");
+            }
+          }
+        } catch {
+          // Headless fallback
+          const lines = candidates.map((c, i) => `${i + 1}. [conf ${(c.confidence ?? 0).toFixed(2)}] ${c.text.slice(0, 80)}`);
+          ctx.ui.notify(`${candidates.length} pending candidate(s):\n${lines.join("\n")}`, "info");
+        }
+      } else {
+        // Plain text fallback for headless/RPC mode
+        const lines = candidates.map((c, i) => `${i + 1}. [conf ${(c.confidence ?? 0).toFixed(2)}${c.ruleType ? ", " + c.ruleType : ""}] ${c.text.slice(0, 80)}`);
+        ctx.ui.notify(`${candidates.length} pending candidate(s):\n${lines.join("\n")}`, "info");
+      }
     },
   });
 
@@ -779,11 +956,17 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("memory-handoff", {
-    description: "Generate a handoff snapshot of current active memory state",
-    handler: async (_args, ctx) => {
+    description: "Generate a handoff snapshot of current active memory state. Use --goal <goal> for goal handoff.",
+    handler: async (args, ctx) => {
       try {
         const { resolveMemoryProfile } = await import("./src/profile");
         const profile = resolveMemoryProfile(root, sessionCwd);
+        if (args.includes("--goal")) {
+          const declaredGoal = args.replace("--goal", "").trim() || "Continue current goal safely.";
+          const snapshot = generateGoalHandoffSnapshot(root, { declared_goal: declaredGoal, profile_id: profile.profile_id, now: nowIso() });
+          ctx.ui.notify(`Goal handoff: ${snapshot.active_memory_ids.length} active memories, ${snapshot.open_inquiry_ids.length} open inquiries, ${snapshot.pending_candidate_ids.length} pending candidates. ${snapshot.background_reference_warning}`, "success");
+          return;
+        }
         const snapshot = generateHandoffSnapshot(root, { profile_id: profile.profile_id, now: nowIso() });
         ctx.ui.notify(`Handoff snapshot: ${snapshot.active_l2_count} L2 records, ${snapshot.open_inquiry_count} open inquiries, ${snapshot.pending_candidate_count} pending candidates.`, "success");
       } catch (err) {
