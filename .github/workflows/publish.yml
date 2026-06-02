@@ -41,7 +41,7 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - name: Publish to npm
-        run: npm publish --access public
+        run: npm publish --access public --provenance
 
   # Publish to GitHub Packages — makes the GitHub repo Packages tab show the package
   publish-github:
