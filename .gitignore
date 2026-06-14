@@ -3,3 +3,10 @@ node_modules/
 dist/
 *.log
 .DS_Store
+
+# Local/private release, sprint, and integration reports
+# Public documentation belongs under docs/wiki/ or documented public docs files.
+docs/PI-SPRINT-*.md
+docs/PI-*-INTEGRATION-*.md
+docs/*RELEASE-PREP*.md
+docs/dogfood-checklist.md

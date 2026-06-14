@@ -152,7 +152,6 @@ All notable changes to this project will be documented in this file.
 
 **Documentation**
 - Revised README with lifecycle diagram, accurate command and tool tables, governance mode docs, evidence/trust/verification section, deletion section, diagnostics section, contested injection section, meta-consolidation section, safety guarantees table, and limitations
-- `docs/dogfood-checklist.md` for end-to-end manual verification
 - `governance.mode` documented with compatibility and strict behavior
 - Meta-consolidation manual/off-by-default noted
 - L1 never auto-applies stated in multiple places

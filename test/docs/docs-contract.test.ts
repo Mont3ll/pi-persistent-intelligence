@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { loadConfig } from "../../src/config";
 
 const readme = readFileSync("README.md", "utf-8");
@@ -41,5 +41,13 @@ describe("docs contract", () => {
     for (const forbidden of ["docs", "reports", "test", "eval", ".pi", "memory", "fixtures"]) {
       expect(pkg.files ?? []).not.toContain(forbidden);
     }
+    for (const fileEntry of pkg.files ?? []) {
+      expect(fileEntry).not.toMatch(/SPRINT|INTEGRATION|RELEASE-PREP|dogfood/i);
+    }
+  });
+
+  test("docs root contains only public documentation entry points", () => {
+    const rootDocs = readdirSync("docs", { withFileTypes: true }).map((entry) => entry.name).sort();
+    expect(rootDocs).toEqual(["retain-recall-reflect.md", "wiki"]);
   });
 });
