@@ -2,7 +2,7 @@
 
 Date: 2026-06-14
 Branch: main
-Commit: release-prep commit; see final integration response or git history
+Commit: `a2f810f` (`feat(memory): prepare 0.10.0 recall transparency release`)
 Runtime: Bun 1.3.13, Node v24.15.0, npm 11.12.1
 Package version: 0.10.0
 
@@ -116,10 +116,10 @@ The package was not published.
 
 ## Commit and push
 
-Commit: pending at report creation; see final integration response
+Commit: `a2f810f` (`feat(memory): prepare 0.10.0 recall transparency release`)
 Remote: `origin` (`https://github.com/Mont3ll/pi-persistent-intelligence.git`)
 Branch: `main`
-Push result: pending at report creation
+Push result: pushed `main` to `origin` (`69d6c45..a2f810f`)
 
 ## Remaining release steps
 
