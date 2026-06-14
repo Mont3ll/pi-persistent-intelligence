@@ -2,6 +2,54 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [0.10.0] - 2026-06-13
+
+### Added
+
+- Added `/memory-recall-xray <query>` for read-only recall explanations, including included/excluded memory reasoning, scope filters, evidence status, trust class, memory kind, and hard-rule attribution.
+- Added memory-worth scoring with `reject`, `daily_only`, `candidate`, and `inquiry` decisions.
+- Added `/memory-background enqueue|run|list` for local report-producing background analysis jobs.
+- Added background runners for diagnostics, provenance liveness, re-verification, memory graph, memory timeline, procedure candidates, and memory-worth review.
+- Added optional `memory_kind` taxonomy: `fact`, `event`, `instruction`, and `task`.
+- Added `codebase_analysis` evidence metadata for deterministic tool output.
+- Added `/memory-evidence add-codebase-analysis` for safe codebase evidence capture.
+- Added Retain/Recall/Reflect documentation.
+- Added docs-contract tests for command, config, package, and package-file drift.
+- Added replay-style evals for project convention recall, negative-scope exclusion, codebase evidence support, memory-worth rejection, and background-job no-mutation.
+
+### Changed
+
+- Integrated memory-worth scoring into manual long-term capture, session consolidation, and context compaction.
+- Enriched procedure candidates with review-only export boundary metadata.
+- Improved diagnostics and recall reporting with memory kind and evidence source visibility.
+- Updated README and wiki docs for recall transparency, background operations, and deterministic codebase evidence.
+
+### Governance
+
+- Preserved patch-before-mutation.
+- Preserved strict and compatibility governance modes.
+- Preserved secret scanning and redaction.
+- Preserved tombstone and privacy-purge behavior.
+- Preserved contested-memory warning-only behavior.
+- Background jobs do not directly mutate durable memory.
+- Codebase-analysis evidence supports review but does not bypass governance.
+- Procedure candidates remain review-only and do not auto-write skills.
+
+### Verification
+
+- `bun run typecheck`
+- `bun test`
+- `bun run eval`
+- `npm pack --dry-run`
+
+### Notes
+
+- No hosted service dependency was added.
+- No database, vector store, or graph database dependency was added.
+- `bun run build` is not available because this package has no build script.
+
 ## [0.9.0] - 2026-06-02
 
 ### Added

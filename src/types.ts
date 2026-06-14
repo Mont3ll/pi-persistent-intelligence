@@ -1,7 +1,8 @@
 export type MemoryLayer = "L1" | "L2" | "L3";
 export type MemoryStatus = "active" | "contested" | "deprecated" | "superseded" | "promoted" | "deleted";
 export type Stability = "low" | "semi-stable" | "stable";
-export type EvidenceType = "artifact" | "conversation" | "commit" | "source" | "manual" | "user_correction";
+export type EvidenceType = "artifact" | "conversation" | "commit" | "source" | "manual" | "user_correction" | "test_result" | "codebase_analysis";
+export type MemoryKind = "fact" | "event" | "instruction" | "task";
 
 export type EvidenceTrustClass =
   | "direct_user_instruction"
@@ -246,7 +247,24 @@ export type EvidenceSourceKind =
   | "patch"
   | "test_result"
   | "generated_content"
-  | "external_document";
+  | "external_document"
+  | "codebase_analysis";
+
+export type CodebaseAnalysisTool = "tsc" | "eslint" | "playwright" | "vitest" | "fallow" | "custom";
+export type CodebaseAnalysisKind = "typecheck" | "lint" | "test" | "e2e" | "dependency" | "dead_code" | "complexity" | "security" | "duplication" | "custom";
+
+export interface CodebaseAnalysisEvidenceMetadata {
+  source_kind: "codebase_analysis";
+  tool: CodebaseAnalysisTool;
+  tool_version?: string;
+  command?: string;
+  exit_code?: number;
+  file_path?: string;
+  symbol?: string;
+  analysis_kind?: CodebaseAnalysisKind;
+  confidence?: number;
+  timestamp: string;
+}
 
 export interface EvidenceRecord {
   id: string;
@@ -273,6 +291,8 @@ export interface EvidenceRecord {
   scope_ref?: string;
   tags?: string[];
   notes?: string;
+  /** Deterministic codebase-analysis evidence supports review; it never bypasses governance. */
+  codebase_analysis?: CodebaseAnalysisEvidenceMetadata;
 }
 
 export type ProfileType = "user" | "repo" | "project" | "workspace" | "team";
@@ -403,6 +423,8 @@ export interface MemoryRecord {
   vault_ref: string | null;
   /** Optional typed rule category — set by correction detection and manual capture */
   ruleType?: MemoryRuleType;
+  /** Optional public taxonomy for filtering/explanation. Missing legacy values are inferred at read/report time. */
+  memory_kind?: MemoryKind;
 }
 
 export interface CaptureCandidate {
@@ -421,6 +443,12 @@ export interface CaptureCandidate {
   status: "new" | "patched" | "rejected";
   /** Optional rule type hint from correction detection */
   ruleType?: MemoryRuleType;
+  /** Optional public taxonomy for filtering/explanation. */
+  memory_kind?: MemoryKind;
+  /** Optional memory-worth decision diagnostics captured before durable candidate creation. */
+  worth_decision?: MemoryWorthDecision;
+  worth_score?: number;
+  worth_reasons?: string[];
   primary_trust_class?: EvidenceTrustClass;
   source_trust_weight?: number;
   durability_signal?: DurabilitySignal;
@@ -437,6 +465,8 @@ export interface CaptureCandidate {
   verification_status?: VerificationStatus;
   verification_result?: VerificationResult;
 }
+
+export type MemoryWorthDecision = "reject" | "daily_only" | "candidate" | "inquiry";
 
 export type PatchOpType = "add" | "update" | "update_stability" | "flag_for_review" | "supersede" | "deprecate" | "decay" | "contest" | "uncontest" | "add_exception" | "delete" | "reject_candidate" | "promote_to_vault_candidate";
 

@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../src/paths";
 import { unsafeAddMemoryRecord } from "../src/store";
-import { appendCandidate } from "../src/inbox";
+import { appendCandidate, listCandidates } from "../src/inbox";
 import { curateInbox } from "../src/curator";
 import { applyPatch } from "../src/patch";
 import { loadActiveRecords, loadAllRecords } from "../src/store";
@@ -25,10 +25,13 @@ import { maybeCorrectionSignal, extractCorrectionCandidate } from "../src/correc
 import { buildCandidateTrustMetadata } from "../src/trust";
 import { verifyCandidate } from "../src/verifier";
 import { runContextCompactionConsolidation } from "../src/context-compaction";
-import { readEvidenceRecords } from "../src/evidence";
+import { appendEvidenceRecord, readEvidenceRecords } from "../src/evidence";
 import { appendReinforcementEvent, createReinforcementEvent, summarizeReinforcement } from "../src/reinforcement";
 import { createInquiryRecord, appendInquiryRecord, readOpenInquiries, selectRelevantInquiries, markInquiryAnswered } from "../src/inquiries";
 import { isTombstonedRecord } from "../src/tombstones";
+import { buildRecallXray } from "../src/recall-xray";
+import { scoreMemoryWorth } from "../src/memory-worth";
+import { enqueueBackgroundAnalysis, runBackgroundAnalysisQueue } from "../src/background-analysis";
 import type { CaptureCandidate, MemoryRecord } from "../src/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -383,7 +386,7 @@ function evalContextCompactionLifecycle(): EvalResult {
   });
 
   if (result.evidence_created !== 2) failures.push(`Expected 2 evidence records, got: ${result.evidence_created}`);
-  if (result.candidates_added !== 2) failures.push(`Expected 2 candidates, got: ${result.candidates_added}`);
+  if (result.candidates_added < 1) failures.push(`Expected at least 1 candidate after worth filtering, got: ${result.candidates_added}`);
 
   const activeBefore = loadActiveRecords(root);
   if (activeBefore.length > 0) {
@@ -397,7 +400,7 @@ function evalContextCompactionLifecycle(): EvalResult {
     category: "context_compaction_lifecycle",
     description: "Context compaction must create evidence/candidates, route through verifier, and not mutate L1/L2 directly.",
     pass: failures.length === 0,
-    metrics: { evidence_created: result.evidence_created, candidates_added: result.candidates_added, direct_l1l2_mutations: activeBefore.length },
+    metrics: { evidence_created: result.evidence_created, candidates_added: result.candidates_added, inquiries_created: result.inquiries_created ?? 0, worth_rejected: result.candidates_rejected_worth ?? 0, direct_l1l2_mutations: activeBefore.length },
     failures,
     hard_invariant: true,
   };
@@ -709,6 +712,106 @@ function evalProcedureCandidateReviewOnly(): EvalResult {
   return { category: "procedure_candidate_review_only", description: "Procedure candidates are report-only and require review.", pass, metrics: { candidates: report.candidates.length, source_ids: candidate?.source_memory_ids.length ?? 0 }, failures: pass ? [] : ["Procedure candidate mutated memory or did not require review."] };
 }
 
+function evalRecallXrayScopeExplanation(): EvalResult {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("mem_keep", "Use bun test for this repo.", { profile_id: "project:alpha" }));
+  unsafeAddMemoryRecord(root, record("mem_other", "Use npm for other repo.", { profile_id: "project:beta" }));
+  const report = buildRecallXray(root, { query: "bun test", profile_id: "project:alpha", resource_id: "repo" });
+  const pass = report.included.some((m) => m.memory_id === "mem_keep") && report.excluded.some((m) => m.memory_id === "mem_other" && m.scope_mismatch);
+  return { category: "recall_xray_scope_explanation", description: "Recall X-ray explains included memories and profile-scope exclusions.", pass, metrics: { included: report.summary.included_count, excluded: report.summary.excluded_count }, failures: pass ? [] : ["Recall X-ray did not explain included/scope-excluded memories."] };
+}
+
+function evalMemoryWorthRejectsTrivial(): EvalResult {
+  const result = scoreMemoryWorth({ observation: "ok thanks" });
+  const pass = result.decision === "reject";
+  return { category: "memory_worth_rejects_trivial", description: "Memory-worth scoring rejects low-information observations.", pass, metrics: { worth_score: result.worth_score, decision: result.decision }, failures: pass ? [] : [`Expected reject, got ${result.decision}`] };
+}
+
+function evalMemoryWorthInquiryForAmbiguous(): EvalResult {
+  const result = scoreMemoryWorth({ observation: "The release process is critical but unclear.", operationalImpact: 0.95 });
+  const pass = result.decision === "inquiry";
+  return { category: "memory_worth_inquiry_for_ambiguous", description: "Important but underspecified observations become inquiries.", pass, metrics: { worth_score: result.worth_score, decision: result.decision }, failures: pass ? [] : [`Expected inquiry, got ${result.decision}`] };
+}
+
+function evalBackgroundJobNoDirectMutation(): EvalResult {
+  const root = tempRoot();
+  const before = loadAllRecords(root).length;
+  enqueueBackgroundAnalysis(root, { kind: "diagnostics" }, "2026-06-01T00:00:00Z");
+  const jobs = runBackgroundAnalysisQueue(root, { now: "2026-06-01T00:01:00Z" });
+  const after = loadAllRecords(root).length;
+  const pass = jobs[0]?.status === "succeeded" && before === after;
+  return { category: "background_job_no_direct_mutation", description: "Background diagnostics produce artifacts without durable memory mutation.", pass, metrics: { jobs: jobs.length, before_records: before, after_records: after }, failures: pass ? [] : ["Background job mutated memory or failed."] , hard_invariant: true};
+}
+
+function evalCodebaseEvidenceNoBypass(): EvalResult {
+  const root = tempRoot();
+  appendEvidenceRecord(root, { id: "ev_code", resource_id: "repo", profile_id: "project", created_at: "2026-06-01T00:00:00Z", source_kind: "codebase_analysis", source_summary: "typecheck passed", trust_class: "passing_tool_or_test_outcome", polarity: "supports", related_memory_ids: [], codebase_analysis: { source_kind: "codebase_analysis", tool: "tsc", command: "bun run typecheck", exit_code: 0, analysis_kind: "typecheck", confidence: 0.8, timestamp: "2026-06-01T00:00:00Z" } });
+  appendCandidate(root, candidate("Typecheck currently passes.", { source: { type: "codebase_analysis", ref: "ev_code" }, evidence_ids: ["ev_code"], evidence_refs: ["ev_code"], primary_trust_class: "passing_tool_or_test_outcome", promotion_eligibility: "review_only", poisoning_risk: "low" }));
+  const patch = curateInbox(root, { now: "2026-06-01T00:01:00Z", mode: "auto" });
+  const pass = !patch.ops.some((op) => op.default_selected);
+  return { category: "codebase_evidence_no_bypass", description: "Deterministic codebase evidence supports candidates but does not bypass review.", pass, metrics: { ops: patch.ops.length, default_selected: patch.ops.filter((op) => op.default_selected).length }, failures: pass ? [] : ["Codebase evidence produced an auto-selected patch op."], hard_invariant: true };
+}
+
+function evalDocsContractCommandConfigSync(): EvalResult {
+  const readme = readFileSync("README.md", "utf-8");
+  const index = readFileSync("index.ts", "utf-8");
+  const registered = new Set([...index.matchAll(/registerCommand\("([^"]+)"/g)].map((m) => m[1]));
+  const documented = [...readme.matchAll(/`\/(memory-[a-z0-9-]+|curate-memory|maintain-memory|meta-consolidation|render-memory|consolidate-memory|setup-session-search|session-sync|session-reindex|procedure-candidates)(?:\s[^`]*)?`/g)].map((m) => m[1]);
+  const missing = [...new Set(documented)].filter((cmd) => !registered.has(cmd));
+  const pass = missing.length === 0 && readme.includes("autoCurate") && !readme.includes("auto_curate");
+  return { category: "docs_contract_command_config_sync", description: "README documented commands/config keys stay in sync with registry and schema naming.", pass, metrics: { documented_commands: documented.length, missing: missing.length }, failures: missing.map((cmd) => `Missing registered command: ${cmd}`) };
+}
+
+function evalReplayProjectConventionRecall(): EvalResult {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("mem_bun", "This project uses Bun for tests; run bun test.", { tags: ["testing", "workflow"], ruleType: "convention", memory_kind: "instruction", confidence: 0.92 }));
+  unsafeAddMemoryRecord(root, record("mem_npm_old", "Use npm test for tests.", { status: "superseded", tags: ["testing"], confidence: 0.8 }));
+  const worth = scoreMemoryWorth({ observation: "Do not suggest npm test here; use bun test.", explicitUserRequest: true, evidenceStrength: 0.9, durability: "project", scope: "project" });
+  const xray = buildRecallXray(root, { query: "how do I run tests? bun", profile_id: "default", resource_id: "default" });
+  const pass = worth.decision === "candidate" && xray.included.some((m) => m.memory_id === "mem_bun") && xray.excluded.some((m) => m.memory_id === "mem_npm_old" && m.superseded);
+  return { category: "replay_project_convention_recall", description: "Multi-turn convention/correction replay recalls Bun and excludes superseded npm truth.", pass, metrics: { included: xray.summary.included_count, excluded: xray.summary.excluded_count, worth: worth.decision }, failures: pass ? [] : ["Bun convention replay did not recall/exclude as expected."] };
+}
+
+function evalReplayNegativeScopeExclusion(): EvalResult {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("mem_lms_frontend", "Use pnpm test for LMS frontend only.", { scope: { type: "project", project: "lms-frontend" }, does_not_apply_when: ["pi package"], tags: ["testing"] }));
+  unsafeAddMemoryRecord(root, record("mem_pi", "Use bun test for PI package.", { scope: { type: "project", project: "pi-persistent-intelligence" }, tags: ["testing"] }));
+  const xray = buildRecallXray(root, { query: "pi package test command", profile_id: "default", resource_id: "default", project_root: "/tmp/pi-persistent-intelligence", working_directory: "/tmp/pi-persistent-intelligence" });
+  const excluded = xray.excluded.find((m) => m.memory_id === "mem_lms_frontend");
+  const pass = Boolean(excluded?.scope_mismatch || excluded?.negative_scope_match);
+  return { category: "replay_negative_scope_exclusion", description: "Replay excludes LMS-only memory in PI package context.", pass, metrics: { excluded: xray.summary.excluded_count }, failures: pass ? [] : ["LMS frontend memory was not explained as excluded."] };
+}
+
+function evalReplayCodebaseEvidenceSupport(): EvalResult {
+  const root = tempRoot();
+  appendEvidenceRecord(root, { id: "ev_tsc", resource_id: "repo", profile_id: "project", created_at: "2026-06-01T00:00:00Z", source_kind: "codebase_analysis", source_summary: "tsc --noEmit passed", trust_class: "passing_tool_or_test_outcome", polarity: "supports", related_memory_ids: ["mem_typecheck"], codebase_analysis: { source_kind: "codebase_analysis", tool: "tsc", command: "tsc --noEmit", exit_code: 0, analysis_kind: "typecheck", timestamp: "2026-06-01T00:00:00Z" } });
+  unsafeAddMemoryRecord(root, record("mem_typecheck", "Run tsc --noEmit for typecheck evidence.", { evidence: [{ type: "codebase_analysis", ref: "ev_tsc", note: "typecheck passed" }], tags: ["testing"] }));
+  const xray = buildRecallXray(root, { query: "typecheck evidence", profile_id: "project", resource_id: "repo" });
+  const included = xray.included.find((m) => m.memory_id === "mem_typecheck");
+  const patch = curateInbox(root, { now: "2026-06-01T00:00:00Z", mode: "auto" });
+  const pass = included?.evidence_source_kinds?.includes("codebase_analysis") === true && !patch.ops.some((op) => op.default_selected);
+  return { category: "replay_codebase_evidence_support", description: "Replay shows codebase evidence as support without auto-truth bypass.", pass, metrics: { included: xray.summary.included_count, default_selected_ops: patch.ops.filter((op) => op.default_selected).length }, failures: pass ? [] : ["Codebase evidence replay failed support/no-bypass expectation."] };
+}
+
+function evalReplayMemoryWorthRejection(): EvalResult {
+  const root = tempRoot();
+  const worth = scoreMemoryWorth({ observation: "ok thanks" });
+  if (worth.decision === "candidate") appendCandidate(root, candidate("ok thanks"));
+  const pass = worth.decision !== "candidate" && listCandidates(root).length === 0;
+  return { category: "replay_memory_worth_rejection", description: "Replay rejects trivial observation without durable candidate.", pass, metrics: { worth: worth.decision, candidates: listCandidates(root).length }, failures: pass ? [] : ["Trivial observation became durable candidate."] };
+}
+
+function evalReplayBackgroundJobNoMutation(): EvalResult {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("mem_bg_replay", "Use bun test."));
+  const before = loadAllRecords(root).length;
+  enqueueBackgroundAnalysis(root, { kind: "diagnostics" }, "2026-06-01T00:00:00Z");
+  enqueueBackgroundAnalysis(root, { kind: "reverification" }, "2026-06-01T00:00:01Z");
+  const jobs = runBackgroundAnalysisQueue(root, { now: "2026-06-01T00:01:00Z" });
+  const pass = jobs.every((job) => job.status === "succeeded") && loadAllRecords(root).length === before && jobs.every((job) => Boolean(job.output_artifact_path));
+  return { category: "replay_background_job_no_mutation", description: "Replay runs background reports without canonical durable memory mutation.", pass, metrics: { jobs: jobs.length, records_before: before, records_after: loadAllRecords(root).length }, failures: pass ? [] : ["Background replay mutated memory or failed to produce artifacts."], hard_invariant: true };
+}
+
 async function runEvals(): Promise<void> {
   const start = Date.now();
   const results: EvalResult[] = [];
@@ -739,6 +842,17 @@ async function runEvals(): Promise<void> {
     ["Conflict At Patch Apply", evalConflictAtPatchApply],
     ["Policy Only No Raw Memory", evalPolicyOnlyNoRawMemory],
     ["Procedure Candidate Review Only", evalProcedureCandidateReviewOnly],
+    ["Recall X-ray Scope Explanation", evalRecallXrayScopeExplanation],
+    ["Memory-worth Rejects Trivial", evalMemoryWorthRejectsTrivial],
+    ["Memory-worth Inquiry For Ambiguous", evalMemoryWorthInquiryForAmbiguous],
+    ["Background Job No Direct Mutation", evalBackgroundJobNoDirectMutation],
+    ["Codebase Evidence No Bypass", evalCodebaseEvidenceNoBypass],
+    ["Docs Contract Command Config Sync", evalDocsContractCommandConfigSync],
+    ["Replay Project Convention Recall", evalReplayProjectConventionRecall],
+    ["Replay Negative Scope Exclusion", evalReplayNegativeScopeExclusion],
+    ["Replay Codebase Evidence Support", evalReplayCodebaseEvidenceSupport],
+    ["Replay Memory-worth Rejection", evalReplayMemoryWorthRejection],
+    ["Replay Background Job No Mutation", evalReplayBackgroundJobNoMutation],
   ];
 
   for (const [label, fn] of evals) {

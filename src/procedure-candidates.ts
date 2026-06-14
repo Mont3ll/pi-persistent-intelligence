@@ -5,7 +5,10 @@ import { loadAllRecords } from "./store";
 import { redactSecretsInObject } from "./secret-scanner";
 import type { MemoryRecord } from "./types";
 
+export type ProcedureExportStatus = "not_exported" | "review_required" | "approved" | "exported";
+
 export interface ProcedureCandidate {
+  procedure_candidate_id: string;
   title: string;
   when_to_use: string;
   steps: string[];
@@ -14,6 +17,9 @@ export interface ProcedureCandidate {
   source_memory_ids: string[];
   evidence_ids: string[];
   confidence: number;
+  suggested_skill_name?: string;
+  export_status: ProcedureExportStatus;
+  requires_human_review: true;
   requires_review: true;
 }
 
@@ -52,6 +58,7 @@ export function generateProcedureCandidates(root: string, options: ProcedureCand
 
   const selected = candidates.slice(0, 6);
   const procedure: ProcedureCandidate = {
+    procedure_candidate_id: `proc_${(options.now ?? new Date().toISOString()).replace(/[-:.TZ]/g, "").slice(0, 14)}`,
     title: titleFrom(selected),
     when_to_use: "Use when repeated workflow memory records indicate a stable operating procedure.",
     steps: selected.map((record) => record.statement),
@@ -60,6 +67,9 @@ export function generateProcedureCandidates(root: string, options: ProcedureCand
     source_memory_ids: selected.map((record) => record.id),
     evidence_ids: [...new Set(selected.flatMap((record) => record.evidence.map((ev) => ev.ref)))],
     confidence: Number((selected.reduce((sum, record) => sum + record.confidence, 0) / selected.length).toFixed(2)),
+    suggested_skill_name: titleFrom(selected).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+    export_status: "not_exported",
+    requires_human_review: true,
     requires_review: true,
   };
 
@@ -69,7 +79,7 @@ export function generateProcedureCandidates(root: string, options: ProcedureCand
 export function renderProcedureCandidateReport(report: ProcedureCandidateReport): string {
   const lines = [`# Procedure Candidate Report`, "", `Generated: ${report.generated_at}`, "", "> Review-only. No skill files were written and no memory was mutated.", ""];
   for (const candidate of report.candidates) {
-    lines.push(`## ${candidate.title}`, "", `When to use: ${candidate.when_to_use}`, "", "Steps:");
+    lines.push(`## ${candidate.title}`, "", `Candidate ID: ${candidate.procedure_candidate_id}`, `Export status: ${candidate.export_status}`, "Requires human review: true", "", `When to use: ${candidate.when_to_use}`, "", "Steps:");
     candidate.steps.forEach((step, index) => lines.push(`${index + 1}. ${step}`));
     lines.push("", "Verification:");
     (candidate.verification_steps.length ? candidate.verification_steps : ["Review source memory records manually."]).forEach((step) => lines.push(`- ${step}`));

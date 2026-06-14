@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
 import { listCandidates } from "../../src/inbox";
+import { readOpenInquiries } from "../../src/inquiries";
 
 function tempRoot() {
   const dir = mkdtempSync(join(tmpdir(), "pi-consolidator-"));
@@ -80,6 +81,23 @@ describe("applyConsolidation", () => {
     expect(inbox).toHaveLength(2);
     expect(inbox[0].status).toBe("new");
     expect(inbox[0].source.type).toBe("conversation");
+    cleanup();
+  });
+
+  test("routes trivial candidates away from durable inbox and creates inquiry for ambiguous important candidate", () => {
+    const { dir, cleanup } = tempRoot();
+    ensureMemoryDirs(dir);
+    const result = applyConsolidation(dir, [
+      { statement: "ok thanks", tags: [], confidence: 0.9, evidence_hint: "trivial" },
+      { statement: "The release process is critical but unclear.", tags: ["release"], confidence: 0.9, evidence_hint: "ambiguous" },
+      { statement: "Always run bun test before committing.", tags: ["testing"], confidence: 0.9, evidence_hint: "explicit" },
+    ], "2026-06-01", dir);
+    expect(result.candidates_added).toBe(1);
+    expect(result.candidates_rejected_worth).toBe(1);
+    expect(result.inquiries_created).toBe(1);
+    expect(listCandidates(dir).map((c) => c.text)).toEqual(["Always run bun test before committing."]);
+    expect(listCandidates(dir)[0].worth_decision).toBe("candidate");
+    expect(readOpenInquiries(dir)[0].question).toContain("critical but unclear");
     cleanup();
   });
 

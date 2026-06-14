@@ -32,7 +32,7 @@ type ExtensionAPI = {
 import { ensureMemoryDirs, resolveRoot } from "./src/paths";
 import { appendDailyLog, readDailyLog, todayString } from "./src/daily";
 import { addScratchpadItem, clearDoneScratchpadItems, listScratchpadItems, markScratchpadDone, markScratchpadUndone } from "./src/scratchpad";
-import { appendCandidate, listCandidates } from "./src/inbox";
+import { appendCandidate, listCandidates, shouldPersistWorthDecision, withMemoryWorth } from "./src/inbox";
 import { curateInbox } from "./src/curator";
 import { maintainMemory } from "./src/maintainer";
 import { generateMaintenanceRecommendations, buildStabilityPatchFromRecommendations, generateMaintenanceReport } from "./src/maintenance";
@@ -57,14 +57,39 @@ import { buildCandidateTrustMetadata } from "./src/trust";
 import { linkExplicitCorrectionToMemory } from "./src/reinforcement";
 import { selectRelevantInquiries, renderInquiryInjectionBlock } from "./src/inquiries";
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
+import { appendEvidenceRecord } from "./src/evidence";
 import { exportMemoryGraph, renderMemoryGraphSummary, saveMemoryGraphReport } from "./src/memory-graph";
 import { buildMemoryTimeline, renderMemoryTimeline, saveMemoryTimelineReport } from "./src/timeline";
 import { generateProcedureCandidates, renderProcedureCandidateReport, saveProcedureCandidateReport } from "./src/procedure-candidates";
+import { buildRecallXray, renderRecallXrayReport } from "./src/recall-xray";
+import { enqueueBackgroundAnalysis, listBackgroundAnalysisJobs, runBackgroundAnalysisQueue, type BackgroundAnalysisKind } from "./src/background-analysis";
+import { scoreMemoryWorth } from "./src/memory-worth";
+import { resolveMemoryProfile } from "./src/profile";
+import type { CaptureCandidate, CodebaseAnalysisKind, CodebaseAnalysisTool } from "./src/types";
 
 function nowIso(): string { return new Date().toISOString(); }
 function shortId(prefix: string): string {
   return `${prefix}_${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}_${Math.random().toString(36).slice(2, 6)}`;
 }
+function parseCommandArgs(input: string): { positional: string[]; flags: Record<string, string | boolean> } {
+  const tokens = [...input.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((m) => m[1] ?? m[2] ?? m[3]);
+  const positional: string[] = [];
+  const flags: Record<string, string | boolean> = {};
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.startsWith("--")) {
+      const key = token.slice(2);
+      const next = tokens[i + 1];
+      if (next && !next.startsWith("--")) { flags[key] = next; i++; }
+      else flags[key] = true;
+    } else positional.push(token);
+  }
+  return { positional, flags };
+}
+
+const CODEBASE_EVIDENCE_TOOLS = new Set<CodebaseAnalysisTool>(["tsc", "eslint", "playwright", "vitest", "fallow", "custom"]);
+const CODEBASE_ANALYSIS_KINDS = new Set<CodebaseAnalysisKind>(["typecheck", "lint", "test", "e2e", "dependency", "dead_code", "complexity", "security", "duplication", "custom"]);
+
 function extractText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -529,7 +554,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       if (shouldBlockPersistence(secretScan)) {
         return { content: [{ type: "text", text: "Blocked long-term memory capture: high-confidence secret-like content detected. Nothing was persisted." }], details: { blocked: true, findings: secretScan.findings.map((f) => ({ kind: f.kind, confidence: f.confidence, preview: f.preview })) } };
       }
-      const candidate = {
+      let candidate: CaptureCandidate = {
         id: shortId("cap"),
         created_at: nowIso(),
         source: { type: "manual", ref: `daily/${todayString()}.md`, cwd: process.cwd() },
@@ -540,8 +565,19 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         status: "new" as const,
         ...buildCandidateTrustMetadata("direct_user_instruction", "long_term"),
       };
+      candidate = withMemoryWorth(candidate, listCandidates(root).map((c) => c.text));
+      if (candidate.worth_decision === "reject") {
+        return { content: [{ type: "text", text: `Memory-worth scoring rejected durable capture (${candidate.worth_reasons?.join(", ") || "low worth"}). Nothing was persisted.` }], details: candidate };
+      }
+      if (candidate.worth_decision === "daily_only") {
+        appendDailyLog(root, todayString(), `<!-- ${nowIso()} -->\n## Memory-worth daily-only\n- ${candidate.text}`);
+        return { content: [{ type: "text", text: `Memory-worth scoring routed this to daily log only (${candidate.worth_score}).` }], details: candidate };
+      }
+      if (!shouldPersistWorthDecision(candidate.worth_decision ?? "candidate")) {
+        return { content: [{ type: "text", text: "Memory-worth scoring did not allow inbox persistence." }], details: candidate };
+      }
       appendCandidate(root, candidate);
-      return { content: [{ type: "text", text: `Captured long-term memory candidate ${candidate.id}; run /curate-memory to review.` }], details: candidate };
+      return { content: [{ type: "text", text: `Captured long-term memory candidate ${candidate.id}; worth=${candidate.worth_decision}/${candidate.worth_score}; run /curate-memory to review.` }], details: candidate };
     },
   });
 
@@ -647,6 +683,114 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       } catch (err) {
         ctx.ui.notify(`Diagnostics failed: ${err}`, "error");
       }
+    },
+  });
+
+  pi.registerCommand("memory-recall-xray", {
+    description: "Explain why memory would be included or excluded for a query (read-only). Usage: /memory-recall-xray <query>",
+    handler: async (args, ctx) => {
+      try {
+        const query = args.trim();
+        const profile = resolveMemoryProfile(root, sessionCwd);
+        const report = buildRecallXray(root, { query, profile_id: profile.profile_id, resource_id: profile.resource_id, working_directory: sessionCwd, project_root: sessionCwd });
+        ctx.ui.notify(renderRecallXrayReport(report), "info");
+      } catch (err) {
+        ctx.ui.notify(`Recall x-ray failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-evidence", {
+    description: "Manage structured evidence. Usage: /memory-evidence add-codebase-analysis --tool <tool> --command \"<command>\" --exit-code <code> --analysis-kind <kind> [--file <path>] [--symbol <name>] [--summary \"<summary>\"]",
+    handler: async (args, ctx) => {
+      const parsed = parseCommandArgs(args);
+      const action = parsed.positional[0];
+      if (action !== "add-codebase-analysis") {
+        ctx.ui.notify("Usage: /memory-evidence add-codebase-analysis --tool <tsc|eslint|playwright|vitest|fallow|custom> --command \"<command>\" --exit-code <code> --analysis-kind <kind>", "warning");
+        return;
+      }
+      const tool = parsed.flags.tool;
+      const analysisKind = parsed.flags["analysis-kind"];
+      if (typeof tool !== "string" || !CODEBASE_EVIDENCE_TOOLS.has(tool as CodebaseAnalysisTool)) {
+        ctx.ui.notify(`Invalid codebase evidence tool. Supported: ${[...CODEBASE_EVIDENCE_TOOLS].join(", ")}`, "error");
+        return;
+      }
+      if (typeof analysisKind !== "string" || !CODEBASE_ANALYSIS_KINDS.has(analysisKind as CodebaseAnalysisKind)) {
+        ctx.ui.notify(`Invalid codebase analysis kind. Supported: ${[...CODEBASE_ANALYSIS_KINDS].join(", ")}`, "error");
+        return;
+      }
+      const command = typeof parsed.flags.command === "string" ? redactSecrets(parsed.flags.command) : undefined;
+      const exitRaw = typeof parsed.flags["exit-code"] === "string" ? Number(parsed.flags["exit-code"]) : undefined;
+      if (exitRaw !== undefined && !Number.isFinite(exitRaw)) {
+        ctx.ui.notify("Invalid --exit-code; expected a number.", "error");
+        return;
+      }
+      const profile = resolveMemoryProfile(root, sessionCwd);
+      try {
+        const record = appendEvidenceRecord(root, {
+          id: "",
+          resource_id: profile.resource_id,
+          profile_id: profile.profile_id,
+          thread_id: "manual-command",
+          created_at: nowIso(),
+          source_kind: "codebase_analysis",
+          source_tool: tool,
+          source_ref: command,
+          source_summary: redactSecrets(typeof parsed.flags.summary === "string" ? parsed.flags.summary : `${tool} ${analysisKind} evidence${exitRaw === undefined ? "" : ` (exit ${exitRaw})`}`),
+          trust_class: "passing_tool_or_test_outcome",
+          polarity: exitRaw === undefined || exitRaw === 0 ? "supports" : "qualifies",
+          durability_signal: "task",
+          related_memory_ids: [],
+          redaction_status: "none",
+          codebase_analysis: {
+            source_kind: "codebase_analysis",
+            tool: tool as CodebaseAnalysisTool,
+            command,
+            exit_code: exitRaw,
+            file_path: typeof parsed.flags.file === "string" ? redactSecrets(parsed.flags.file) : undefined,
+            symbol: typeof parsed.flags.symbol === "string" ? redactSecrets(parsed.flags.symbol) : undefined,
+            analysis_kind: analysisKind as CodebaseAnalysisKind,
+            timestamp: nowIso(),
+          },
+        });
+        ctx.ui.notify(`Added codebase-analysis evidence ${record.id}. Evidence is support, not automatic durable truth.`, "success");
+      } catch (err) {
+        ctx.ui.notify(`Failed to add codebase-analysis evidence: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-background", {
+    description: "Queue and run inspectable local background memory analysis. Usage: /memory-background enqueue <kind>|run|list",
+    handler: async (args, ctx) => {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      const action = parts[0] ?? "list";
+      try {
+        if (action === "enqueue") {
+          const kind = (parts[1] ?? "diagnostics") as BackgroundAnalysisKind;
+          const profile = resolveMemoryProfile(root, sessionCwd);
+          const job = enqueueBackgroundAnalysis(root, { kind, profile_id: profile.profile_id, resource_id: profile.resource_id, input_summary: parts.slice(2).join(" ") || undefined }, nowIso());
+          ctx.ui.notify(`Queued background analysis ${job.id} (${job.kind}).`, "success");
+          return;
+        }
+        if (action === "run") {
+          const jobs = runBackgroundAnalysisQueue(root, { now: nowIso() });
+          ctx.ui.notify(jobs.map((j) => `${j.id} [${j.status}]${j.output_artifact_path ? ` ${j.output_artifact_path}` : ""}${j.error ? ` ${j.error}` : ""}`).join("\n") || "No background jobs.", "info");
+          return;
+        }
+        const jobs = listBackgroundAnalysisJobs(root);
+        ctx.ui.notify(jobs.map((j) => `${j.id} [${j.status}] ${j.kind}`).join("\n") || "No background jobs.", "info");
+      } catch (err) {
+        ctx.ui.notify(`Background analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-worth", {
+    description: "Score whether an observation is worth durable memory capture (read-only). Usage: /memory-worth <observation>",
+    handler: async (args, ctx) => {
+      const decision = scoreMemoryWorth({ observation: args, existingStatements: loadActiveRecords(root).map((r) => r.statement) });
+      ctx.ui.notify(JSON.stringify(decision, null, 2), decision.decision === "reject" ? "warning" : "info");
     },
   });
 

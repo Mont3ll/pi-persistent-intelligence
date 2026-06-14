@@ -10,6 +10,7 @@ import { extractHardRules } from "./rules";
 import { scanSecrets, redactSecrets } from "./secret-scanner";
 import { checkProvenanceLiveness } from "./provenance-liveness";
 import { generateReverificationRecommendations } from "./reverification";
+import { inferMemoryKind } from "./memory-kind";
 import type { MemoryRecord } from "./types";
 
 export type DiagnosticSeverity = "ok" | "info" | "warning" | "error";
@@ -171,7 +172,15 @@ export function runMemoryDiagnostics(root: string): DiagnosticsReport {
   if (reverify.length > 0) findings.push(warn("reverification_recommended", `${reverify.length} memory record(s) should be re-verified due to invalidated dependencies.`, reverify.map((r) => r.memory_id)));
   else findings.push(ok("reverification_recommended", "No dependency-based re-verification recommendations."));
 
-  // 11. Last injection budget metadata, when available.
+  // 11. Public memory kind taxonomy coverage.
+  const kindCounts = allRecords.reduce<Record<string, number>>((counts, record) => {
+    const kind = record.memory_kind ?? inferMemoryKind(record);
+    counts[kind] = (counts[kind] ?? 0) + 1;
+    return counts;
+  }, {});
+  findings.push(info("memory_kind_taxonomy", `Memory kinds: fact=${kindCounts.fact ?? 0}, event=${kindCounts.event ?? 0}, instruction=${kindCounts.instruction ?? 0}, task=${kindCounts.task ?? 0}.`));
+
+  // 12. Last injection budget metadata, when available.
   const stats = readLastInjectionStats(root);
   if (stats) findings.push(info("last_injection_stats", `Last injection mode ${stats.injectionMode}; ${stats.charCount} chars; selected=${stats.selectedMemoryCount}; hard_rules=${stats.hardRuleCount}; contested=${stats.contestedMemoryCount}; inquiries=${stats.inquiryCount}.`));
   else findings.push(info("last_injection_stats", "No runtime injection stats recorded yet."));

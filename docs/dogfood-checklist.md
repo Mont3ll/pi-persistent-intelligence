@@ -1,6 +1,6 @@
 # PI Persistent Intelligence -- Dogfood Checklist
 
-Manual verification checklist for `pi-persistent-intelligence` 0.9.0 candidate behavior. Run through these checks in a real pi session to confirm end-to-end behavior before publishing.
+Manual verification checklist for `pi-persistent-intelligence` current candidate behavior. Run through these checks in a real pi session to confirm end-to-end behavior before publishing.
 
 ---
 
@@ -70,6 +70,10 @@ Manual verification checklist for `pi-persistent-intelligence` 0.9.0 candidate b
 - [ ] Set `retrieval.injectionMode` to `policy_only`, run `/reload`, and confirm injected context contains policy guidance without raw selected memory
 - [ ] Set `retrieval.injectionMode` to `wakeup`, run `/reload`, and confirm injected context is compact
 - [ ] Run `/procedure-candidates --save` -- confirm report is review-only and no `SKILL.md` file is written
+- [ ] Run `/memory-recall-xray "bun test"` -- confirm it explains included and excluded memories without exposing secrets
+- [ ] Run `/memory-background enqueue diagnostics`, `/memory-background enqueue reverification`, `/memory-background enqueue memory_graph`, `/memory-background run`, and `/memory-background list` -- confirm inspectable report artifacts are produced and no memory record is mutated
+- [ ] Run `/memory-worth "ok thanks"` -- confirm it returns `reject`; run `/memory-worth "Going forward, always run bun test before commit"` -- confirm it returns `candidate`
+- [ ] Run `/memory-evidence add-codebase-analysis --tool tsc --command "bun run typecheck" --exit-code 0 --analysis-kind typecheck --summary "typecheck passed"` -- confirm evidence is created and not promoted automatically
 
 ---
 

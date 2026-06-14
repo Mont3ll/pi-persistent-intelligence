@@ -1,7 +1,9 @@
 import { appendEvidenceRecord } from "./evidence";
-import { appendCandidate } from "./inbox";
+import { appendCandidate, withMemoryWorth } from "./inbox";
 import { buildCandidateTrustMetadata } from "./trust";
 import { attachVerification } from "./verifier";
+import { scoreMemoryWorth } from "./memory-worth";
+import { upsertInquiryRecord } from "./inquiries";
 import type { CaptureCandidate, ConsolidationTrigger, DurabilitySignal, EvidenceTrustClass } from "./types";
 
 export interface ContextCompactionObservation {
@@ -25,6 +27,9 @@ export interface ContextCompactionResult {
   evidence_created: number;
   candidates_added: number;
   candidates_rejected: number;
+  candidates_rejected_worth?: number;
+  candidates_daily_only?: number;
+  inquiries_created?: number;
 }
 
 function idSafe(input: string): string {
@@ -36,6 +41,9 @@ export function runContextCompactionConsolidation(root: string, input: ContextCo
   let evidenceCreated = 0;
   let candidatesAdded = 0;
   let candidatesRejected = 0;
+  let candidatesRejectedWorth = 0;
+  let candidatesDailyOnly = 0;
+  let inquiriesCreated = 0;
 
   for (const [index, observation] of input.observations.entries()) {
     const evidence = appendEvidenceRecord(root, {
@@ -56,7 +64,22 @@ export function runContextCompactionConsolidation(root: string, input: ContextCo
     });
     evidenceCreated++;
 
-    const candidate: CaptureCandidate = attachVerification(root, {
+    const worth = scoreMemoryWorth({ observation: observation.text, explicitUserRequest: observation.trust_class === "direct_user_instruction" || observation.trust_class === "user_correction", evidenceStrength: 0.8, operationalImpact: observation.tags?.some((tag) => /testing|workflow|release|security/.test(tag)) ? 0.8 : undefined, durability: observation.durability_signal === "temporary" ? "temporary" : observation.durability_signal === "task" ? "task" : "project", scope: input.profile_id });
+    if (worth.decision === "reject") {
+      candidatesRejectedWorth++;
+      continue;
+    }
+    if (worth.decision === "daily_only") {
+      candidatesDailyOnly++;
+      continue;
+    }
+    if (worth.decision === "inquiry") {
+      upsertInquiryRecord(root, { question: observation.text, profile_id: input.profile_id, session_id: input.thread_id, now });
+      inquiriesCreated++;
+      continue;
+    }
+
+    const candidate: CaptureCandidate = attachVerification(root, withMemoryWorth({
       id: `cap_compact_${idSafe(evidence.id)}`,
       resource_id: input.resource_id,
       profile_id: input.profile_id,
@@ -70,12 +93,12 @@ export function runContextCompactionConsolidation(root: string, input: ContextCo
       confidence: observation.trust_class === "direct_user_instruction" || observation.trust_class === "user_correction" ? 0.9 : 0.75,
       status: "new",
       ...buildCandidateTrustMetadata(observation.trust_class, observation.durability_signal),
-    });
+    }));
 
     if (candidate.verification_status === "rejected") candidatesRejected++;
     appendCandidate(root, candidate);
     candidatesAdded++;
   }
 
-  return { trigger: "context_compaction", evidence_created: evidenceCreated, candidates_added: candidatesAdded, candidates_rejected: candidatesRejected };
+  return { trigger: "context_compaction", evidence_created: evidenceCreated, candidates_added: candidatesAdded, candidates_rejected: candidatesRejected, candidates_rejected_worth: candidatesRejectedWorth, candidates_daily_only: candidatesDailyOnly, inquiries_created: inquiriesCreated };
 }

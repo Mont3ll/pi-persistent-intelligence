@@ -4,10 +4,12 @@
  * Includes Jaccard deduplication: candidates with >0.7 token overlap against
  * existing inbox items or active L2 records are silently skipped.
  */
-import { appendCandidate, listCandidates } from "./inbox";
+import { appendCandidate, listCandidates, withMemoryWorth } from "./inbox";
 import { loadActiveRecords } from "./store";
 import { tokenize } from "./sessions/bm25";
 import { buildCandidateTrustMetadata } from "./trust";
+import { scoreMemoryWorth } from "./memory-worth";
+import { upsertInquiryRecord } from "./inquiries";
 import type { CaptureCandidate } from "./types";
 
 export const CONSOLIDATION_PROMPT_TEMPLATE = `You are a memory extraction agent for a governed persistent intelligence system.
@@ -51,6 +53,9 @@ export interface ConsolidationResult {
   candidates_extracted: number;
   candidates_added: number;
   candidates_skipped_dedup: number;
+  candidates_rejected_worth?: number;
+  candidates_daily_only?: number;
+  inquiries_created?: number;
 }
 
 export interface RawCandidate {
@@ -125,6 +130,9 @@ export function applyConsolidation(
 
   let added = 0;
   let skipped = 0;
+  let rejectedWorth = 0;
+  let dailyOnly = 0;
+  let inquiriesCreated = 0;
 
   for (const c of candidates) {
     if (isDuplicate(c.statement, existingStatements)) {
@@ -132,7 +140,23 @@ export function applyConsolidation(
       continue;
     }
 
-    const candidate: CaptureCandidate = {
+    const durableWorkflowTag = c.tags?.some((tag) => /testing|workflow/.test(tag)) ?? false;
+    const worth = scoreMemoryWorth({ observation: c.statement, explicitUserRequest: durableWorkflowTag, evidenceStrength: 0.7, operationalImpact: c.tags?.some((tag) => /testing|workflow|release|security/.test(tag)) ? 0.8 : undefined, durability: "project", scope: sessionRef, existingStatements });
+    if (worth.decision === "reject") {
+      rejectedWorth++;
+      continue;
+    }
+    if (worth.decision === "daily_only") {
+      dailyOnly++;
+      continue;
+    }
+    if (worth.decision === "inquiry") {
+      upsertInquiryRecord(root, { question: c.statement, session_id: sessionRef, now: new Date().toISOString() });
+      inquiriesCreated++;
+      continue;
+    }
+
+    const candidate: CaptureCandidate = withMemoryWorth({
       id: `cap_cons_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       created_at: new Date().toISOString(),
       source: { type: "conversation", ref: `daily/${today}.md`, cwd: sessionRef },
@@ -142,13 +166,13 @@ export function applyConsolidation(
       confidence: c.confidence,
       status: "new",
       ...buildCandidateTrustMetadata("agent_inference", "project"),
-    };
+    }, existingStatements);
     appendCandidate(root, candidate);
     existingStatements.push(c.statement); // prevent within-batch dups too
     added++;
   }
 
-  return { candidates_extracted: candidates.length, candidates_added: added, candidates_skipped_dedup: skipped };
+  return { candidates_extracted: candidates.length, candidates_added: added, candidates_skipped_dedup: skipped, candidates_rejected_worth: rejectedWorth, candidates_daily_only: dailyOnly, inquiries_created: inquiriesCreated };
 }
 
 // ─── Runner ───────────────────────────────────────────────────────────

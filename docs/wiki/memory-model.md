@@ -78,7 +78,8 @@ Each L1 and L2 record contains:
   "supersedes": [],
   "superseded_by": [],
   "vault_ref": null,
-  "ruleType": "prefer_pattern"
+  "ruleType": "prefer_pattern",
+  "memory_kind": "instruction"
 }
 ```
 
@@ -89,6 +90,18 @@ Key fields explained:
 - `applies_when` / `does_not_apply_when` / `known_exceptions`: exception and negative scope fields; used by the processor pipeline to exclude records when the context matches
 - `stability`: `low`, `semi-stable`, or `stable`; affects decay rate and maintenance recommendations
 - `status`: `active`, `contested`, `deprecated`, `superseded`, or `deleted`
+- `memory_kind`: optional public taxonomy (`fact`, `event`, `instruction`, `task`); legacy records without it are inferred in reports
+
+---
+
+## Memory kinds
+
+| memory_kind | Meaning |
+|---|---|
+| `fact` | Durable claim about user, project, or system state |
+| `event` | Timestamped thing that happened, decision, milestone, or completed work |
+| `instruction` | User/project/team preference, rule, procedure, or workflow convention |
+| `task` | Short-lived or active follow-up that should expire or be deprioritized |
 
 ---
 

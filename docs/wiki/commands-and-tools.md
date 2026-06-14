@@ -33,6 +33,61 @@ See [Diagnostics](diagnostics.md) for the full check list.
 
 ---
 
+### `/memory-recall-xray <query>`
+
+Explains why memories would be included or excluded for a query. The command is read-only and redacts secret-like content.
+
+```
+/memory-recall-xray "bun test"
+```
+
+The report includes memory kind, retrieval score, evidence status, trust class, scope mismatch, negative-scope match, tombstone state, contested state, staleness, and dependency invalidation.
+
+---
+
+### `/memory-worth <observation>`
+
+Scores whether an observation should become durable memory.
+
+```
+/memory-worth "Going forward, always run bun test before commit"
+```
+
+Decisions are `reject`, `daily_only`, `candidate`, and `inquiry`.
+
+---
+
+### `/memory-background enqueue <kind>|run|list`
+
+Queues and runs inspectable local background analysis jobs. Supported report-producing kinds include `diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, and `memory_worth_review`.
+
+```
+/memory-background enqueue diagnostics
+/memory-background run
+/memory-background list
+```
+
+Background jobs do not directly mutate durable memory.
+
+---
+
+### `/memory-evidence add-codebase-analysis ...`
+
+Adds deterministic codebase-analysis evidence. Evidence is support, not automatic durable truth.
+
+```
+/memory-evidence add-codebase-analysis --tool tsc --command "bun run typecheck" --exit-code 0 --analysis-kind typecheck --summary "typecheck passed"
+/memory-evidence add-codebase-analysis --tool eslint --command "bun eslint ." --exit-code 1 --analysis-kind lint --file src/index.ts
+/memory-evidence add-codebase-analysis --tool playwright --command "bun playwright test" --exit-code 0 --analysis-kind e2e
+/memory-evidence add-codebase-analysis --tool fallow --command "fallow analyze" --exit-code 0 --analysis-kind dead_code
+```
+
+Supported tools: `tsc`, `eslint`, `playwright`, `vitest`, `fallow`, `custom`.
+
+Supported analysis kinds: `typecheck`, `lint`, `test`, `e2e`, `dependency`, `dead_code`, `complexity`, `security`, `duplication`, `custom`.
+
+---
+
 ### `/memory-graph [--save]`
 
 Exports a read-only dependency graph across memory records, evidence, inquiries, tombstones, candidates, and reinforcement events.

@@ -1,6 +1,6 @@
 # pi-persistent-intelligence Wiki
 
-Welcome to the documentation wiki for `pi-persistent-intelligence` v0.9.0.
+Welcome to the documentation wiki for `pi-persistent-intelligence` v0.10.0.
 
 This wiki is the deeper operating manual for the package. The README covers installation and quick start. This wiki covers how the system works, why it is designed the way it is, and how to operate it effectively.
 
@@ -13,6 +13,7 @@ This wiki is the deeper operating manual for the package. The README covers inst
 | [Getting Started](getting-started.md) | Install, first session, and quick orientation |
 | [Memory Model](memory-model.md) | L1, L2, L3 layers, record schema, rule types |
 | [Lifecycle](lifecycle.md) | How memory flows from capture to injection to review |
+| [Retain, Recall, Reflect](../retain-recall-reflect.md) | Public mental model for governed capture, scoped retrieval, and reviewable reflection |
 | [Commands and Tools](commands-and-tools.md) | All public commands and tools with examples |
 | [Governance](governance.md) | Compatibility mode, strict mode, and what never auto-applies |
 | [Evidence, Trust, and Verification](evidence-trust-verification.md) | Trust classes, durability signals, and the deterministic verifier |

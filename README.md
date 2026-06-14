@@ -15,9 +15,9 @@ pi install npm:pi-persistent-intelligence
 
 `pi-persistent-intelligence` gives the pi coding agent a persistent, auditable operational memory that builds up across sessions.
 
-PI carries project-specific learning from one session to the next. When you correct the agent, express a preference, or describe a project convention, PI captures that as a candidate, verifies it, and promotes it to your long-term memory through a reviewable patch flow. Memory is then scoped and injected back into future sessions.
+PI carries project-specific learning from one session to the next. When you correct the agent, express a preference, or describe a project convention, PI scores whether the observation is worth preserving, captures useful items as candidates, verifies them, and promotes them to long-term memory through a reviewable patch flow. Memory is then scoped and injected back into future sessions.
 
-All durable memory changes are patch-governed. No record is silently mutated. L1 identity records are never auto-applied.
+The public model is **Retain, Recall, Reflect**: retain useful candidates with evidence, recall scoped memory with policy and diagnostics, and reflect by producing reviewable maintenance, abstraction, and procedure artifacts. See [`docs/retain-recall-reflect.md`](docs/retain-recall-reflect.md) for the longer model. All durable memory changes are patch-governed. No record is silently mutated. L1 identity records are never auto-applied.
 
 ---
 
@@ -72,10 +72,13 @@ Automatic correction capture
 Session-end extraction
   |
   v
+Memory-worth scoring
+  |
+  v
 Evidence record
   |
   v
-Candidate (trust class + durability signal)
+Candidate (trust class + durability signal + memory kind)
   |
   v
 Verification (source support, trust boundary, conflict check)
@@ -113,6 +116,19 @@ Meta-consolidation report (review-only L1 proposals)
 | **Inquiries** | `memory/inquiries.jsonl` | Open questions surfaced when relevant |
 | **Tombstones** | `memory/tombstones.jsonl` | Content-free deletion markers; prevent re-promotion |
 
+### Memory kinds
+
+The optional `memory_kind` field gives records and candidates a simple public taxonomy:
+
+| Kind | Meaning |
+|---|---|
+| `fact` | Durable claim about user, project, or system state |
+| `event` | Timestamped thing that happened, decision, milestone, or completed work |
+| `instruction` | User/project/team preference, rule, procedure, or workflow convention |
+| `task` | Short-lived or active follow-up that should expire or be deprioritized |
+
+Legacy records without `memory_kind` remain valid. Reports infer a kind when the field is absent.
+
 ### Rule types
 
 The `ruleType` field on a memory record affects retrieval priority and hard-rule injection formatting.
@@ -137,6 +153,12 @@ The `ruleType` field on a memory record affects retrieval priority and hard-rule
 |---|---|
 | `/memory-doctor` | Show memory root, session count, FTS status, governance mode, vault path, inbox count |
 | `/memory-diagnostics [--save]` | Run integrity, secret, provenance, and re-verification checks; `--save` writes JSON report to `reports/diagnostics/` |
+| `/memory-recall-xray <query>` | Explain why memories are included or excluded for a query; read-only and redacted |
+| `/memory-worth <observation>` | Score whether an observation should be rejected, kept daily-only, captured as a candidate, or turned into an inquiry |
+| `/memory-background enqueue <kind>` | Queue an inspectable local background analysis job (`diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`) |
+| `/memory-background run` | Run queued background jobs and write report artifacts |
+| `/memory-background list` | List queued/running/succeeded/failed background analysis jobs |
+| `/memory-evidence add-codebase-analysis ...` | Add deterministic codebase-analysis evidence from tools such as `tsc`, ESLint, Playwright, Vitest, Fallow-like analysis, or custom scripts |
 | `/memory-graph [--save]` | Export a read-only dependency graph of memory, evidence, inquiries, tombstones, candidates, and reinforcement |
 | `/memory-timeline [--memory <id>] [--save]` | Show timeline events and effective validity for one memory or the whole store |
 | `/procedure-candidates [--save]` | Generate review-only procedure candidates from repeated workflow memory |
@@ -206,6 +228,33 @@ Every candidate captures where it came from:
 - **Promotion eligibility**: derived from trust class and durability. Low-trust or temporary candidates route to review.
 - **Poisoning risk**: repository text and generated content are flagged and cannot auto-apply.
 - **Verification**: checks source support, durability, trust boundary, conflict risk, redacted evidence, and tombstone re-creation.
+- **Codebase analysis evidence**: deterministic tool output such as `tsc`, ESLint, Playwright, Vitest, Fallow-like analysis, or custom scripts. This evidence can support a candidate or report, but it does not become automatic truth and does not bypass review.
+
+Supported codebase tools are `tsc`, `eslint`, `playwright`, `vitest`, `fallow`, and `custom`. Supported analysis kinds are `typecheck`, `lint`, `test`, `e2e`, `dependency`, `dead_code`, `complexity`, `security`, `duplication`, and `custom`.
+
+Examples:
+
+```bash
+/memory-evidence add-codebase-analysis --tool tsc --command "bun run typecheck" --exit-code 0 --analysis-kind typecheck --summary "typecheck passed"
+/memory-evidence add-codebase-analysis --tool eslint --command "bun eslint ." --exit-code 1 --analysis-kind lint --file src/index.ts
+/memory-evidence add-codebase-analysis --tool playwright --command "bun playwright test" --exit-code 0 --analysis-kind e2e
+/memory-evidence add-codebase-analysis --tool fallow --command "fallow analyze" --exit-code 0 --analysis-kind dead_code
+```
+
+---
+
+## Memory-worth scoring
+
+Memory-worth scoring reduces low-value durable capture without silently discarding important explicit corrections.
+
+| Decision | Meaning |
+|---|---|
+| `reject` | Do not create durable memory for trivial, sensitive, or unsuitable observations. |
+| `daily_only` | Keep a short-lived session/day trace, but do not create a long-term candidate. |
+| `candidate` | Create a reviewable durable candidate with worth metadata. |
+| `inquiry` | Ask for clarification when an observation may be important but is ambiguous. |
+
+The scorer is used by manual long-term capture, session consolidation, and context compaction. Explicit corrections, durable workflow rules, and project conventions remain eligible for candidate review.
 
 ---
 
@@ -301,6 +350,8 @@ PI includes read-only reports for inspecting why memories exist and whether thei
 - **Dependency graph export** shows relationships between memories, evidence, inquiries, tombstones, candidates, reinforcement events, and supersession. It is a read-only report, not a graph query engine.
 - **Timeline reporting** computes effective validity from creation, update, supersession, and tombstones without mutating legacy records. It is a read-only report, not a temporal database.
 - **Goal handoff** summarizes active memory, inquiries, pending candidates, diagnostics warnings, and validation steps as background reference only.
+- **Recall X-ray** explains why memories were included or excluded for a query. It reports included memories, excluded memories, retrieval tier, score or selection reason, hard-rule attribution, evidence state, trust class, memory kind, scope and negative-scope filtering, contested state, stale state, tombstones, dependency invalidation, and redacted output.
+- **Background analysis jobs** queue local, inspectable report-producing work for diagnostics, provenance liveness, re-verification, memory graph, memory timeline, procedure candidates, and memory-worth review. Jobs do not directly mutate durable memory.
 - **Procedure candidates** identify repeated workflow memory as review-only procedure drafts. PI never writes skill files automatically.
 
 ### Injection modes
@@ -391,7 +442,7 @@ All stability changes require patch application. Nothing is mutated automaticall
 For contributors and developers:
 
 ```bash
-bun run eval    # run the deterministic eval suite (14 categories, 7 hard invariants)
+bun run eval    # run the deterministic eval suite, including recall x-ray, memory-worth, background-job, codebase-evidence, and docs-contract categories
 ```
 
 ---
@@ -536,6 +587,9 @@ Template: https://github.com/Mont3ll/llm-wiki-vault-template
 | Contested records never in hard rules | `extractHardRules()` requires `status === "active"` |
 | L1/L2 writes require patch-apply context | Public `addMemoryRecord()` throws without context |
 | Context-compaction does not mutate durable memory | Creates evidence and candidates only |
+| Background jobs do not directly mutate durable memory | Queue and report artifacts only |
+| Codebase-analysis evidence does not bypass review | Treated as supporting evidence, not user preference truth |
+| Procedure candidates do not write skills | Export boundary is review-gated; no automatic `SKILL.md` writes |
 | Meta-consolidation does not mutate L1 | Report and review-only candidates only |
 
 ---
