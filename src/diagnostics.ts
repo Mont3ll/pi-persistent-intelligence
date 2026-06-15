@@ -6,6 +6,7 @@ import { ensureMemoryDirs } from "./paths";
 import { isTombstonedRecord } from "./tombstones";
 import { loadAllRecords } from "./store";
 import { readLastInjectionStats } from "./retriever";
+import { readRecentRuntimeEvents } from "./runtime-events";
 import { extractHardRules } from "./rules";
 import { scanSecrets, redactSecrets } from "./secret-scanner";
 import { checkProvenanceLiveness } from "./provenance-liveness";
@@ -189,8 +190,20 @@ export function runMemoryDiagnostics(root: string): DiagnosticsReport {
 
   // 13. Last injection budget metadata, when available.
   const stats = readLastInjectionStats(root);
-  if (stats) findings.push(info("last_injection_stats", `Last injection mode ${stats.injectionMode}; ${stats.charCount} chars; selected=${stats.selectedMemoryCount}; hard_rules=${stats.hardRuleCount}; contested=${stats.contestedMemoryCount}; inquiries=${stats.inquiryCount}.`));
-  else findings.push(info("last_injection_stats", "No runtime injection stats recorded yet."));
+  if (stats) {
+    findings.push(info("last_injection_stats", `Last injection mode ${stats.injectionMode}; ${stats.charCount} chars; selected=${stats.selectedMemoryCount}; hard_rules=${stats.hardRuleCount}; contested=${stats.contestedMemoryCount}; inquiries=${stats.inquiryCount}.`));
+    if (stats.timings) {
+      findings.push(info("last_injection_performance", `Last injection performance: total=${Math.round(stats.timings.totalMs)}ms; records=${Math.round(stats.timings.loadRecordsMs)}ms; processors=${Math.round(stats.timings.processorPipelineMs)}ms; FTS=${Math.round(stats.timings.ftsMs)}ms; qmd=${Math.round(stats.timings.qmdMs)}ms; daily=${Math.round(stats.timings.dailyDigestMs)}ms; assembly=${Math.round(stats.timings.assemblyMs)}ms; runtime_write=${Math.round(stats.timings.runtimeWriteMs)}ms.`));
+      if (stats.timings.totalMs > 500) findings.push(warn("slow_injection_total", `Last injection took ${Math.round(stats.timings.totalMs)}ms (>500ms).`));
+      if (stats.timings.qmdMs > 400) findings.push(warn("slow_injection_qmd", `Last qmd injection phase took ${Math.round(stats.timings.qmdMs)}ms (>400ms).`));
+    }
+  } else findings.push(info("last_injection_stats", "No runtime injection stats recorded yet."));
+
+  const events = readRecentRuntimeEvents(root, { hours: 24, minSeverity: "medium" });
+  if (events.length > 0) {
+    findings.push(warn("recent_runtime_events", `${events.length} medium/high runtime event(s) in the last 24 hours.`));
+    for (const event of events.slice(-5)) findings.push(warn("runtime_event", `[${event.severity}] ${event.component} — ${event.message}`));
+  } else findings.push(info("recent_runtime_events", "No notable events in the last 24 hours."));
 
   const summary = {
     ok: findings.filter((f) => f.severity === "ok").length,
@@ -213,7 +226,31 @@ export function renderDiagnosticsReport(report: DiagnosticsReport): string {
     `Summary: ${report.summary.ok} ok  ${report.summary.info} info  ${report.summary.warnings} warnings  ${report.summary.errors} errors`,
     "",
   ];
-  for (const f of report.findings.filter((f) => f.severity !== "ok")) {
+  const performance = report.findings.find((f) => f.code === "last_injection_performance");
+  if (performance) {
+    const parts = performance.message.match(/total=(\d+)ms; records=(\d+)ms; processors=(\d+)ms; FTS=(\d+)ms; qmd=(\d+)ms; daily=(\d+)ms; assembly=(\d+)ms; runtime_write=(\d+)ms\./);
+    if (parts) {
+      lines.push("## Injection Performance");
+      lines.push(`total: ${parts[1]}ms`);
+      lines.push(`records: ${parts[2]}ms`);
+      lines.push(`processors: ${parts[3]}ms`);
+      lines.push(`FTS: ${parts[4]}ms`);
+      lines.push(`qmd: ${parts[5]}ms`);
+      lines.push(`daily: ${parts[6]}ms`);
+      lines.push(`assembly: ${parts[7]}ms`);
+      lines.push(`runtime write: ${parts[8]}ms`);
+      lines.push("");
+    }
+  }
+
+  const recentEvents = report.findings.find((f) => f.code === "recent_runtime_events");
+  const runtimeEvents = report.findings.filter((f) => f.code === "runtime_event");
+  lines.push("## Recent Events");
+  if (!recentEvents || recentEvents.message === "No notable events in the last 24 hours.") lines.push("No notable events in the last 24 hours.");
+  else for (const event of runtimeEvents) lines.push(redactSecrets(event.message));
+  lines.push("");
+
+  for (const f of report.findings.filter((f) => f.severity !== "ok" && f.code !== "last_injection_performance" && f.code !== "recent_runtime_events")) {
     lines.push(redactSecrets(`${icons[f.severity]} [${f.severity}] ${f.code}: ${f.message}`));
     if (f.affected_ids?.length) lines.push(`  Affected: ${f.affected_ids.slice(0, 5).join(", ")}${f.affected_ids.length > 5 ? "..." : ""}`);
   }

@@ -44,8 +44,17 @@ export function formatHardRule(record: MemoryRecord): string {
   return `${prefix} [conf ${conf}] ${record.statement}`;
 }
 
-export function renderHardRulesBlock(records: MemoryRecord[]): string {
+export interface RenderedHardRulesBlock {
+  block: string;
+  count: number;
+}
+
+export function renderHardRulesBlockWithCount(records: MemoryRecord[]): RenderedHardRulesBlock {
   const rules = extractHardRules(records);
-  if (rules.length === 0) return "";
-  return ["## Hard Rules", rules.map(formatHardRule).join("\n"), ""].join("\n");
+  if (rules.length === 0) return { block: "", count: 0 };
+  return { block: ["## Hard Rules", rules.map(formatHardRule).join("\n"), ""].join("\n"), count: rules.length };
+}
+
+export function renderHardRulesBlock(records: MemoryRecord[]): string {
+  return renderHardRulesBlockWithCount(records).block;
 }

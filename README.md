@@ -648,7 +648,12 @@ Supported patch operations: `add`, `update`, `update_stability`, `flag_for_revie
 ## Development
 
 ```bash
-bun test               # 256 tests
+bun test
 bun run typecheck
-bun run eval           # 14-category deterministic eval suite, 7 hard invariants
+bun run eval
+npm pack --dry-run
 ```
+
+`bun run eval` runs deterministic governance, recall, background-job, codebase-evidence, replay, package/docs, and hardening checks.
+
+`bun run build` is intentionally unavailable because this package has no build script.

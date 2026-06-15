@@ -29,7 +29,7 @@ export interface PiMemoryConfig {
   llm: { enabled: boolean; model: string | null; instructions?: string; command?: string | null };
   vault: { enabled: boolean; path: string | null; reportOnly: boolean };
   governance: { mode: "compatibility" | "strict" };
-  retrieval: { injectionMode: "scoped" | "policy_only" | "wakeup" };
+  retrieval: { injectionMode: "scoped" | "policy_only" | "wakeup"; maxRecords?: number; maxL1Records?: number; maxL2Records?: number };
   metaConsolidation: {
     enabled: boolean;
     cadence: "manual" | "weekly" | "monthly";

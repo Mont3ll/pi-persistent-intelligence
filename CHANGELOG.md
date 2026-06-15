@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-06-15
+
+### Fixed
+
+- Fixed hard-rule counting used by injection stats and Recall X-ray context-budget diagnostics.
+- Removed duplicate record loading in the context-injection path.
+- Removed stale hardcoded README test/eval counts.
+
+### Changed
+
+- Reduced semantic qmd use in context injection to an opportunistic, budgeted path.
+- Split L1/L2 selected-memory budgets so L1 records cannot starve task-specific L2 playbooks by default.
+- Added per-section injection caps to prevent any one context section from monopolizing the injection budget.
+- Added injection timing stats for diagnostics.
+- Added runtime health events for recoverable failures and slow/failed background jobs.
+- Hardened background queue execution with lockfile protection and stale-running recovery.
+
+### Verification
+
+- `bun run typecheck`
+- `bun test`
+- `bun run eval`
+- `npm pack --dry-run`
+
 ## [0.11.0] - 2026-06-15
 
 ### Added

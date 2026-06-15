@@ -8,12 +8,13 @@ import { listScratchpadItems } from "./scratchpad";
 import { readDailyLog } from "./daily";
 import { runQmd, qmdSearchArgs } from "./qmd";
 import { shouldInjectMemoryContext } from "./injection-filter";
-import { renderHardRulesBlock } from "./rules";
+import { renderHardRulesBlockWithCount } from "./rules";
 import { MemoryFtsIndex } from "./search/fts";
 import { mergeHybridResults, parseQmdMemoryIds } from "./search/hybrid";
 import { resolveMemoryProfile } from "./profile";
 import { runMemoryProcessorPipeline } from "./processors";
 import { extractContestedMemory, renderContestedMemoryBlock } from "./contested-memory";
+import { appendRuntimeEvent } from "./runtime-events";
 import type { MemoryRecord, ProcessorTrace, SessionContext } from "./types";
 
 export interface RetrievalOptions {
@@ -25,6 +26,7 @@ export interface RetrievalOptions {
   useQmd?: boolean;
   qmdCollection?: string;
   ftsIndex?: MemoryFtsIndex;
+  qmdRunner?: (args: string[], timeoutMs: number) => Promise<{ stdout: string }>;
   cwd?: string;
   threadId?: string;
 }
@@ -40,6 +42,16 @@ export interface InjectionStats {
   contestedMemoryCount: number;
   inquiryCount: number;
   dailyDigestChars: number;
+  timings?: {
+    loadRecordsMs: number;
+    processorPipelineMs: number;
+    ftsMs: number;
+    qmdMs: number;
+    dailyDigestMs: number;
+    assemblyMs: number;
+    runtimeWriteMs: number;
+    totalMs: number;
+  };
 }
 
 export interface RetrievalContext {
@@ -92,54 +104,74 @@ function parseQmdIds(stdout: string): string[] {
  * Select relevant L2 records using hybrid FTS + qmd semantic search.
  * Falls back through: hybrid → FTS-only → term-matching.
  */
+const INJECTION_QMD_BUDGET_MS = 800;
+
+function isSubstantialPrompt(prompt: string): boolean {
+  return prompt.trim().split(/\s+/).filter(Boolean).length > 8;
+}
+
+interface SelectionBudget { maxRecords: number; maxL1: number; maxL2: number }
+interface SelectionTiming { ftsMs: number; qmdMs: number }
+
+function applyLayerBudgets(l1: MemoryRecord[], l2: MemoryRecord[], budget: SelectionBudget): MemoryRecord[] {
+  const selectedL1 = l1.slice(0, budget.maxL1);
+  const selectedL2 = l2.slice(0, budget.maxL2);
+  return [...selectedL1, ...selectedL2].slice(0, budget.maxRecords);
+}
+
+/**
+ * Select relevant L2 records using hybrid FTS + qmd semantic search.
+ * Falls back through: hybrid → FTS-only → term-matching.
+ */
 async function selectMemoryHybrid(
+  root: string,
   records: MemoryRecord[],
   prompt: string,
-  maxRecords: number,
+  budget: SelectionBudget,
+  timing: SelectionTiming,
   ftsIndex?: MemoryFtsIndex,
   useQmd?: boolean,
   qmdCollection?: string,
+  qmdRunner: (args: string[], timeoutMs: number) => Promise<{ stdout: string }> = runQmd,
 ): Promise<MemoryRecord[]> {
   const l1 = records.filter((r) => r.layer === "L1");
   const l2 = records.filter((r) => r.layer === "L2");
   const eligibleIds = new Set(records.map((r) => r.id));
 
-  // Try hybrid (FTS + qmd semantic)
   if (ftsIndex?.isAvailable) {
-    const ftsResults = ftsIndex.search(prompt, maxRecords * 2).filter((result) => eligibleIds.has(result.id));
+    const ftsStart = performance.now();
+    const ftsResults = ftsIndex.search(prompt, budget.maxRecords * 2).filter((result) => eligibleIds.has(result.id));
+    timing.ftsMs += performance.now() - ftsStart;
     let semanticIds: string[] = [];
 
-    if (useQmd && qmdCollection) {
+    if (useQmd && qmdCollection && isSubstantialPrompt(prompt)) {
+      const qmdStart = performance.now();
       try {
-        const result = await runQmd(qmdSearchArgs(prompt, "semantic", maxRecords, qmdCollection), 5_000);
+        const result = await qmdRunner(qmdSearchArgs(prompt, "semantic", budget.maxRecords, qmdCollection), INJECTION_QMD_BUDGET_MS);
         semanticIds = parseQmdIds(result.stdout).filter((id) => eligibleIds.has(id));
-      } catch { /* qmd unavailable — use FTS only */ }
+      } catch (err) {
+        appendRuntimeEvent(root, { type: "warn", severity: "low", component: "retriever", message: `qmd unavailable during injection; using FTS fallback: ${err instanceof Error ? err.message : String(err)}` });
+      } finally {
+        timing.qmdMs += performance.now() - qmdStart;
+      }
     }
 
     const recordMap = new Map(
       l2.map((r) => [r.id, { statement: r.statement, layer: r.layer as "L1" | "L2", confidence: r.confidence, ruleType: r.ruleType }]),
     );
 
-    const merged = mergeHybridResults(ftsResults, semanticIds, recordMap, maxRecords);
+    const merged = mergeHybridResults(ftsResults, semanticIds, recordMap, budget.maxL2);
     const selectedL2 = merged.flatMap((h) => {
       const rec = l2.find((r) => r.id === h.id);
       return rec ? [rec] : [];
     });
 
-    return [...l1, ...selectedL2].slice(0, maxRecords);
+    return applyLayerBudgets(l1, selectedL2, budget);
   }
 
-  // FTS-only fallback
-  if (ftsIndex?.isAvailable) {
-    const ftsResults = ftsIndex.search(prompt, maxRecords);
-    const ftsIds = new Set(ftsResults.map((r) => r.id));
-    const selectedL2 = l2.filter((r) => ftsIds.has(r.id)).slice(0, maxRecords - l1.length);
-    return [...l1, ...selectedL2];
-  }
-
-  // Term-matching fallback (original approach)
   const terms = promptTerms(prompt);
-  return records.filter((r) => isRelevantByTerms(r, terms)).slice(0, maxRecords);
+  const relevantL2 = l2.filter((r) => isRelevantByTerms(r, terms));
+  return applyLayerBudgets(l1, relevantL2, budget);
 }
 
 // ─── Daily digest ─────────────────────────────────────────────────────────────
@@ -208,8 +240,12 @@ export function readLastInjectionStats(root: string): InjectionStats | null {
   try { return JSON.parse(readFileSync(file, "utf-8")) as InjectionStats; } catch { return null; }
 }
 
-function hardRuleCount(markdown: string): number {
-  return (markdown.match(/^📌|^AVOID|^PREFER|^RULE/gm) ?? []).length;
+function capSectionByLine(content: string, cap: number): string {
+  if (content.length <= cap) return content;
+  const sliced = content.slice(0, cap);
+  const lastNewline = sliced.lastIndexOf("\n");
+  const safe = lastNewline > 0 ? sliced.slice(0, lastNewline) : sliced;
+  return `${safe}\n[...truncated]`;
 }
 
 function buildPolicyOnlyContext(root: string, mode: InjectionMode): RetrievalContext {
@@ -244,9 +280,14 @@ export async function buildRetrievalContext(root: string, options: RetrievalOpti
   const mode = loadConfig(root).retrieval.injectionMode;
   if (mode === "policy_only" || mode === "wakeup") return buildPolicyOnlyContext(root, mode);
 
+  const totalStart = performance.now();
+  const timings = { loadRecordsMs: 0, processorPipelineMs: 0, ftsMs: 0, qmdMs: 0, dailyDigestMs: 0, assemblyMs: 0, runtimeWriteMs: 0, totalMs: 0 };
   const paths = ensureMemoryDirs(root);
+  const config = loadConfig(root);
   const maxTotal = options.maxTotalChars ?? 14_000;
-  const maxRecords = options.maxRecords ?? 12;
+  const maxRecords = options.maxRecords ?? config.retrieval.maxRecords ?? 12;
+  const maxL1 = config.retrieval.maxL1Records ?? Math.min(4, Math.floor(maxRecords * 0.35));
+  const maxL2 = config.retrieval.maxL2Records ?? Math.max(0, maxRecords - maxL1);
   const cwd = options.cwd ?? process.cwd();
   const profile = resolveMemoryProfile(root, cwd);
   const sessionContext: SessionContext = {
@@ -261,62 +302,84 @@ export async function buildRetrievalContext(root: string, options: RetrievalOpti
     detected_domain_tags: [],
     is_trivial_prompt: false,
   };
-  const processed = runMemoryProcessorPipeline(loadAllRecords(root), sessionContext);
+  const loadStart = performance.now();
+  const allRecords = loadAllRecords(root);
+  timings.loadRecordsMs = performance.now() - loadStart;
+  const processorStart = performance.now();
+  const processed = runMemoryProcessorPipeline(allRecords, sessionContext);
+  timings.processorPipelineMs = performance.now() - processorStart;
 
   const selectedMemory = await selectMemoryHybrid(
+    root,
     processed.records,
     options.prompt,
-    maxRecords,
+    { maxRecords, maxL1, maxL2 },
+    timings,
     options.ftsIndex,
     options.useQmd,
     options.qmdCollection,
+    options.qmdRunner,
   );
 
   const scratchpadItems = listScratchpadItems(root).filter((item) => !item.done);
+  const dailyStart = performance.now();
   const daily = readDailyLog(root, options.today);
   const dailyDigest = buildDailyDigest(daily, options.maxDailyChars ?? 3000);
+  timings.dailyDigestMs = performance.now() - dailyStart;
 
   // Hard rules: high-confidence typed corrections injected prominently
-  // Contested memory: from all records (including non-active), context-relevant
-  const allForContested = loadAllRecords(root);
-  const contestedMemory = extractContestedMemory(allForContested, options.prompt);
+  // Contested memory: from the same loaded snapshot (including non-active), context-relevant
+  const contestedMemory = extractContestedMemory(allRecords, options.prompt);
   const contestedBlock = renderContestedMemoryBlock(contestedMemory, options.prompt);
 
-  const hardRulesBlock = renderHardRulesBlock(processed.records);
+  const hardRules = renderHardRulesBlockWithCount(processed.records);
+  const hardRulesBlock = hardRules.block;
 
   const header = "# Persistent Intelligence Context";
+  const sectionCaps = {
+    hardRules: 2_000,
+    selectedMemory: 6_000,
+    scratchpad: 800,
+    contested: 800,
+    daily: options.maxDailyChars ?? 3_000,
+  };
 
+  const assemblyStart = performance.now();
   const content = assembleWithBudget([
     {
       label: "## Hard Rules",
-      content: hardRulesBlock.replace("## Hard Rules\n", "").trim(),
+      content: capSectionByLine(hardRulesBlock.replace("## Hard Rules\n", "").trim(), sectionCaps.hardRules),
     },
     {
       label: "## Selected Memory",
-      content: selectedMemory.length
+      content: capSectionByLine(selectedMemory.length
         ? selectedMemory.map(renderRecordBrief).join("\n")
-        : "_No selected long-term memory._",
+        : "_No selected long-term memory._", sectionCaps.selectedMemory),
     },
     {
       label: "## Scratchpad",
-      content: scratchpadItems.length
+      content: capSectionByLine(scratchpadItems.length
         ? scratchpadItems.map((item) => `- [ ] ${item.text}`).join("\n")
-        : "_No open scratchpad items._",
+        : "_No open scratchpad items._", sectionCaps.scratchpad),
     },
     {
       label: "## Contested Memory",
-      content: contestedBlock.replace("## Contested Memory\n", "").trim(),
+      content: capSectionByLine(contestedBlock.replace("## Contested Memory\n", "").trim(), sectionCaps.contested),
     },
     {
       label: `## Daily Log (${options.today})`,
-      content: dailyDigest || "_No daily log content._",
+      content: capSectionByLine(dailyDigest || "_No daily log content._", sectionCaps.daily),
     },
   ], maxTotal - header.length);
 
   const markdown = `${header}\n\n${content}`;
+  timings.assemblyMs = performance.now() - assemblyStart;
+  const writeStart = performance.now();
   writeFileSync(paths.runtime.context, markdown, "utf-8");
   writeFileSync(paths.runtime.selected, `${JSON.stringify(selectedMemory, null, 2)}\n`, "utf-8");
-  writeInjectionStats(root, { generated_at: new Date().toISOString(), injectionMode: "scoped", charCount: markdown.length, selectedMemoryCount: selectedMemory.length, hardRuleCount: hardRuleCount(hardRulesBlock), contestedMemoryCount: contestedMemory.length, inquiryCount: 0, dailyDigestChars: dailyDigest.length });
+  timings.runtimeWriteMs = performance.now() - writeStart;
+  timings.totalMs = performance.now() - totalStart;
+  writeInjectionStats(root, { generated_at: new Date().toISOString(), injectionMode: "scoped", charCount: markdown.length, selectedMemoryCount: selectedMemory.length, hardRuleCount: hardRules.count, contestedMemoryCount: contestedMemory.length, inquiryCount: 0, dailyDigestChars: dailyDigest.length, timings });
   return { markdown, selectedMemory, processorTraces: processed.traces, contestedMemory };
 }
 

@@ -10,7 +10,7 @@ Commands are invoked in the pi command bar with a `/` prefix.
 
 Displays a diagnostic summary of your memory setup.
 
-Shows: memory root path, session index size, FTS status, governance mode, consolidation model, vault configuration, inbox candidate count.
+Shows: memory root path, session index size, FTS status, governance mode, consolidation model, vault configuration, inbox candidate count, last injection performance when available, and notable medium/high runtime events from the last 24 hours.
 
 ```
 /memory-doctor

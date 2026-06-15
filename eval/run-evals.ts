@@ -18,7 +18,7 @@ import { appendCandidate, listCandidates } from "../src/inbox";
 import { curateInbox } from "../src/curator";
 import { applyPatch } from "../src/patch";
 import { loadActiveRecords, loadAllRecords } from "../src/store";
-import { buildRetrievalContext, syncFtsIndex } from "../src/retriever";
+import { buildRetrievalContext, readLastInjectionStats, syncFtsIndex } from "../src/retriever";
 import { MemoryFtsIndex } from "../src/search/fts";
 import { extractHardRules } from "../src/rules";
 import { maybeCorrectionSignal, extractCorrectionCandidate } from "../src/corrections";
@@ -32,6 +32,8 @@ import { isTombstonedRecord } from "../src/tombstones";
 import { buildRecallXray } from "../src/recall-xray";
 import { scoreMemoryWorth } from "../src/memory-worth";
 import { enqueueBackgroundAnalysis, runBackgroundAnalysisQueue } from "../src/background-analysis";
+import { appendRuntimeEvent, readRecentRuntimeEvents } from "../src/runtime-events";
+import { runMemoryDiagnostics, renderDiagnosticsReport } from "../src/diagnostics";
 import { linkEvidenceToCandidate } from "../src/evidence-link";
 import { createCompactionArtifact } from "../src/compaction-artifacts";
 import { computeCandidateConfidence } from "../src/confidence";
@@ -856,6 +858,51 @@ function evalCapturedReplayTemporaryInstructionNotDurable(): EvalResult {
   return { category: "captured_replay_temporary_instruction_not_durable", description: "Temporary one-off instruction is not durable.", pass, metrics: { rejected: result.rejected_observations, candidates: result.candidates_created }, failures: pass ? [] : ["Temporary instruction became durable."] };
 }
 
+async function evalInjectionStatsAccuracy(): Promise<EvalResult> {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("mem_rule", "Prefer qmd only when useful.", { ruleType: "prefer_pattern" }));
+  const ctx = await buildRetrievalContext(root, { prompt: "qmd retrieval hardening", today: "2026-06-15", useQmd: false });
+  const stats = readLastInjectionStats(root);
+  const pass = stats?.hardRuleCount === 1 && stats.selectedMemoryCount === ctx.selectedMemory.length && Boolean(stats.timings);
+  return { category: "injection_stats_accuracy", description: "Injection stats count structured hard rules and selected memory accurately.", pass, metrics: { hard_rules: stats?.hardRuleCount ?? -1, selected: stats?.selectedMemoryCount ?? -1 }, failures: pass ? [] : ["Injection stats were missing or inaccurate."] };
+}
+
+async function evalQmdUnavailableFastFallback(): Promise<EvalResult> {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("mem_qmd_fallback", "Use FTS when qmd is unavailable."));
+  const index = { isAvailable: true, search: () => [{ id: "mem_qmd_fallback", statement: "Use FTS when qmd is unavailable.", layer: "L2", confidence: 0.9, score: 1 }], sync: () => {}, close: () => {} } as unknown as MemoryFtsIndex;
+  const ctx = await buildRetrievalContext(root, { prompt: "this substantial prompt should attempt qmd and then fall back quickly", today: "2026-06-15", ftsIndex: index, useQmd: true, qmdCollection: "eval", qmdRunner: async () => { throw new Error("offline"); } });
+  const pass = ctx.selectedMemory.some((memory) => memory.id === "mem_qmd_fallback");
+  return { category: "qmd_unavailable_fast_fallback", description: "qmd injection failures fall back to FTS without throwing.", pass, metrics: { selected: ctx.selectedMemory.length }, failures: pass ? [] : ["FTS fallback did not select expected memory."] };
+}
+
+async function evalRetrievalHotPathBudget(): Promise<EvalResult> {
+  const root = tempRoot();
+  for (let i = 0; i < 10; i++) unsafeAddMemoryRecord(root, record(`mem_l1_${i}`, `L1 identity ${i}`, { layer: "L1" }));
+  for (let i = 0; i < 5; i++) unsafeAddMemoryRecord(root, record(`mem_l2_${i}`, `qmd retrieval playbook ${i}`));
+  const ctx = await buildRetrievalContext(root, { prompt: "qmd retrieval", today: "2026-06-15", maxRecords: 12, useQmd: false });
+  const l2Count = ctx.selectedMemory.filter((memory) => memory.layer === "L2").length;
+  const pass = ctx.selectedMemory.length <= 12 && l2Count >= 4;
+  return { category: "retrieval_hot_path_budget", description: "Split L1/L2 budgets prevent L1 starvation in injection.", pass, metrics: { selected: ctx.selectedMemory.length, l2: l2Count }, failures: pass ? [] : ["L2 records were starved or maxRecords was exceeded."] };
+}
+
+function evalBackgroundQueueLockAndRecovery(): EvalResult {
+  const root = tempRoot();
+  enqueueBackgroundAnalysis(root, { kind: "diagnostics" }, "2026-06-15T00:00:00Z");
+  const jobs = runBackgroundAnalysisQueue(root, { now: "2026-06-15T00:06:00Z" });
+  const pass = jobs.every((job) => job.status === "succeeded");
+  return { category: "background_queue_lock_and_recovery", description: "Background queue executes with lock protection and no durable memory mutation.", pass, metrics: { jobs: jobs.length, records: loadAllRecords(root).length }, failures: pass ? [] : ["Background queue did not complete expected diagnostic job."] };
+}
+
+function evalSilentFailureRuntimeEventVisibility(): EvalResult {
+  const root = tempRoot();
+  appendRuntimeEvent(root, { type: "warn", severity: "medium", component: "background", message: "job failed", timestamp: new Date().toISOString() });
+  const events = readRecentRuntimeEvents(root);
+  const doctor = renderDiagnosticsReport(runMemoryDiagnostics(root));
+  const pass = events.length === 1 && doctor.includes("[medium] background");
+  return { category: "silent_failure_runtime_event_visibility", description: "Recoverable runtime failures are visible in doctor output.", pass, metrics: { events: events.length }, failures: pass ? [] : ["Runtime event was not visible through diagnostics."] };
+}
+
 function evalCapturedReplayRedactionSafety(): EvalResult {
   const redacted = redactReplayContent("/home/alice/project OPENAI_API_KEY=abcdef1234567890 user@example.com", { redactUrls: true });
   const pass = !redacted.includes("/home/alice") && !redacted.includes("abcdef") && !redacted.includes("user@example.com");
@@ -969,6 +1016,11 @@ async function runEvals(): Promise<void> {
     ["Failure Analysis Review Only Candidates", evalFailureAnalysisReviewOnlyCandidates],
     ["Background Meta-Consolidation Report Only", evalBackgroundMetaConsolidationReportOnly],
     ["Background Vault Promotion Review Only", evalBackgroundVaultPromotionReviewOnly],
+    ["Injection Stats Accuracy", evalInjectionStatsAccuracy],
+    ["qmd Unavailable Fast Fallback", evalQmdUnavailableFastFallback],
+    ["Retrieval Hot Path Budget", evalRetrievalHotPathBudget],
+    ["Background Queue Lock And Recovery", evalBackgroundQueueLockAndRecovery],
+    ["Silent Failure Runtime Event Visibility", evalSilentFailureRuntimeEventVisibility],
   ];
 
   for (const [label, fn] of evals) {
