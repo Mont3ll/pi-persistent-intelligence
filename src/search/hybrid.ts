@@ -8,6 +8,16 @@
 
 import type { FtsSearchResult } from "./fts";
 
+export interface HybridScoreProvenance {
+  fts_score?: number;
+  semantic_score?: number;
+  rrf_score?: number;
+  final_score?: number;
+  matched_terms?: string[];
+  semantic_provider: "qmd" | "none" | "unknown";
+  rank_sources: Array<{ source: "fts" | "semantic"; rank: number; score: number; reason?: string }>;
+}
+
 export interface HybridResult {
   id: string;
   statement: string;
@@ -16,6 +26,7 @@ export interface HybridResult {
   ruleType?: string;
   score: number;
   sources: Array<"fts" | "semantic">;
+  score_provenance?: HybridScoreProvenance;
 }
 
 const FTS_WEIGHT = 0.45;
@@ -44,14 +55,16 @@ export function mergeHybridResults(
 
   // FTS results
   ftsResults.forEach((r, idx) => {
+    const fts = rrfScore(idx) * FTS_WEIGHT;
     byId.set(r.id, {
       id: r.id,
       statement: r.statement,
       layer: r.layer,
       confidence: r.confidence,
       ruleType: r.ruleType,
-      score: rrfScore(idx) * FTS_WEIGHT,
+      score: fts,
       sources: ["fts"],
+      score_provenance: { fts_score: fts, rrf_score: fts, final_score: fts, semantic_provider: "none", rank_sources: [{ source: "fts", rank: idx + 1, score: fts, reason: "FTS/BM25 rank" }] },
     });
   });
 
@@ -60,11 +73,14 @@ export function mergeHybridResults(
     const rec = recordMap.get(id);
     if (!rec) return;
     const existing = byId.get(id);
+    const semantic = rrfScore(idx) * SEMANTIC_WEIGHT;
     if (existing) {
+      const finalScore = existing.score + semantic;
       byId.set(id, {
         ...existing,
-        score: existing.score + rrfScore(idx) * SEMANTIC_WEIGHT,
+        score: finalScore,
         sources: [...existing.sources, "semantic"],
+        score_provenance: { ...(existing.score_provenance ?? { semantic_provider: "unknown", rank_sources: [] }), semantic_score: semantic, rrf_score: finalScore, final_score: finalScore, semantic_provider: "qmd", rank_sources: [...(existing.score_provenance?.rank_sources ?? []), { source: "semantic", rank: idx + 1, score: semantic, reason: "qmd semantic rank" }] },
       });
     } else {
       byId.set(id, {
@@ -73,8 +89,9 @@ export function mergeHybridResults(
         layer: rec.layer,
         confidence: rec.confidence,
         ruleType: rec.ruleType,
-        score: rrfScore(idx) * SEMANTIC_WEIGHT,
+        score: semantic,
         sources: ["semantic"],
+        score_provenance: { semantic_score: semantic, rrf_score: semantic, final_score: semantic, semantic_provider: "qmd", rank_sources: [{ source: "semantic", rank: idx + 1, score: semantic, reason: "qmd semantic rank" }] },
       });
     }
   });

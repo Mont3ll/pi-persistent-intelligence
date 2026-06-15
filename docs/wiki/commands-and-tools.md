@@ -41,7 +41,7 @@ Explains why memories would be included or excluded for a query. The command is 
 /memory-recall-xray "bun test"
 ```
 
-The report includes memory kind, retrieval score, evidence status, trust class, scope mismatch, negative-scope match, tombstone state, contested state, staleness, and dependency invalidation.
+The report includes memory kind, retrieval score, available score provenance, context budget diagnostics, omission reasons, evidence status, trust class, scope mismatch, negative-scope match, tombstone state, contested state, staleness, and dependency invalidation.
 
 ---
 
@@ -59,7 +59,7 @@ Decisions are `reject`, `daily_only`, `candidate`, and `inquiry`.
 
 ### `/memory-background enqueue <kind>|run|list`
 
-Queues and runs inspectable local background analysis jobs. Supported report-producing kinds include `diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, and `memory_worth_review`.
+Queues and runs inspectable local background analysis jobs. Supported report-producing kinds include `diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`, `meta_consolidation`, and `vault_promotion_candidates`.
 
 ```
 /memory-background enqueue diagnostics
@@ -67,7 +67,7 @@ Queues and runs inspectable local background analysis jobs. Supported report-pro
 /memory-background list
 ```
 
-Background jobs do not directly mutate durable memory.
+Background jobs do not directly mutate durable memory. Meta-consolidation and vault-promotion background jobs are review/report-only; they do not mutate L1 or vault files.
 
 ---
 
@@ -85,6 +85,39 @@ Adds deterministic codebase-analysis evidence. Evidence is support, not automati
 Supported tools: `tsc`, `eslint`, `playwright`, `vitest`, `fallow`, `custom`.
 
 Supported analysis kinds: `typecheck`, `lint`, `test`, `e2e`, `dependency`, `dead_code`, `complexity`, `security`, `duplication`, `custom`.
+
+---
+
+### `/memory-evidence link <evidence-id> --statement "..."`
+
+Links an existing evidence record to a new reviewable inbox candidate. This is a convenience workflow for turning deterministic evidence into a governed candidate without editing JSON.
+
+```
+/memory-evidence link ev_123 --statement "Always run bun test before commit" --kind instruction --tags testing,workflow --confidence 0.75
+```
+
+The linked candidate preserves the evidence ID, runs memory-worth scoring, clamps confidence through trust/evidence rules, and remains review-required. It does not directly mutate durable memory.
+
+---
+
+### `/memory-skill draft <procedure-candidate-id>`
+
+Creates a review-only skill draft artifact from a procedure candidate. It suggests a skill path and content but never writes `SKILL.md` automatically.
+
+```
+/memory-skill draft proc_20260615000000
+```
+
+---
+
+### `/memory-failures analyze [--save]`
+
+Analyzes failed background jobs and rejected candidates into review-only inquiries or candidates. It uses memory-worth scoring and does not mutate durable memory.
+
+```
+/memory-failures analyze
+/memory-failures analyze --save
+```
 
 ---
 

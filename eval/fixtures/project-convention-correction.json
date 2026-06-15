@@ -1,0 +1,27 @@
+{
+  "fixture_id": "synthetic_project_convention_correction",
+  "description": "Synthetic captured-style fixture: user corrects npm test command to bun and later recall should prefer bun.",
+  "redaction_version": "synthetic-v1",
+  "synthetic": true,
+  "sessions": [
+    {
+      "session_id": "redacted-session-001",
+      "turns": [
+        { "role": "assistant", "content": "Run npm test before committing." },
+        { "role": "user", "content": "This project uses bun, not npm. Always run bun test before commit.", "tags": ["testing", "workflow"], "expected_capture": true }
+      ]
+    },
+    {
+      "session_id": "redacted-session-002",
+      "turns": [
+        { "role": "user", "content": "How should I run tests before commit?", "expected_recall": ["bun test"] }
+      ]
+    }
+  ],
+  "expected": {
+    "candidates": ["Always run bun test before commit"],
+    "recall_query": "run tests before commit bun",
+    "expected_recalled_memory_ids": ["mem_always_run_bun_test_before_commit"],
+    "expected_omissions": ["npm"]
+  }
+}

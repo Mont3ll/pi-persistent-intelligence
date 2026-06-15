@@ -10,6 +10,7 @@ import { buildMemoryTimeline, renderMemoryTimeline, saveMemoryTimelineReport } f
 import { generateProcedureCandidates, renderProcedureCandidateReport, saveProcedureCandidateReport } from "./procedure-candidates";
 import { listCandidates } from "./inbox";
 import { scoreMemoryWorth } from "./memory-worth";
+import { runMetaConsolidation, DEFAULT_META_CONSOLIDATION_CONFIG } from "./meta-consolidation";
 
 export type BackgroundAnalysisKind =
   | "diagnostics"
@@ -127,6 +128,15 @@ function runOne(root: string, job: BackgroundAnalysisJob, supportedKinds?: Backg
     const report = generateProcedureCandidates(root, { now: job.created_at, minSourceRecords: 2 });
     const paths = saveProcedureCandidateReport(root, report);
     return { ...job, status: "succeeded", output_artifact_path: paths.mdPath };
+  }
+  if (job.kind === "meta_consolidation") {
+    const run = runMetaConsolidation(root, { ...DEFAULT_META_CONSOLIDATION_CONFIG, enabled: true, min_l2_records: 2, require_counterexample_search: true }, job.profile_id ?? "default", job.created_at);
+    return { ...job, status: "succeeded", output_artifact_path: run.report_path, warnings: ["Review-only: no L1 memory was mutated."] };
+  }
+  if (job.kind === "vault_promotion_candidates") {
+    const candidates = listCandidates(root).filter((candidate) => candidate.status === "new");
+    const path = writeJsonReport(root, job, { generated_at: job.created_at, review_required: true, vault_mutated: false, candidates: candidates.map((candidate) => ({ candidate_id: candidate.id, statement: candidate.text, evidence_ids: candidate.evidence_ids ?? [], review_required: true })) });
+    return { ...job, status: "succeeded", output_artifact_path: path, warnings: ["Review-only: no vault files were mutated."] };
   }
   if (job.kind === "memory_worth_review") {
     const candidates = listCandidates(root).filter((candidate) => candidate.status === "new");

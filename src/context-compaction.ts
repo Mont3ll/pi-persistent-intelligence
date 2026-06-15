@@ -4,6 +4,7 @@ import { buildCandidateTrustMetadata } from "./trust";
 import { attachVerification } from "./verifier";
 import { scoreMemoryWorth } from "./memory-worth";
 import { upsertInquiryRecord } from "./inquiries";
+import { createCompactionArtifact, saveCompactionArtifact } from "./compaction-artifacts";
 import type { CaptureCandidate, ConsolidationTrigger, DurabilitySignal, EvidenceTrustClass } from "./types";
 
 export interface ContextCompactionObservation {
@@ -30,6 +31,8 @@ export interface ContextCompactionResult {
   candidates_rejected_worth?: number;
   candidates_daily_only?: number;
   inquiries_created?: number;
+  compaction_artifacts_created?: number;
+  compaction_artifact_ids?: string[];
 }
 
 function idSafe(input: string): string {
@@ -44,6 +47,16 @@ export function runContextCompactionConsolidation(root: string, input: ContextCo
   let candidatesRejectedWorth = 0;
   let candidatesDailyOnly = 0;
   let inquiriesCreated = 0;
+  const artifact = createCompactionArtifact({
+    compacted_text: input.observations.map((obs) => obs.text).join("\n"),
+    original_source_text: input.observations.map((obs) => obs.text).join("\n"),
+    source_session_ids: [input.thread_id],
+    source_evidence_ids: [],
+    compression_method: "structured",
+    retrieval_hint: input.observations.flatMap((obs) => obs.tags ?? []).join(", "),
+    created_at: now,
+  });
+  saveCompactionArtifact(root, artifact);
 
   for (const [index, observation] of input.observations.entries()) {
     const evidence = appendEvidenceRecord(root, {
@@ -53,7 +66,7 @@ export function runContextCompactionConsolidation(root: string, input: ContextCo
       thread_id: input.thread_id,
       created_at: now,
       source_kind: "conversation",
-      source_ref: `context_compaction:${index}`,
+      source_ref: `context_compaction:${artifact.compaction_id}:${index}`,
       source_summary: observation.text,
       source_excerpt: observation.text,
       trust_class: observation.trust_class,
@@ -61,6 +74,7 @@ export function runContextCompactionConsolidation(root: string, input: ContextCo
       durability_signal: observation.durability_signal,
       related_memory_ids: [],
       tags: observation.tags ?? [],
+      notes: `compaction_id=${artifact.compaction_id}; original_digest=${artifact.original_digest}; reversible=${artifact.reversible}`,
     });
     evidenceCreated++;
 
@@ -91,6 +105,9 @@ export function runContextCompactionConsolidation(root: string, input: ContextCo
       evidence_refs: [evidence.id],
       evidence_ids: [evidence.id],
       confidence: observation.trust_class === "direct_user_instruction" || observation.trust_class === "user_correction" ? 0.9 : 0.75,
+      worth_decision: worth.decision,
+      worth_score: worth.worth_score,
+      worth_reasons: [...worth.reasons, `compaction_id:${artifact.compaction_id}`, `original_digest:${artifact.original_digest}`],
       status: "new",
       ...buildCandidateTrustMetadata(observation.trust_class, observation.durability_signal),
     }));
@@ -100,5 +117,5 @@ export function runContextCompactionConsolidation(root: string, input: ContextCo
     candidatesAdded++;
   }
 
-  return { trigger: "context_compaction", evidence_created: evidenceCreated, candidates_added: candidatesAdded, candidates_rejected: candidatesRejected, candidates_rejected_worth: candidatesRejectedWorth, candidates_daily_only: candidatesDailyOnly, inquiries_created: inquiriesCreated };
+  return { trigger: "context_compaction", evidence_created: evidenceCreated, candidates_added: candidatesAdded, candidates_rejected: candidatesRejected, candidates_rejected_worth: candidatesRejectedWorth, candidates_daily_only: candidatesDailyOnly, inquiries_created: inquiriesCreated, compaction_artifacts_created: 1, compaction_artifact_ids: [artifact.compaction_id] };
 }

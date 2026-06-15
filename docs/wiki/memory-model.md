@@ -152,3 +152,44 @@ PI resolves a profile for each session based on the working directory. Resolutio
 Profile-scoped records from one project do not appear in another project's injection context.
 
 See [Configuration](configuration.md) for project-local memory setup.
+
+---
+
+## Confidence computation
+
+Candidate confidence is computed from evidence and trust metadata. User-provided or LLM-provided confidence is treated as an input, not as final authority.
+
+Confidence considers:
+
+- evidence trust class
+- structured evidence presence
+- codebase-analysis support versus authority
+- durability signal
+- contradiction or contested signals
+- corroboration and reinforcement where available
+- governance mode
+
+Low-trust sources cannot produce auto-apply-eligible high confidence by themselves. Codebase-analysis evidence can support a candidate, but it remains review-bound and does not become a durable instruction automatically. Strict governance mode requires trust metadata, verification metadata, and evidence regardless of asserted confidence.
+
+---
+
+## Reversible compaction metadata
+
+Context compaction creates structured traceability metadata when source context is summarized into evidence/candidates. A compaction artifact records:
+
+```jsonc
+{
+  "compaction_id": "compact_...",
+  "compacted_text": "summary",
+  "source_session_ids": ["..."],
+  "source_memory_ids": ["..."],
+  "source_evidence_ids": ["..."],
+  "original_digest": "sha256 digest prefix",
+  "compression_method": "summary | extractive | structured | mixed",
+  "reversible": true,
+  "retrieval_hint": "testing, workflow",
+  "created_at": "..."
+}
+```
+
+`reversible: true` means there is enough metadata to inspect the source path; it does not mean PI stores private raw session content in package docs. Privacy purge and deleted evidence must prevent source reconstruction and should mark artifacts non-reversible.

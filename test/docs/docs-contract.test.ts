@@ -50,4 +50,15 @@ describe("docs contract", () => {
     const rootDocs = readdirSync("docs", { withFileTypes: true }).map((entry) => entry.name).sort();
     expect(rootDocs).toEqual(["retain-recall-reflect.md", "wiki"]);
   });
+
+  test("wiki index links governance policy docs", () => {
+    const wikiIndex = readFileSync("docs/wiki/index.md", "utf-8");
+    expect(wikiIndex).toContain("conflict-resolution-policy.md");
+    expect(wikiIndex).toContain("governance-regressions.md");
+  });
+
+  test("public docs do not claim real captured-session benchmark results", () => {
+    const publicDocs = [readme, readFileSync("docs/wiki/index.md", "utf-8"), readFileSync("docs/wiki/commands-and-tools.md", "utf-8")].join("\n");
+    expect(publicDocs).not.toMatch(/real-session benchmark/i);
+  });
 });

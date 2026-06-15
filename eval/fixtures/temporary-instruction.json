@@ -1,0 +1,20 @@
+{
+  "fixture_id": "synthetic_temporary_instruction",
+  "description": "Synthetic captured-style fixture: one-off skip instruction should not become durable memory.",
+  "redaction_version": "synthetic-v1",
+  "synthetic": true,
+  "sessions": [
+    {
+      "session_id": "redacted-session-003",
+      "turns": [
+        { "role": "user", "content": "For this one run, skip lint and just check the failing unit test.", "tags": ["testing"], "expected_no_capture": true },
+        { "role": "assistant", "content": "I will skip lint for this one run only." }
+      ]
+    }
+  ],
+  "expected": {
+    "rejected": ["For this one run, skip lint"],
+    "recall_query": "skip lint always",
+    "expected_recalled_memory_ids": []
+  }
+}
