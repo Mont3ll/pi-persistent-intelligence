@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added review-gated evidence linking with `/memory-evidence link <evidence-id> --statement "..."`.
+- Added Recall X-ray context budget diagnostics and available retrieval score provenance.
+- Added reversible context-compaction metadata with source IDs, digests, compression method, and traceability flags.
+- Added synthetic captured-style replay fixture framework and redaction helpers.
+- Added formal confidence computation helper that treats user/LLM confidence as an input, not an authority.
+- Added conflict resolution policy and governance regression docs.
+- Added review-only skill draft artifacts with `/memory-skill draft <procedure-candidate-id>`.
+- Added review-only failure analysis with `/memory-failures analyze [--save]`.
+- Added review-only background runners for meta-consolidation and vault-promotion candidates.
+
+### Governance
+
+- Evidence linking remains candidate-only and patch-governed.
+- Skill draft export never writes `SKILL.md` automatically.
+- Failure analysis and new background runners remain report/candidate-only.
+- Replay fixtures are synthetic/redacted starters; no private raw sessions are committed.
+
 ## [0.10.0] - 2026-06-13
 
 ### Added

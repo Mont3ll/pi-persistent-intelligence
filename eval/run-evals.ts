@@ -32,6 +32,12 @@ import { isTombstonedRecord } from "../src/tombstones";
 import { buildRecallXray } from "../src/recall-xray";
 import { scoreMemoryWorth } from "../src/memory-worth";
 import { enqueueBackgroundAnalysis, runBackgroundAnalysisQueue } from "../src/background-analysis";
+import { linkEvidenceToCandidate } from "../src/evidence-link";
+import { createCompactionArtifact } from "../src/compaction-artifacts";
+import { computeCandidateConfidence } from "../src/confidence";
+import { runReplayFixture, redactReplayContent } from "../src/replay-fixtures";
+import { draftSkillFromProcedureCandidate } from "../src/skill-draft";
+import { runFailureAnalysis } from "../src/failure-analysis";
 import type { CaptureCandidate, MemoryRecord } from "../src/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -812,6 +818,104 @@ function evalReplayBackgroundJobNoMutation(): EvalResult {
   return { category: "replay_background_job_no_mutation", description: "Replay runs background reports without canonical durable memory mutation.", pass, metrics: { jobs: jobs.length, records_before: before, records_after: loadAllRecords(root).length }, failures: pass ? [] : ["Background replay mutated memory or failed to produce artifacts."], hard_invariant: true };
 }
 
+function evalEvidenceLinkCreatesReviewCandidateNoBypass(): EvalResult {
+  const root = tempRoot();
+  const evidence = appendEvidenceRecord(root, { id: "", resource_id: "r", profile_id: "p", created_at: "n", source_kind: "codebase_analysis", source_summary: "bun test passed", trust_class: "passing_tool_or_test_outcome", polarity: "supports", durability_signal: "project", related_memory_ids: [], codebase_analysis: { source_kind: "codebase_analysis", tool: "vitest", analysis_kind: "test", exit_code: 0, timestamp: "n" } });
+  const result = linkEvidenceToCandidate(root, { evidence_id: evidence.id, statement: "Always run bun test before commit.", tags: ["testing"], confidence: 1 });
+  const pass = result.status === "candidate_created" && listCandidates(root).length === 1 && loadAllRecords(root).length === 0 && (result.candidate?.promotion_eligibility === "review_only");
+  return { category: "evidence_link_creates_review_candidate_no_bypass", description: "Evidence linking creates review candidate without durable mutation or confidence bypass.", pass, metrics: { candidates: listCandidates(root).length, durable_records: loadAllRecords(root).length }, failures: pass ? [] : ["Evidence link bypassed review or failed."], hard_invariant: true };
+}
+
+function evalRecallXrayContextBudgetExplainsOmissions(): EvalResult {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("mem_bun", "Always run bun test before commit."));
+  unsafeAddMemoryRecord(root, record("mem_other", "Use cargo test in Rust projects."));
+  const report = buildRecallXray(root, { query: "bun test" });
+  const budget = report.summary.context_budget;
+  const pass = budget.selected_count === report.included.length && budget.omitted_count === report.excluded.length && typeof budget.estimated_tokens === "number";
+  return { category: "recall_xray_context_budget_explains_omissions", description: "Recall X-ray reports budget and omission counts.", pass, metrics: { selected: budget.selected_count, omitted: budget.omitted_count, tokens: budget.estimated_tokens ?? 0 }, failures: pass ? [] : ["Context budget missing or inconsistent."] };
+}
+
+function evalReversibleCompactionPreservesSourceTrace(): EvalResult {
+  const artifact = createCompactionArtifact({ compacted_text: "Always run bun test.", original_source_text: "User: Always run bun test.", source_session_ids: ["s1"], source_evidence_ids: ["e1"], compression_method: "structured" });
+  const pass = artifact.reversible && artifact.source_session_ids.includes("s1") && artifact.original_digest.length > 0;
+  return { category: "reversible_compaction_preserves_source_trace", description: "Compaction artifacts preserve digest/source metadata.", pass, metrics: { reversible: String(artifact.reversible), evidence_refs: artifact.source_evidence_ids.length }, failures: pass ? [] : ["Compaction trace missing."] };
+}
+
+function evalCapturedReplayCorrectionPrecision(): EvalResult {
+  const root = tempRoot();
+  const result = runReplayFixture(root, { fixture_id: "eval_replay_correction", description: "synthetic", redaction_version: "synthetic-v1", synthetic: true, sessions: [{ session_id: "s", turns: [{ role: "user", content: "This project uses bun, not npm. Always run bun test before commit.", expected_capture: true }] }], expected: { candidates: ["Always run bun test before commit"], recall_query: "bun test", expected_recalled_memory_ids: ["mem_always_run_bun_test_before_commit"] } });
+  const pass = result.failures.length === 0 && result.candidates_created > 0;
+  return { category: "captured_replay_correction_precision", description: "Synthetic captured-style correction fixture replays successfully.", pass, metrics: { candidates: result.candidates_created, noise: result.noise_count }, failures: result.failures };
+}
+
+function evalCapturedReplayTemporaryInstructionNotDurable(): EvalResult {
+  const root = tempRoot();
+  const result = runReplayFixture(root, { fixture_id: "eval_replay_temporary", description: "synthetic", redaction_version: "synthetic-v1", synthetic: true, sessions: [{ session_id: "s", turns: [{ role: "user", content: "For this one run, skip lint.", expected_no_capture: true }] }], expected: { rejected: ["skip lint"] } });
+  const pass = result.rejected_observations > 0 && result.candidates_created === 0;
+  return { category: "captured_replay_temporary_instruction_not_durable", description: "Temporary one-off instruction is not durable.", pass, metrics: { rejected: result.rejected_observations, candidates: result.candidates_created }, failures: pass ? [] : ["Temporary instruction became durable."] };
+}
+
+function evalCapturedReplayRedactionSafety(): EvalResult {
+  const redacted = redactReplayContent("/home/alice/project OPENAI_API_KEY=abcdef1234567890 user@example.com", { redactUrls: true });
+  const pass = !redacted.includes("/home/alice") && !redacted.includes("abcdef") && !redacted.includes("user@example.com");
+  return { category: "captured_replay_redaction_safety", description: "Replay redactor removes high-risk content.", pass, metrics: {}, failures: pass ? [] : ["Redaction failed."] };
+}
+
+function evalRecallXrayScoreProvenanceReportsAvailableScores(): EvalResult {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("mem_bun", "Always run bun test before commit."));
+  const item = buildRecallXray(root, { query: "bun test" }).included.find((entry) => entry.memory_id === "mem_bun");
+  const pass = Boolean(item?.score_provenance?.fts_score && item.score_provenance.semantic_provider === "none" && item.score_provenance.semantic_score === undefined);
+  return { category: "recall_xray_score_provenance_reports_available_scores", description: "Recall X-ray reports available scores and does not fabricate semantic scores.", pass, metrics: { fts_score: item?.score_provenance?.fts_score ?? 0 }, failures: pass ? [] : ["Score provenance missing or fabricated."] };
+}
+
+function evalComputedConfidenceRespectsTrustBoundaries(): EvalResult {
+  const low = computeCandidateConfidence({ primaryTrustClass: "repository_text", userProvidedConfidence: 1, evidenceRecords: [{ id: "e", resource_id: "r", profile_id: "p", created_at: "n", source_kind: "file", source_summary: "x", trust_class: "repository_text", polarity: "supports", related_memory_ids: [] }] });
+  const pass = low.confidence < 0.85 && low.review_required;
+  return { category: "computed_confidence_respects_trust_boundaries", description: "Computed confidence clamps low-trust user/LLM-provided confidence.", pass, metrics: { confidence: low.confidence }, failures: pass ? [] : ["Low trust confidence bypassed boundaries."], hard_invariant: true };
+}
+
+function evalSkillDraftExportReviewGatedNoAutowrite(): EvalResult {
+  const root = tempRoot();
+  const ev = appendEvidenceRecord(root, { id: "ev", resource_id: "r", profile_id: "default", created_at: "n", source_kind: "conversation", source_summary: "run tests", trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: ["m1"] });
+  unsafeAddMemoryRecord(root, record("m1", "Always run bun test before commit.", { stability: "stable", profile_id: "default", evidence: [{ type: "manual", ref: ev.id, note: "n" }] }));
+  unsafeAddMemoryRecord(root, record("m2", "Run typecheck before commit.", { stability: "stable", profile_id: "default", evidence: [{ type: "manual", ref: ev.id, note: "n" }] }));
+  const result = draftSkillFromProcedureCandidate(root, "", "2026-06-15T00:00:00Z");
+  const pass = result.status === "draft_created" && result.artifact?.export_status === "review_required";
+  return { category: "skill_draft_export_review_gated_no_autowrite", description: "Skill draft is review artifact only.", pass, metrics: {}, failures: pass ? [] : ["Skill draft boundary failed."], hard_invariant: true };
+}
+
+function evalFailureAnalysisReviewOnlyCandidates(): EvalResult {
+  const root = tempRoot();
+  appendCandidate(root, { id: "cap_rejected_eval", created_at: "n", source: { type: "manual", ref: "x" }, text: "Always prefer bun after failed npm test.", tags: ["testing"], evidence_refs: ["x"], confidence: 0.6, status: "rejected" });
+  const before = loadAllRecords(root).length;
+  const { report } = runFailureAnalysis(root);
+  const pass = report.items.length > 0 && loadAllRecords(root).length === before;
+  return { category: "failure_analysis_review_only_candidates", description: "Failure analysis creates review artifacts without durable mutation.", pass, metrics: { items: report.items.length }, failures: pass ? [] : ["Failure analysis mutated durable memory or produced no items."], hard_invariant: true };
+}
+
+function evalBackgroundMetaConsolidationReportOnly(): EvalResult {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("m1", "Always run bun test before commit.", { stability: "stable", profile_id: "default", normalized_key: "default|workflow" }));
+  unsafeAddMemoryRecord(root, record("m2", "Run typecheck before commit.", { stability: "stable", profile_id: "default", normalized_key: "default|workflow" }));
+  enqueueBackgroundAnalysis(root, { kind: "meta_consolidation", profile_id: "default" });
+  const beforeL1 = loadActiveRecords(root).filter((r) => r.layer === "L1").length;
+  const jobs = runBackgroundAnalysisQueue(root);
+  const afterL1 = loadActiveRecords(root).filter((r) => r.layer === "L1").length;
+  const pass = jobs[0].status === "succeeded" && beforeL1 === afterL1;
+  return { category: "background_meta_consolidation_report_only", description: "Background meta-consolidation is report-only.", pass, metrics: { before_l1: beforeL1, after_l1: afterL1 }, failures: pass ? [] : ["Meta background mutated L1 or failed."], hard_invariant: true };
+}
+
+function evalBackgroundVaultPromotionReviewOnly(): EvalResult {
+  const root = tempRoot();
+  appendCandidate(root, candidate("Promote this to vault after review."));
+  enqueueBackgroundAnalysis(root, { kind: "vault_promotion_candidates" });
+  const jobs = runBackgroundAnalysisQueue(root);
+  const pass = jobs[0].status === "succeeded" && jobs[0].warnings?.join(" ").includes("no vault files were mutated");
+  return { category: "background_vault_promotion_review_only", description: "Background vault promotion creates review artifact only.", pass, metrics: { jobs: jobs.length }, failures: pass ? [] : ["Vault promotion boundary failed."], hard_invariant: true };
+}
+
 async function runEvals(): Promise<void> {
   const start = Date.now();
   const results: EvalResult[] = [];
@@ -853,6 +957,18 @@ async function runEvals(): Promise<void> {
     ["Replay Codebase Evidence Support", evalReplayCodebaseEvidenceSupport],
     ["Replay Memory-worth Rejection", evalReplayMemoryWorthRejection],
     ["Replay Background Job No Mutation", evalReplayBackgroundJobNoMutation],
+    ["Evidence Link Creates Review Candidate No Bypass", evalEvidenceLinkCreatesReviewCandidateNoBypass],
+    ["Recall X-ray Context Budget Explains Omissions", evalRecallXrayContextBudgetExplainsOmissions],
+    ["Reversible Compaction Preserves Source Trace", evalReversibleCompactionPreservesSourceTrace],
+    ["Captured Replay Correction Precision", evalCapturedReplayCorrectionPrecision],
+    ["Captured Replay Temporary Instruction Not Durable", evalCapturedReplayTemporaryInstructionNotDurable],
+    ["Captured Replay Redaction Safety", evalCapturedReplayRedactionSafety],
+    ["Recall X-ray Score Provenance Reports Available Scores", evalRecallXrayScoreProvenanceReportsAvailableScores],
+    ["Computed Confidence Respects Trust Boundaries", evalComputedConfidenceRespectsTrustBoundaries],
+    ["Skill Draft Export Review Gated No Autowrite", evalSkillDraftExportReviewGatedNoAutowrite],
+    ["Failure Analysis Review Only Candidates", evalFailureAnalysisReviewOnlyCandidates],
+    ["Background Meta-Consolidation Report Only", evalBackgroundMetaConsolidationReportOnly],
+    ["Background Vault Promotion Review Only", evalBackgroundVaultPromotionReviewOnly],
   ];
 
   for (const [label, fn] of evals) {

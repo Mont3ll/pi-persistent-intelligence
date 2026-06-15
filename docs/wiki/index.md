@@ -16,6 +16,8 @@ This wiki is the deeper operating manual for the package. The README covers inst
 | [Retain, Recall, Reflect](../retain-recall-reflect.md) | Public mental model for governed capture, scoped retrieval, and reviewable reflection |
 | [Commands and Tools](commands-and-tools.md) | All public commands and tools with examples |
 | [Governance](governance.md) | Compatibility mode, strict mode, and what never auto-applies |
+| [Conflict Resolution Policy](conflict-resolution-policy.md) | How conflicts, contested records, supersession, exceptions, tombstones, and privacy purge are resolved |
+| [Governance Regressions](governance-regressions.md) | Known governance failure modes and the guardrails/tests that prevent them |
 | [Evidence, Trust, and Verification](evidence-trust-verification.md) | Trust classes, durability signals, and the deterministic verifier |
 | [Patch Lifecycle](patch-lifecycle.md) | How every durable change goes through a patch file |
 | [Deletion and Privacy](deletion-and-privacy.md) | Audit-preserving delete, privacy purge, and tombstones |

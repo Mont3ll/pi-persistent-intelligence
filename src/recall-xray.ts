@@ -18,6 +18,7 @@ export interface RecallXrayOptions {
   recent_files_touched?: string[];
   maxRecords?: number;
   governance_mode?: "compatibility" | "strict";
+  injection_mode?: "scoped" | "policy_only" | "wakeup";
 }
 
 export interface IncludedMemoryXray {
@@ -48,6 +49,15 @@ export interface IncludedMemoryXray {
   hard_rule_reason?: string;
   governance_safe?: boolean;
   warnings?: string[];
+  score_provenance?: {
+    fts_score?: number;
+    semantic_score?: number;
+    rrf_score?: number;
+    final_score?: number;
+    matched_terms?: string[];
+    semantic_provider?: "qmd" | "none" | "unknown";
+    rank_sources?: Array<{ source: "fts" | "semantic" | "hard_rule" | "scope" | "dependency" | "session"; rank?: number; score?: number; reason?: string }>;
+  };
 }
 
 export interface ExcludedMemoryXray {
@@ -63,6 +73,22 @@ export interface ExcludedMemoryXray {
   dependency_invalidated?: boolean;
 }
 
+export interface RecallContextBudgetSummary {
+  selected_count: number;
+  omitted_count: number;
+  hard_rule_count: number;
+  scoped_memory_count: number;
+  session_context_count?: number;
+  inquiry_count?: number;
+  raw_candidate_chars: number;
+  selected_chars: number;
+  injected_chars_estimate?: number;
+  estimated_tokens?: number;
+  omission_reasons: Record<string, number>;
+  trivial_prompt_filter_active?: boolean;
+  injection_mode?: "scoped" | "policy_only" | "wakeup";
+}
+
 export interface RecallXraySummary {
   query: string;
   included_count: number;
@@ -72,6 +98,7 @@ export interface RecallXraySummary {
   stale_count: number;
   dependency_invalidated_count: number;
   tombstoned_count: number;
+  context_budget: RecallContextBudgetSummary;
 }
 
 export interface RecallXrayReport {
@@ -94,6 +121,12 @@ function stale(record: MemoryRecord): boolean {
   return Number.isFinite(ts) ? Date.now() - ts > 90 * 86_400_000 : false;
 }
 function evidenceIds(record: MemoryRecord): string[] { return [...new Set(record.evidence.map((e) => e.ref))]; }
+function approxTokens(chars: number): number { return Math.ceil(chars / 4); }
+function increment(map: Record<string, number>, key: string): void { map[key] = (map[key] ?? 0) + 1; }
+function matchedTerms(record: MemoryRecord, queryTerms: Set<string>): string[] {
+  const haystack = `${record.statement} ${record.tags.join(" ")} ${record.ruleType ?? ""}`.toLowerCase();
+  return [...queryTerms].filter((term) => haystack.includes(term));
+}
 function evidenceFor(record: MemoryRecord, evidence: EvidenceRecord[]): EvidenceRecord[] {
   const ids = new Set(evidenceIds(record));
   return evidence.filter((e) => ids.has(e.id) || e.related_memory_ids.includes(record.id));
@@ -136,6 +169,7 @@ export function buildRecallXray(root: string, options: RecallXrayOptions): Recal
 
   const included: IncludedMemoryXray[] = [];
   const excluded: ExcludedMemoryXray[] = [];
+  const omissionReasons: Record<string, number> = {};
   for (const record of all) {
     const evs = evidenceFor(record, evidence);
     const invalidated = dependencyInvalidated(evs);
@@ -175,13 +209,23 @@ export function buildRecallXray(root: string, options: RecallXrayOptions): Recal
         hard_rule_reason: hardRule ? "active high-confidence hard-rule ruleType with policy filters satisfied" : isHardRuleCandidate ? "typed high-confidence candidate not attributed as clean hard rule under current governance" : undefined,
         governance_safe: isHardRuleCandidate ? strictSafe : undefined,
         warnings: isHardRuleCandidate && !strictSafe ? ["strict governance requires structured live evidence before hard-rule attribution"] : undefined,
+        score_provenance: {
+          fts_score: Number(score.toFixed(3)),
+          semantic_provider: "none",
+          final_score: Number(score.toFixed(3)),
+          matched_terms: matchedTerms(record, q),
+          rank_sources: hardRule
+            ? [{ source: "hard_rule", reason: "typed high-confidence active rule selected after policy filters" }]
+            : [{ source: score > 0 ? "fts" : "scope", score: Number(score.toFixed(3)), reason: score > 0 ? "query term overlap" : "policy scope inclusion" }],
+        },
       });
     } else {
       const ex = exclusionById.get(record.id);
       const reasons = [...(ex?.reasons ?? [])];
       if (tombstoned) reasons.push("tombstoned");
       if (invalidated) reasons.push("dependency_invalidated");
-      if (notRelevant) reasons.push("not_relevant_to_query");
+      if (notRelevant) reasons.push("below_threshold");
+      increment(omissionReasons, reasons[0] ?? "not_selected");
       excluded.push({
         memory_id: record.id,
         excluded_reason: reasons[0] ?? "not_selected",
@@ -197,16 +241,32 @@ export function buildRecallXray(root: string, options: RecallXrayOptions): Recal
     }
   }
 
+  const rawCandidateChars = all.reduce((sum, record) => sum + record.statement.length, 0);
+  const selectedChars = included.reduce((sum, item) => sum + (item.statement_excerpt?.length ?? 0), 0);
+  const hardRuleCount = included.filter((m) => m.retrieval_tier === "hard_rule").length;
   return {
     summary: {
       query: options.query,
       included_count: included.length,
       excluded_count: excluded.length,
-      hard_rule_count: included.filter((m) => m.retrieval_tier === "hard_rule").length,
+      hard_rule_count: hardRuleCount,
       contested_count: [...included, ...excluded].filter((m) => m.contested).length,
       stale_count: included.filter((m) => m.stale).length,
       dependency_invalidated_count: [...included, ...excluded].filter((m) => m.dependency_invalidated).length,
       tombstoned_count: [...included, ...excluded].filter((m) => m.tombstoned).length,
+      context_budget: {
+        selected_count: included.length,
+        omitted_count: excluded.length,
+        hard_rule_count: hardRuleCount,
+        scoped_memory_count: included.filter((m) => m.retrieval_tier === "scoped_memory" || m.retrieval_tier === "term_match").length,
+        raw_candidate_chars: rawCandidateChars,
+        selected_chars: selectedChars,
+        injected_chars_estimate: selectedChars,
+        estimated_tokens: approxTokens(selectedChars),
+        omission_reasons: omissionReasons,
+        trivial_prompt_filter_active: false,
+        injection_mode: options.injection_mode ?? "scoped",
+      },
     },
     included,
     excluded,
@@ -217,10 +277,12 @@ export function renderRecallXrayReport(report: RecallXrayReport): string {
   const lines = [
     `PI Recall X-ray — ${report.summary.query}`,
     `Included: ${report.summary.included_count}  Excluded: ${report.summary.excluded_count}  Contested: ${report.summary.contested_count}  Stale: ${report.summary.stale_count}  Dependency-invalidated: ${report.summary.dependency_invalidated_count}  Tombstoned: ${report.summary.tombstoned_count}`,
+    `Context budget: selected=${report.summary.context_budget.selected_count} omitted=${report.summary.context_budget.omitted_count} chars=${report.summary.context_budget.selected_chars}/${report.summary.context_budget.raw_candidate_chars} approx_tokens=${report.summary.context_budget.estimated_tokens ?? "n/a"} mode=${report.summary.context_budget.injection_mode ?? "unknown"}`,
+    `Omissions: ${Object.entries(report.summary.context_budget.omission_reasons).map(([k, v]) => `${k}=${v}`).join(", ") || "none"}`,
     "",
     "## Included",
   ];
-  for (const item of report.included) lines.push(`- ${item.memory_id} [${item.layer ?? "?"}${item.memory_kind ? `, ${item.memory_kind}` : ""}${item.hard_rule ? ", hard_rule" : ""}] tier=${item.retrieval_tier} score=${item.retrieval_score ?? "n/a"} evidence=${item.evidence_status ?? "unknown"} sources=${(item.evidence_source_kinds ?? []).join(",") || "unknown"}: ${item.included_reason}${item.warnings?.length ? ` warnings=${item.warnings.join(";")}` : ""}${item.statement_excerpt ? ` — ${item.statement_excerpt}` : ""}`);
+  for (const item of report.included) lines.push(`- ${item.memory_id} [${item.layer ?? "?"}${item.memory_kind ? `, ${item.memory_kind}` : ""}${item.hard_rule ? ", hard_rule" : ""}] tier=${item.retrieval_tier} score=${item.retrieval_score ?? "n/a"} score_sources=${(item.score_provenance?.rank_sources ?? []).map((s) => s.source).join("+") || "unknown"} semantic=${item.score_provenance?.semantic_provider ?? "unknown"} evidence=${item.evidence_status ?? "unknown"} sources=${(item.evidence_source_kinds ?? []).join(",") || "unknown"}: ${item.included_reason}${item.warnings?.length ? ` warnings=${item.warnings.join(";")}` : ""}${item.statement_excerpt ? ` — ${item.statement_excerpt}` : ""}`);
   lines.push("", "## Excluded");
   for (const item of report.excluded) lines.push(`- ${item.memory_id}: ${item.excluded_reason} (${item.filtered_by.join(", ")})`);
   return redactSecrets(lines.join("\n"));

@@ -10,3 +10,7 @@ docs/PI-SPRINT-*.md
 docs/PI-*-INTEGRATION-*.md
 docs/*RELEASE-PREP*.md
 docs/dogfood-checklist.md
+reports/sprints/
+
+# Generated local verification artifacts
+reports/eval/*-eval-report.*

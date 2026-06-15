@@ -159,6 +159,9 @@ The `ruleType` field on a memory record affects retrieval priority and hard-rule
 | `/memory-background run` | Run queued background jobs and write report artifacts |
 | `/memory-background list` | List queued/running/succeeded/failed background analysis jobs |
 | `/memory-evidence add-codebase-analysis ...` | Add deterministic codebase-analysis evidence from tools such as `tsc`, ESLint, Playwright, Vitest, Fallow-like analysis, or custom scripts |
+| `/memory-evidence link <evidence-id> --statement "..."` | Turn existing evidence into a reviewable inbox candidate without bypassing governance |
+| `/memory-skill draft <procedure-candidate-id>` | Generate a review-only skill draft artifact from a procedure candidate; never writes `SKILL.md` automatically |
+| `/memory-failures analyze [--save]` | Mine failed jobs/rejected candidates into review-only learning artifacts |
 | `/memory-graph [--save]` | Export a read-only dependency graph of memory, evidence, inquiries, tombstones, candidates, and reinforcement |
 | `/memory-timeline [--memory <id>] [--save]` | Show timeline events and effective validity for one memory or the whole store |
 | `/procedure-candidates [--save]` | Generate review-only procedure candidates from repeated workflow memory |
@@ -228,7 +231,7 @@ Every candidate captures where it came from:
 - **Promotion eligibility**: derived from trust class and durability. Low-trust or temporary candidates route to review.
 - **Poisoning risk**: repository text and generated content are flagged and cannot auto-apply.
 - **Verification**: checks source support, durability, trust boundary, conflict risk, redacted evidence, and tombstone re-creation.
-- **Codebase analysis evidence**: deterministic tool output such as `tsc`, ESLint, Playwright, Vitest, Fallow-like analysis, or custom scripts. This evidence can support a candidate or report, but it does not become automatic truth and does not bypass review.
+- **Codebase analysis evidence**: deterministic tool output such as `tsc`, ESLint, Playwright, Vitest, Fallow-like analysis, or custom scripts. This evidence can support a candidate or report, but it does not become automatic truth and does not bypass review. Existing evidence can be linked into reviewable candidates with `/memory-evidence link <evidence-id> --statement "..."`; linked candidates remain patch-governed and review-required.
 
 Supported codebase tools are `tsc`, `eslint`, `playwright`, `vitest`, `fallow`, and `custom`. Supported analysis kinds are `typecheck`, `lint`, `test`, `e2e`, `dependency`, `dead_code`, `complexity`, `security`, `duplication`, and `custom`.
 
@@ -350,9 +353,11 @@ PI includes read-only reports for inspecting why memories exist and whether thei
 - **Dependency graph export** shows relationships between memories, evidence, inquiries, tombstones, candidates, reinforcement events, and supersession. It is a read-only report, not a graph query engine.
 - **Timeline reporting** computes effective validity from creation, update, supersession, and tombstones without mutating legacy records. It is a read-only report, not a temporal database.
 - **Goal handoff** summarizes active memory, inquiries, pending candidates, diagnostics warnings, and validation steps as background reference only.
-- **Recall X-ray** explains why memories were included or excluded for a query. It reports included memories, excluded memories, retrieval tier, score or selection reason, hard-rule attribution, evidence state, trust class, memory kind, scope and negative-scope filtering, contested state, stale state, tombstones, dependency invalidation, and redacted output.
+- **Recall X-ray** explains why memories were included or excluded for a query. It reports included memories, excluded memories, retrieval tier, score or selection reason, available FTS/semantic score provenance, hard-rule attribution, context budget diagnostics, evidence state, trust class, memory kind, scope and negative-scope filtering, contested state, stale state, tombstones, dependency invalidation, and redacted output.
 - **Background analysis jobs** queue local, inspectable report-producing work for diagnostics, provenance liveness, re-verification, memory graph, memory timeline, procedure candidates, and memory-worth review. Jobs do not directly mutate durable memory.
-- **Procedure candidates** identify repeated workflow memory as review-only procedure drafts. PI never writes skill files automatically.
+- **Procedure candidates** identify repeated workflow memory as review-only procedure drafts. `/memory-skill draft` can create a review artifact from a procedure candidate, but PI never writes skill files automatically.
+- **Failure analysis** summarizes failed jobs and rejected candidates into review-only inquiries or candidates; it does not mutate durable memory.
+- **Compaction traceability** stores reversible metadata for context-compaction artifacts where source sessions, evidence IDs, and digests are available.
 
 ### Injection modes
 

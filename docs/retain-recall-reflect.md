@@ -31,6 +31,9 @@ Retain does not bypass governance. Durable L1/L2 changes still require patch app
 
 ## Recall
 
+Recall now includes operator-facing diagnostics for context economy and retrieval provenance. Recall X-ray reports selected and omitted memory counts, omission reasons, approximate context size, and available FTS/semantic score provenance without changing retrieval semantics.
+
+
 **Recall** means retrieve scoped memory for the current task while respecting policy filters.
 
 Recall uses profile, resource, thread, project, status, tombstone, negative-scope, contested, and dependency-invalidated state. The default context injection remains `scoped`; lower-token `policy_only` and `wakeup` modes are also available.
@@ -45,6 +48,9 @@ memory_search "query"
 `/memory-recall-xray` is read-only. It explains included and excluded memories, including retrieval tier, score, evidence status, trust class, memory kind, scope mismatch, negative-scope match, tombstone state, contested status, stale status, and dependency invalidation. Reports are redacted before display.
 
 ## Reflect
+
+Reflection now includes review-only evidence linking, failure analysis, skill draft artifacts, and background report jobs. These workflows can propose candidates or reports, but they do not directly mutate durable memory or write external skill/docs files.
+
 
 **Reflect** means produce reviewable maintenance and abstraction artifacts.
 

@@ -58,14 +58,17 @@ import { linkExplicitCorrectionToMemory } from "./src/reinforcement";
 import { selectRelevantInquiries, renderInquiryInjectionBlock } from "./src/inquiries";
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
 import { appendEvidenceRecord } from "./src/evidence";
+import { linkEvidenceToCandidate } from "./src/evidence-link";
 import { exportMemoryGraph, renderMemoryGraphSummary, saveMemoryGraphReport } from "./src/memory-graph";
 import { buildMemoryTimeline, renderMemoryTimeline, saveMemoryTimelineReport } from "./src/timeline";
 import { generateProcedureCandidates, renderProcedureCandidateReport, saveProcedureCandidateReport } from "./src/procedure-candidates";
 import { buildRecallXray, renderRecallXrayReport } from "./src/recall-xray";
 import { enqueueBackgroundAnalysis, listBackgroundAnalysisJobs, runBackgroundAnalysisQueue, type BackgroundAnalysisKind } from "./src/background-analysis";
 import { scoreMemoryWorth } from "./src/memory-worth";
+import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
+import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-analysis";
 import { resolveMemoryProfile } from "./src/profile";
-import type { CaptureCandidate, CodebaseAnalysisKind, CodebaseAnalysisTool } from "./src/types";
+import type { CaptureCandidate, CodebaseAnalysisKind, CodebaseAnalysisTool, MemoryKind } from "./src/types";
 
 function nowIso(): string { return new Date().toISOString(); }
 function shortId(prefix: string): string {
@@ -701,12 +704,31 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("memory-evidence", {
-    description: "Manage structured evidence. Usage: /memory-evidence add-codebase-analysis --tool <tool> --command \"<command>\" --exit-code <code> --analysis-kind <kind> [--file <path>] [--symbol <name>] [--summary \"<summary>\"]",
+    description: "Manage structured evidence. Usage: /memory-evidence add-codebase-analysis ... | /memory-evidence link <evidence-id> --statement \"...\" [--kind fact|event|instruction|task] [--tags testing,tooling] [--confidence 0.75]",
     handler: async (args, ctx) => {
       const parsed = parseCommandArgs(args);
       const action = parsed.positional[0];
+      if (action === "link") {
+        const evidenceId = parsed.positional[1];
+        const statement = typeof parsed.flags.statement === "string" ? parsed.flags.statement : "";
+        const tags = typeof parsed.flags.tags === "string" ? parsed.flags.tags.split(",").map((tag) => tag.trim()).filter(Boolean) : undefined;
+        const confidence = typeof parsed.flags.confidence === "string" ? Number(parsed.flags.confidence) : undefined;
+        const result = linkEvidenceToCandidate(root, {
+          evidence_id: evidenceId,
+          statement,
+          kind: typeof parsed.flags.kind === "string" ? parsed.flags.kind as MemoryKind : undefined,
+          tags,
+          scope: typeof parsed.flags.scope === "string" ? parsed.flags.scope : undefined,
+          confidence: Number.isFinite(confidence) ? confidence : undefined,
+          forceReview: parsed.flags["force-review"] === true,
+          now: nowIso(),
+          cwd: sessionCwd,
+        });
+        ctx.ui.notify(redactSecrets(result.message), result.status === "failed" || result.status === "rejected" ? "warning" : "success");
+        return;
+      }
       if (action !== "add-codebase-analysis") {
-        ctx.ui.notify("Usage: /memory-evidence add-codebase-analysis --tool <tsc|eslint|playwright|vitest|fallow|custom> --command \"<command>\" --exit-code <code> --analysis-kind <kind>", "warning");
+        ctx.ui.notify("Usage: /memory-evidence add-codebase-analysis --tool <tsc|eslint|playwright|vitest|fallow|custom> --command \"<command>\" --exit-code <code> --analysis-kind <kind> OR /memory-evidence link <evidence-id> --statement \"...\"", "warning");
         return;
       }
       const tool = parsed.flags.tool;
@@ -843,6 +865,27 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       } catch (err) {
         ctx.ui.notify(`Procedure candidates failed: ${err}`, "error");
       }
+    },
+  });
+
+  pi.registerCommand("memory-skill", {
+    description: "Generate review-only skill draft artifacts from procedure candidates. Usage: /memory-skill draft <procedure-candidate-id>",
+    handler: async (args, ctx) => {
+      const parsed = parseCommandArgs(args);
+      if (parsed.positional[0] !== "draft") { ctx.ui.notify("Usage: /memory-skill draft <procedure-candidate-id>", "warning"); return; }
+      const result = draftSkillFromProcedureCandidate(root, parsed.positional[1] ?? "", nowIso());
+      ctx.ui.notify(redactSecrets(result.message), result.status === "draft_created" ? "success" : "error");
+    },
+  });
+
+  pi.registerCommand("memory-failures", {
+    description: "Analyze failed jobs/rejected candidates into review-only learning artifacts. Usage: /memory-failures analyze [--save]",
+    handler: async (args, ctx) => {
+      const parsed = parseCommandArgs(args);
+      if ((parsed.positional[0] ?? "analyze") !== "analyze") { ctx.ui.notify("Usage: /memory-failures analyze [--save]", "warning"); return; }
+      const { report, path } = runFailureAnalysis(root, { now: nowIso(), save: parsed.flags.save === true });
+      ctx.ui.notify(renderFailureAnalysisReport(report), "info");
+      if (path) ctx.ui.notify(`Failure analysis saved: ${path}`, "success");
     },
   });
 
