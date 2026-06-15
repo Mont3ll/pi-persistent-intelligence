@@ -26,7 +26,7 @@ describe("docs contract", () => {
     expect(readme).toContain("autoCurate");
     expect(readme).toContain("metaConsolidation");
     expect(readme).not.toContain("auto_curate");
-    expect(readme).not.toContain("meta_consolidation");
+    expect(readme).not.toContain('"meta_consolidation"');
   });
 
   test("package identity and public install command are consistent", () => {

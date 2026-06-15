@@ -155,7 +155,7 @@ The `ruleType` field on a memory record affects retrieval priority and hard-rule
 | `/memory-diagnostics [--save]` | Run integrity, secret, provenance, and re-verification checks; `--save` writes JSON report to `reports/diagnostics/` |
 | `/memory-recall-xray <query>` | Explain why memories are included or excluded for a query; read-only and redacted |
 | `/memory-worth <observation>` | Score whether an observation should be rejected, kept daily-only, captured as a candidate, or turned into an inquiry |
-| `/memory-background enqueue <kind>` | Queue an inspectable local background analysis job (`diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`) |
+| `/memory-background enqueue <kind>` | Queue an inspectable local background analysis job (`diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`, `meta_consolidation`, `vault_promotion_candidates`) |
 | `/memory-background run` | Run queued background jobs and write report artifacts |
 | `/memory-background list` | List queued/running/succeeded/failed background analysis jobs |
 | `/memory-evidence add-codebase-analysis ...` | Add deterministic codebase-analysis evidence from tools such as `tsc`, ESLint, Playwright, Vitest, Fallow-like analysis, or custom scripts |
@@ -354,7 +354,7 @@ PI includes read-only reports for inspecting why memories exist and whether thei
 - **Timeline reporting** computes effective validity from creation, update, supersession, and tombstones without mutating legacy records. It is a read-only report, not a temporal database.
 - **Goal handoff** summarizes active memory, inquiries, pending candidates, diagnostics warnings, and validation steps as background reference only.
 - **Recall X-ray** explains why memories were included or excluded for a query. It reports included memories, excluded memories, retrieval tier, score or selection reason, available FTS/semantic score provenance, hard-rule attribution, context budget diagnostics, evidence state, trust class, memory kind, scope and negative-scope filtering, contested state, stale state, tombstones, dependency invalidation, and redacted output.
-- **Background analysis jobs** queue local, inspectable report-producing work for diagnostics, provenance liveness, re-verification, memory graph, memory timeline, procedure candidates, and memory-worth review. Jobs do not directly mutate durable memory.
+- **Background analysis jobs** queue local, inspectable report-producing work for diagnostics, provenance liveness, re-verification, memory graph, memory timeline, procedure candidates, memory-worth review, and review-only meta-consolidation/vault-promotion candidate reports. Jobs do not directly mutate durable memory. Use `/memory-background enqueue meta_consolidation` or `/memory-background enqueue vault_promotion_candidates` to create review-only reports; these runners do not mutate L1 memory or vault files.
 - **Procedure candidates** identify repeated workflow memory as review-only procedure drafts. `/memory-skill draft` can create a review artifact from a procedure candidate, but PI never writes skill files automatically.
 - **Failure analysis** summarizes failed jobs and rejected candidates into review-only inquiries or candidates; it does not mutate durable memory.
 - **Compaction traceability** stores reversible metadata for context-compaction artifacts where source sessions, evidence IDs, and digests are available.

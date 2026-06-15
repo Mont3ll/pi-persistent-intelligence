@@ -4,24 +4,53 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-15
+
 ### Added
 
-- Added review-gated evidence linking with `/memory-evidence link <evidence-id> --statement "..."`.
-- Added Recall X-ray context budget diagnostics and available retrieval score provenance.
-- Added reversible context-compaction metadata with source IDs, digests, compression method, and traceability flags.
-- Added synthetic captured-style replay fixture framework and redaction helpers.
-- Added formal confidence computation helper that treats user/LLM confidence as an input, not an authority.
-- Added conflict resolution policy and governance regression docs.
-- Added review-only skill draft artifacts with `/memory-skill draft <procedure-candidate-id>`.
-- Added review-only failure analysis with `/memory-failures analyze [--save]`.
-- Added review-only background runners for meta-consolidation and vault-promotion candidates.
+- Added `/memory-evidence link <evidence-id> --statement "..."` for turning existing evidence records into review-required memory candidates without directly mutating durable memory.
+- Added context budget diagnostics to Recall X-ray, including selected/omitted counts, omission reasons, and approximate context-size reporting.
+- Added score provenance to Recall X-ray for available FTS, semantic, and hybrid/RRF retrieval metadata.
+- Added reversible compaction metadata, including source identifiers, original digests, compression method, reversibility flags, and diagnostics for traceability.
+- Added a replay fixture framework with redaction checks and synthetic captured-style starter fixtures.
+- Added confidence computation/audit helpers to ensure user- or model-provided confidence cannot bypass trust/evidence constraints.
+- Added `docs/wiki/conflict-resolution-policy.md`.
+- Added `docs/wiki/governance-regressions.md`.
+- Added `/memory-skill draft <procedure-candidate-id>` for review-gated skill draft artifacts from procedure candidates.
+- Added `/memory-failures analyze [--save]` for review-only failure-analysis candidates and reports.
+- Added review-only background runners for meta-consolidation and vault-promotion candidate workflows.
+
+### Changed
+
+- Expanded Recall X-ray from recall explanation into retrieval/context-budget transparency.
+- Improved context compaction traceability.
+- Strengthened package/report hygiene around sprint reports, eval reports, replay fixtures, and runtime artifacts.
+- Expanded docs-contract coverage for command registration, wiki links, and package-file policy.
+- Expanded deterministic eval coverage for evidence linking, context budget diagnostics, reversible compaction, replay redaction, score provenance, confidence boundaries, skill draft export, failure analysis, and background review-only runners.
 
 ### Governance
 
-- Evidence linking remains candidate-only and patch-governed.
-- Skill draft export never writes `SKILL.md` automatically.
-- Failure analysis and new background runners remain report/candidate-only.
-- Replay fixtures are synthetic/redacted starters; no private raw sessions are committed.
+- Evidence linking creates review-required candidates only.
+- Skill draft export never writes `SKILL.md` or `skills/**` automatically.
+- Failure analysis is review-only.
+- Background meta-consolidation and vault-promotion jobs are report/candidate-only.
+- Codebase-analysis evidence remains supporting evidence and does not bypass review.
+- Reversible compaction does not expose privacy-purged content.
+- Replay fixtures are redacted and do not include raw private sessions.
+- No automatic L1 promotion was added.
+- No hosted service, database, vector store, or graph database dependency was added.
+
+### Verification
+
+- `bun run typecheck`
+- `bun test`
+- `bun run eval`
+- `npm pack --dry-run`
+
+### Notes
+
+- `bun run build` remains unavailable because this package has no build script.
+- The replay fixture framework includes synthetic captured-style fixtures unless explicitly documented otherwise. Do not treat them as real captured-session benchmarks.
 
 ## [0.10.0] - 2026-06-13
 
