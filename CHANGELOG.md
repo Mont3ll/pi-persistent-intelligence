@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-06-19
+
+### Added
+
+- Added post-mutation integrity checks for patch/delete/privacy-purge consistency.
+- Added runtime-event reporting for post-mutation inconsistencies.
+- Added privacy-validated replay fixtures for internal memory-behavior validation.
+
+### Changed
+
+- Extended replay validation to distinguish synthetic, captured-style synthetic, and redacted-real fixtures.
+- Improved mutation safety observability without changing the patch-governed mutation model.
+
+### Governance
+
+- Post-mutation checks are diagnostic only and do not bypass patch-before-mutation.
+- Replay fixtures do not contain raw private sessions.
+- Privacy-purged content remains excluded from normal memory files and recall.
+- No automatic L1 promotion, skill writing, vault mutation, or durable mutation path was added.
+
+### Verification
+
+- `bun run typecheck`
+- `bun test`
+- `bun run eval`
+- `bun run test:stress`
+- `npm pack --dry-run`
+
 ## [0.11.1] - 2026-06-15
 
 ### Fixed
@@ -74,7 +102,7 @@ All notable changes to this project will be documented in this file.
 ### Notes
 
 - `bun run build` remains unavailable because this package has no build script.
-- The replay fixture framework includes synthetic captured-style fixtures unless explicitly documented otherwise. Do not treat them as real captured-session benchmarks.
+- The replay fixture framework includes synthetic captured-style fixtures unless explicitly documented otherwise. Do not treat them as public benchmarks.
 
 ## [0.10.0] - 2026-06-13
 
