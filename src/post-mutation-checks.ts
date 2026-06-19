@@ -6,6 +6,7 @@ import { appendRuntimeEvent } from "./runtime-events";
 import { loadActiveRecords, loadAllRecords } from "./store";
 import { isTombstonedRecord, readDeletionTombstones } from "./tombstones";
 import { isMemoryRecord, type DeletionMode, type PatchOp } from "./types";
+import type { MemoryFtsIndex } from "./search/fts";
 
 export interface PostMutationCheckInput {
   root: string;
@@ -14,6 +15,8 @@ export interface PostMutationCheckInput {
   affectedRecordIds: string[];
   mode?: DeletionMode | "normal";
   ftsIndex?: unknown;
+  phase?: "post_patch" | "post_fts_sync";
+  onlyFtsChecks?: boolean;
 }
 
 export interface PostMutationFinding {
@@ -34,6 +37,16 @@ export interface PostMutationFinding {
 
 function opRecordId(op: PatchOp): string | undefined {
   return op.record?.id ?? op.to_record?.id ?? op.target_id;
+}
+
+export function affectedRecordIdsFromPatchOps(ops: PatchOp[]): string[] {
+  return [...new Set(ops.flatMap((op) => [op.target_id, op.record?.id, op.to_record?.id].filter((id): id is string => Boolean(id))))];
+}
+
+export function postMutationModeFromOps(ops: PatchOp[]): DeletionMode | "normal" {
+  if (ops.some((op) => op.deletion_mode === "privacy_purge")) return "privacy_purge";
+  if (ops.some((op) => op.deletion_mode === "audit_preserving" || op.op === "delete")) return "audit_preserving";
+  return "normal";
 }
 
 function expectsRecordAfter(op: PatchOp): boolean {
@@ -69,7 +82,7 @@ function addRuntimeEvent(root: string, patchId: string | undefined, finding: Pos
     type: finding.severity === "error" ? "error" : "warn",
     severity: finding.severity === "error" ? "high" : "medium",
     component: "post-mutation",
-    message: `${finding.code} after patch ${patchId ?? "unknown"}${finding.record_id ? ` for ${finding.record_id}` : ""}`,
+    message: `${finding.code} after ${finding.message.includes("post_fts_sync") ? "post_fts_sync" : "post_patch"} patch ${patchId ?? "unknown"}${finding.record_id ? ` for ${finding.record_id}` : ""}`,
   });
 }
 
@@ -92,46 +105,48 @@ export function runPostMutationChecks(input: PostMutationCheckInput): PostMutati
     const opIds = new Set(input.ops.map(opRecordId).filter((id): id is string => Boolean(id)));
     const affectedIds = [...new Set([...input.affectedRecordIds, ...opIds])];
 
-    for (const op of input.ops) {
-      const id = opRecordId(op);
-      if (!id) continue;
-      if (expectsRecordAfter(op) && !byId.has(id) && op.op !== "supersede") {
-        add({ severity: "error", code: "affected_record_missing", message: "Affected record is missing after mutation.", record_id: id });
+    if (!input.onlyFtsChecks) {
+      for (const op of input.ops) {
+        const id = opRecordId(op);
+        if (!id) continue;
+        if (expectsRecordAfter(op) && !byId.has(id) && op.op !== "supersede") {
+          add({ severity: "error", code: "affected_record_missing", message: `Affected record is missing after mutation (${input.phase ?? "post_patch"}).`, record_id: id });
+        }
+        if (op.op === "supersede" && op.to_record && !byId.has(op.to_record.id)) {
+          add({ severity: "error", code: "affected_record_missing", message: `Replacement record is missing after supersede mutation (${input.phase ?? "post_patch"}).`, record_id: op.to_record.id });
+        }
       }
-      if (op.op === "supersede" && op.to_record && !byId.has(op.to_record.id)) {
-        add({ severity: "error", code: "affected_record_missing", message: "Replacement record is missing after supersede mutation.", record_id: op.to_record.id });
-      }
-    }
 
-    for (const id of affectedIds) {
-      const record = byId.get(id);
-      const relatedOps = input.ops.filter((op) => opRecordId(op) === id || op.to_record?.id === id);
-      const isDestructive = relatedOps.some((op) => destructiveMode(op, input.mode));
-      if (!record && relatedOps.some(expectsRecordAfter)) {
-        add({ severity: "error", code: "affected_record_missing", message: "Affected record is missing after mutation.", record_id: id });
-        continue;
-      }
-      if (isDestructive && activeIds.has(id)) {
-        add({ severity: "error", code: "deleted_record_still_active", message: "Deleted, superseded, deprecated, or purged record is still active.", record_id: id });
-      }
-      if (relatedOps.some((op) => op.op === "delete") && !tombstonedIds.has(id) && !isTombstonedRecord(input.root, id)) {
-        add({ severity: "error", code: "tombstone_missing", message: "Delete/privacy-purge operation did not leave a tombstone.", record_id: id });
-      }
-      if (relatedOps.some((op) => destructiveMode(op, input.mode) === "privacy_purge")) {
-        if (record && (record.status !== "deleted" || record.statement !== "[deleted]" || !isMemoryRecord(record))) {
-          add({ severity: "error", code: "privacy_purge_statement_not_redacted", message: "Privacy-purged record is not redacted according to store semantics.", record_id: id });
+      for (const id of affectedIds) {
+        const record = byId.get(id);
+        const relatedOps = input.ops.filter((op) => opRecordId(op) === id || op.to_record?.id === id);
+        const isDestructive = relatedOps.some((op) => destructiveMode(op, input.mode));
+        if (!record && relatedOps.some(expectsRecordAfter)) {
+          add({ severity: "error", code: "affected_record_missing", message: `Affected record is missing after mutation (${input.phase ?? "post_patch"}).`, record_id: id });
+          continue;
         }
-        for (const ev of evidence.filter((ev) => ev.related_memory_ids.includes(id))) {
-          if (ev.redaction_status !== "deleted" && ev.redaction_status !== "redacted") {
-            add({ severity: "error", code: "privacy_purge_evidence_not_redacted", message: "Linked evidence remains unredacted after privacy purge.", record_id: id, evidence_id: ev.id });
+        if (isDestructive && activeIds.has(id)) {
+          add({ severity: "error", code: "deleted_record_still_active", message: `Deleted, superseded, deprecated, or purged record is still active (${input.phase ?? "post_patch"}).`, record_id: id });
+        }
+        if (relatedOps.some((op) => op.op === "delete") && !tombstonedIds.has(id) && !isTombstonedRecord(input.root, id)) {
+          add({ severity: "error", code: "tombstone_missing", message: `Delete/privacy-purge operation did not leave a tombstone (${input.phase ?? "post_patch"}).`, record_id: id });
+        }
+        if (relatedOps.some((op) => destructiveMode(op, input.mode) === "privacy_purge")) {
+          if (record && (record.status !== "deleted" || record.statement !== "[deleted]" || !isMemoryRecord(record))) {
+            add({ severity: "error", code: "privacy_purge_statement_not_redacted", message: `Privacy-purged record is not redacted according to store semantics (${input.phase ?? "post_patch"}).`, record_id: id });
           }
-        }
-        const originalTerms = relatedOps.flatMap((op) => [op.record?.statement, op.to_record?.statement]).filter(Boolean) as string[];
-        for (const file of renderedFiles(input.root)) {
-          const rendered = readFileSync(file, "utf-8");
-          for (const term of originalTerms) {
-            if (term && term !== "[deleted]" && rendered.includes(term)) {
-              add({ severity: "error", code: "rendered_projection_leak", message: "Rendered projection contains privacy-purged content.", record_id: id });
+          for (const ev of evidence.filter((ev) => ev.related_memory_ids.includes(id))) {
+            if (ev.redaction_status !== "deleted" && ev.redaction_status !== "redacted") {
+              add({ severity: "error", code: "privacy_purge_evidence_not_redacted", message: `Linked evidence remains unredacted after privacy purge (${input.phase ?? "post_patch"}).`, record_id: id, evidence_id: ev.id });
+            }
+          }
+          const originalTerms = relatedOps.flatMap((op) => [op.record?.statement, op.to_record?.statement]).filter(Boolean) as string[];
+          for (const file of renderedFiles(input.root)) {
+            const rendered = readFileSync(file, "utf-8");
+            for (const term of originalTerms) {
+              if (term && term !== "[deleted]" && rendered.includes(term)) {
+                add({ severity: "error", code: "rendered_projection_leak", message: `Rendered projection contains privacy-purged content (${input.phase ?? "post_patch"}).`, record_id: id });
+              }
             }
           }
         }
@@ -142,14 +157,14 @@ export function runPostMutationChecks(input: PostMutationCheckInput): PostMutati
       for (const record of activeRecords.filter((record) => affectedIds.includes(record.id))) {
         const results = maybeSearch(input.ftsIndex, record.id);
         if (results.length > 0 && !results.some((row) => row.id === record.id)) {
-          add({ severity: "warning", code: "fts_missing_active_record", message: "FTS lookup did not return active affected record by id.", record_id: record.id });
+          add({ severity: "warning", code: "fts_missing_active_record", message: `FTS lookup did not return active affected record by id (${input.phase ?? "post_fts_sync"}).`, record_id: record.id });
         }
       }
       for (const op of input.ops.filter((op) => destructiveMode(op, input.mode) === "privacy_purge" || op.op === "delete")) {
         const id = op.target_id;
         const statement = op.record?.statement ?? op.to_record?.statement;
         if (id && statement && maybeSearch(input.ftsIndex, statement).some((row) => row.id === id || row.statement === statement)) {
-          add({ severity: "warning", code: "deleted_record_still_active", message: "FTS search still returns deleted/privacy-purged content.", record_id: id });
+          add({ severity: "warning", code: "deleted_record_still_active", message: `FTS search still returns deleted/privacy-purged content (${input.phase ?? "post_fts_sync"}).`, record_id: id });
         }
       }
     }
@@ -158,4 +173,22 @@ export function runPostMutationChecks(input: PostMutationCheckInput): PostMutati
   }
 
   return findings;
+}
+
+export function runFtsAwarePostMutationChecksAfterSync(input: {
+  root: string;
+  patchId?: string;
+  ops: PatchOp[];
+  ftsIndex: MemoryFtsIndex | unknown;
+}): PostMutationFinding[] {
+  return runPostMutationChecks({
+    root: input.root,
+    patchId: input.patchId,
+    ops: input.ops,
+    affectedRecordIds: affectedRecordIdsFromPatchOps(input.ops),
+    mode: postMutationModeFromOps(input.ops),
+    ftsIndex: input.ftsIndex,
+    phase: "post_fts_sync",
+    onlyFtsChecks: true,
+  });
 }

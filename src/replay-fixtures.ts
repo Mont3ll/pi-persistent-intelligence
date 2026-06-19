@@ -3,6 +3,7 @@ import { maybeCorrectionSignal, extractCorrectionCandidate } from "./corrections
 import { appendCandidate, listCandidates } from "./inbox";
 import { scoreMemoryWorth } from "./memory-worth";
 import { buildRecallXray } from "./recall-xray";
+import { readRecentRuntimeEvents } from "./runtime-events";
 import { unsafeAddMemoryRecord } from "./store";
 import type { MemoryRecord } from "./types";
 
@@ -148,6 +149,7 @@ export function runReplayFixture(root: string, fixture: ReplayFixture): ReplayRe
   const unexpectedRecall = recalled.filter((id) => !(fixture.expected.expected_recalled_memory_ids ?? []).includes(id)).length;
   const privacyLeaks = validateReplayFixturePrivacy({ ...fixture, expected: { ...fixture.expected, expected_omissions: [] } }).length;
   const precision = candidates.length === 0 ? (expectedCandidates.length === 0 ? 1 : 0) : Math.max(0, (candidates.length - noise) / candidates.length);
+  const runtimeEventCount = readRecentRuntimeEvents(root, { hours: 24, minSeverity: "low" }).length;
   return {
     fixture_id: fixture.fixture_id,
     candidates_created: candidates.length,
@@ -158,7 +160,7 @@ export function runReplayFixture(root: string, fixture: ReplayFixture): ReplayRe
     unexpected_recall_count: unexpectedRecall,
     noise_count: noise,
     privacy_leak_count: privacyLeaks,
-    runtime_event_count: 0,
+    runtime_event_count: runtimeEventCount,
     context_size: context.length,
     candidate_precision_proxy: precision,
     failures,

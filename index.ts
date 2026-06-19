@@ -52,7 +52,7 @@ import { maybeCorrectionSignal, extractCorrectionCandidate } from "./src/correct
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
 import { MemoryFtsIndex } from "./src/search/fts";
-import { runPostMutationChecks } from "./src/post-mutation-checks";
+import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
 import { buildCandidateTrustMetadata } from "./src/trust";
 import { linkExplicitCorrectionToMemory } from "./src/reinforcement";
@@ -114,6 +114,12 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   // FTS index — synced after every canonical mutation
   let ftsIndex = new MemoryFtsIndex(root + "/search/memory-fts.db");
   syncFtsIndex(root, ftsIndex);
+
+  function syncFtsAfterPatch(patch: import("./src/types").MemoryPatch, applied: import("./src/types").MemoryPatch): void {
+    syncFtsIndex(root, ftsIndex);
+    const appliedOps = patch.ops.filter((op) => applied.applied_ops.includes(op.op_id));
+    runFtsAwarePostMutationChecksAfterSync({ root, patchId: patch.patch_id, ops: appliedOps, ftsIndex });
+  }
 
   // Session store — recreated at session_start if root changes
   let sessionStore = new SessionStore(root);
@@ -342,9 +348,9 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
                 (op.record?.confidence ?? op.to_record?.confidence ?? 0) >= threshold)
               .map((op) => op.op_id);
             if (eligibleIds.length > 0) {
-              applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
+              const applied = applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
               await updateQmd();
-      syncFtsIndex(root, ftsIndex);
+              syncFtsAfterPatch(patch, applied);
               ctx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
             }
 
@@ -364,9 +370,9 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
                       createPatchReviewComponent(reviewPatch, done, tui as any, undefined, theme),
                   );
                   if (selectedIds && selectedIds.length > 0) {
-                    applyPatch(root, reviewPatch, { selectedOpIds: selectedIds, now: nowIso() });
+                    const applied = applyPatch(root, reviewPatch, { selectedOpIds: selectedIds, now: nowIso() });
                     await updateQmd();
-                    syncFtsIndex(root, ftsIndex);
+                    syncFtsAfterPatch(reviewPatch, applied);
                     ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
                   }
                 } else {
@@ -506,7 +512,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
           if (eligibleIds.length > 0) {
             const applied = applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
-            syncFtsIndex(root, ftsIndex); // F-03 fix: sync immediately after auto-curation patch
+            syncFtsAfterPatch(patch, applied); // F-03 fix: sync immediately after auto-curation patch plus post-sync diagnostics
             const skipped = patch.ops.length - eligibleIds.length;
             appendDailyLog(
               root, todayString(),
@@ -919,9 +925,9 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
                 (op.record?.confidence ?? op.to_record?.confidence ?? 0) >= threshold)
               .map((op) => op.op_id);
             if (eligibleIds.length > 0) {
-              applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
+              const applied = applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
               await updateQmd();
-              syncFtsIndex(root, ftsIndex);
+              syncFtsAfterPatch(patch, applied);
               ctx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
             } else {
               ctx.ui.notify("No auto-eligible ops above confidence threshold.", "info");
@@ -935,9 +941,9 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
                   createPatchReviewComponent(reviewPatch, done, tui as any, undefined, theme),
               );
               if (selectedIds && selectedIds.length > 0) {
-                applyPatch(root, reviewPatch, { selectedOpIds: selectedIds, now: nowIso() });
+                const applied = applyPatch(root, reviewPatch, { selectedOpIds: selectedIds, now: nowIso() });
                 await updateQmd();
-                syncFtsIndex(root, ftsIndex);
+                syncFtsAfterPatch(reviewPatch, applied);
                 ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
               }
             } else {
@@ -1009,7 +1015,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       if (mode === "auto") {
         const applied = applyPatch(root, patch, { selectedOpIds: patch.ops.filter((op) => op.default_selected && op.risk !== "high").map((op) => op.op_id), now: nowIso() });
         await updateQmd();
-      syncFtsIndex(root, ftsIndex);
+        syncFtsAfterPatch(patch, applied);
         ctx.ui.notify(`Applied ${applied.applied_ops.length} memory op(s) from ${applied.patch_id}`, "success");
 
       } else if (patch.ops.length === 0) {
@@ -1022,9 +1028,9 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
             createPatchReviewComponent(patch, done, tui as any, undefined, theme),
         );
         if (selectedIds && selectedIds.length > 0) {
-          applyPatch(root, patch, { selectedOpIds: selectedIds, now: nowIso() });
+          const applied = applyPatch(root, patch, { selectedOpIds: selectedIds, now: nowIso() });
           await updateQmd();
-      syncFtsIndex(root, ftsIndex);
+          syncFtsAfterPatch(patch, applied);
           ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
         } else if (selectedIds === null) {
           ctx.ui.notify("Curation cancelled — no changes made.", "info");
@@ -1062,13 +1068,13 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         if (decayOps.length > 0) {
           const applied = applyPatch(root, patch, { selectedOpIds: decayOps, now: nowIso() });
           await updateQmd();
-          syncFtsIndex(root, ftsIndex);
+          syncFtsAfterPatch(patch, applied);
           ctx.ui.notify(`Applied ${applied.applied_ops.length} maintenance ops from ${applied.patch_id}`, "success");
         }
         const stabilityOps = stabilityPatch.ops.filter((op) => op.default_selected && op.risk !== "high").map((op) => op.op_id);
         if (stabilityOps.length > 0) {
           const appliedStability = applyPatch(root, stabilityPatch, { selectedOpIds: stabilityOps, now: nowIso() });
-          syncFtsIndex(root, ftsIndex);
+          syncFtsAfterPatch(stabilityPatch, appliedStability);
           ctx.ui.notify(`Applied ${appliedStability.applied_ops.length} stability ops.`, "success");
         }
         if (maintRecs.filter((r) => r.requires_review).length > 0) {
@@ -1110,7 +1116,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         } else {
           const applied = applyPatch(root, patch, { now: nowIso() });
           await updateQmd();
-          syncFtsIndex(root, ftsIndex);
+          syncFtsAfterPatch(patch, applied);
           ctx.ui.notify(`Applied ${applied.applied_ops.length} op(s) from ${patchId}.`, "success");
         }
       } catch (err) {
@@ -1244,13 +1250,6 @@ export function applyPatchAndSync(
   const result = applyPatch(root, patch, options);
   syncFtsIndex(root, ftsIndex);
   const appliedOps = patch.ops.filter((op) => result.applied_ops.includes(op.op_id));
-  runPostMutationChecks({
-    root,
-    patchId: patch.patch_id,
-    ops: appliedOps,
-    affectedRecordIds: appliedOps.flatMap((op) => [op.target_id, op.record?.id, op.to_record?.id].filter((id): id is string => Boolean(id))),
-    mode: appliedOps.some((op) => op.deletion_mode === "privacy_purge") ? "privacy_purge" : appliedOps.some((op) => op.deletion_mode === "audit_preserving") ? "audit_preserving" : "normal",
-    ftsIndex,
-  });
+  runFtsAwarePostMutationChecksAfterSync({ root, patchId: patch.patch_id, ops: appliedOps, ftsIndex });
   return result;
 }

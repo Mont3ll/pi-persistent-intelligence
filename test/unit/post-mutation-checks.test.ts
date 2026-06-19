@@ -8,7 +8,7 @@ import { applyPatch } from "../../src/patch";
 import { readRecentRuntimeEvents } from "../../src/runtime-events";
 import { unsafeAddMemoryRecord } from "../../src/store";
 import { readDeletionTombstones } from "../../src/tombstones";
-import { runPostMutationChecks } from "../../src/post-mutation-checks";
+import { runPostMutationChecks, runFtsAwarePostMutationChecksAfterSync } from "../../src/post-mutation-checks";
 import type { EvidenceRecord, MemoryPatch, MemoryRecord, PatchOp } from "../../src/types";
 
 let dirs: string[] = [];
@@ -111,5 +111,58 @@ describe("post-mutation integrity checks", () => {
     const eventText = JSON.stringify(readRecentRuntimeEvents(dir, { minSeverity: "high" }));
     expect(eventText).toContain("post-mutation");
     expect(eventText).not.toContain("sk-12345678901234567890");
+  });
+
+  test("post-patch checker without ftsIndex does not emit FTS findings", () => {
+    const dir = root();
+    const op: PatchOp = { op_id: "op_add", op: "add", record: record({ id: "mem_fts", statement: "Use post sync checks." }), risk: "low", default_selected: true };
+    applyPatch(dir, patch(op), { selectedOpIds: ["op_add"], now: "2026-06-19T10:00:00.000Z" });
+
+    const findings = runPostMutationChecks({ root: dir, patchId: "patch_no_fts", ops: [op], affectedRecordIds: ["mem_fts"], mode: "normal" });
+
+    expect(findings.some((finding) => finding.code.startsWith("fts_"))).toBe(false);
+  });
+
+  test("post-sync FTS-aware checker emits fts_missing_active_record as medium runtime event", () => {
+    const dir = root();
+    const op: PatchOp = { op_id: "op_add", op: "add", record: record({ id: "mem_fts_missing", statement: "Use FTS-aware post mutation checks." }), risk: "low", default_selected: true };
+    applyPatch(dir, patch(op), { selectedOpIds: ["op_add"], now: "2026-06-19T10:00:00.000Z" });
+
+    const findings = runFtsAwarePostMutationChecksAfterSync({
+      root: dir,
+      patchId: "patch_fts_missing",
+      ops: [op],
+      ftsIndex: { search: (query: string) => query === "__post_mutation_probe__" ? [] : [{ id: "other", statement: "wrong" }] },
+    });
+
+    expect(findings).toContainEqual(expect.objectContaining({ code: "fts_missing_active_record", severity: "warning", record_id: "mem_fts_missing" }));
+    const events = readRecentRuntimeEvents(dir, { minSeverity: "medium" });
+    expect(events.some((event) => event.component === "post-mutation" && event.severity === "medium" && event.message.includes("post_fts_sync"))).toBe(true);
+  });
+
+  test("post-sync FTS-aware checker failure is diagnostic only", () => {
+    const dir = root();
+    const op: PatchOp = { op_id: "op_add", op: "add", record: record({ id: "mem_fts_failure", statement: "FTS failure should not rollback." }), risk: "low", default_selected: true };
+    const applied = applyPatch(dir, patch(op), { selectedOpIds: ["op_add"], now: "2026-06-19T10:00:00.000Z" });
+
+    const findings = runFtsAwarePostMutationChecksAfterSync({ root: dir, patchId: "patch_fts_failure", ops: [op], ftsIndex: { search: () => { throw new Error("fts boom sk-12345678901234567890"); } } });
+
+    expect(applied.applied_ops).toEqual(["op_add"]);
+    expect(findings.some((finding) => finding.code === "post_mutation_check_failed")).toBe(true);
+    const eventText = JSON.stringify(readRecentRuntimeEvents(dir, { minSeverity: "high" }));
+    expect(eventText).not.toContain("sk-12345678901234567890");
+  });
+
+  test("post-sync FTS-aware checker does not duplicate non-FTS findings", () => {
+    const dir = root();
+    const findings = runFtsAwarePostMutationChecksAfterSync({
+      root: dir,
+      patchId: "patch_missing_post_sync",
+      ops: [{ op_id: "op_update", op: "update", target_id: "mem_missing", updates: { confidence: 0.8 }, risk: "low", default_selected: true }],
+      ftsIndex: { search: () => [] },
+    });
+
+    expect(findings.some((finding) => finding.code === "affected_record_missing")).toBe(false);
+    expect(readRecentRuntimeEvents(dir, { minSeverity: "high" })).toEqual([]);
   });
 });

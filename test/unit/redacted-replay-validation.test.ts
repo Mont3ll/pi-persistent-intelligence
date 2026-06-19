@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
 import { runReplayFixture, validateReplayFixture, validateReplayFixturePrivacy } from "../../src/replay-fixtures";
+import { appendRuntimeEvent } from "../../src/runtime-events";
 
 function fixture(name: string): any { return JSON.parse(readFileSync(join(process.cwd(), "eval", "fixtures", name), "utf-8")); }
 function root(): string { const dir = mkdtempSync(join(tmpdir(), "pi-redacted-replay-")); ensureMemoryDirs(dir); return dir; }
@@ -88,5 +89,22 @@ describe("redacted replay validation", () => {
       expect(result.noise_count).toBeLessThanOrEqual(1);
       expect(result.candidate_precision_proxy).toBeGreaterThanOrEqual(0.5);
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test("runtime event count is read from the isolated replay root", () => {
+    const dir = root();
+    const other = root();
+    try {
+      appendRuntimeEvent(other, { type: "warn", severity: "medium", component: "other", message: "should not count" });
+      let result = runReplayFixture(dir, fixture("temporary-instruction-not-durable.json"));
+      expect(result.runtime_event_count).toBe(0);
+
+      appendRuntimeEvent(dir, { type: "warn", severity: "medium", component: "replay-test", message: "count this" });
+      result = runReplayFixture(dir, fixture("temporary-instruction-not-durable.json"));
+      expect(result.runtime_event_count).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(other, { recursive: true, force: true });
+    }
   });
 });
