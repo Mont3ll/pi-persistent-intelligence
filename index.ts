@@ -52,6 +52,7 @@ import { maybeCorrectionSignal, extractCorrectionCandidate } from "./src/correct
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
 import { MemoryFtsIndex } from "./src/search/fts";
+import { runPostMutationChecks } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
 import { buildCandidateTrustMetadata } from "./src/trust";
 import { linkExplicitCorrectionToMemory } from "./src/reinforcement";
@@ -1242,5 +1243,14 @@ export function applyPatchAndSync(
 ): import("./src/types").MemoryPatch {
   const result = applyPatch(root, patch, options);
   syncFtsIndex(root, ftsIndex);
+  const appliedOps = patch.ops.filter((op) => result.applied_ops.includes(op.op_id));
+  runPostMutationChecks({
+    root,
+    patchId: patch.patch_id,
+    ops: appliedOps,
+    affectedRecordIds: appliedOps.flatMap((op) => [op.target_id, op.record?.id, op.to_record?.id].filter((id): id is string => Boolean(id))),
+    mode: appliedOps.some((op) => op.deletion_mode === "privacy_purge") ? "privacy_purge" : appliedOps.some((op) => op.deletion_mode === "audit_preserving") ? "audit_preserving" : "normal",
+    ftsIndex,
+  });
   return result;
 }

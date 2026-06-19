@@ -7,6 +7,7 @@ import { ensureMemoryDirs } from "./paths";
 import { writeVaultPromotionReport } from "./vaultPromotion";
 import { createDeletionTombstone, appendDeletionTombstone, isTombstonedRecord } from "./tombstones";
 import { readEvidenceRecords, redactEvidenceForMemory } from "./evidence";
+import { runPostMutationChecks } from "./post-mutation-checks";
 import type { MemoryPatch, PatchOp } from "./types";
 
 export interface ApplyPatchOptions {
@@ -201,6 +202,14 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
   };
   writePatchFile(root, appliedPatch);
   renderMemoryToDisk(root);
+  const appliedOps = patch.ops.filter((op) => applied_ops.includes(op.op_id));
+  runPostMutationChecks({
+    root,
+    patchId: patch.patch_id,
+    ops: appliedOps,
+    affectedRecordIds: appliedOps.flatMap((op) => [op.target_id, op.record?.id, op.to_record?.id].filter((id): id is string => Boolean(id))),
+    mode: appliedOps.some((op) => op.deletion_mode === "privacy_purge") ? "privacy_purge" : appliedOps.some((op) => op.deletion_mode === "audit_preserving") ? "audit_preserving" : "normal",
+  });
   // FTS/qmd sync remains a caller invariant: extension flows call updateQmd()/syncFtsIndex()
   // after patch application. Keeping this here avoids coupling patch application to an index backend.
   return appliedPatch;
