@@ -1,0 +1,29 @@
+{
+  "fixture_id": "redacted_replay_durable_correction_survives",
+  "description": "Captured-style synthetic fixture: user corrects npm to bun, and later recall should prefer bun commands.",
+  "redaction_version": "redacted-v1",
+  "metadata": {
+    "fixture_id": "redacted_replay_durable_correction_survives",
+    "fixture_kind": "captured_style_synthetic",
+    "redaction_version": "redacted-v1",
+    "source_description": "Small synthetic session shaped like a captured coding exchange; no real user content.",
+    "created_at": "2026-06-19",
+    "privacy_reviewed": true,
+    "contains_real_user_content": false
+  },
+  "sessions": [
+    { "session_id": "redacted-session-101", "turns": [
+      { "role": "assistant", "content": "Run npm test before committing." },
+      { "role": "user", "content": "This project uses bun, not npm. Always run bun test and bun run typecheck before commit.", "tags": ["testing", "workflow"], "expected_capture": true }
+    ]},
+    { "session_id": "redacted-session-102", "turns": [
+      { "role": "user", "content": "What test command should I use here?", "expected_recall": ["bun test", "bun run typecheck"] }
+    ]}
+  ],
+  "expected": {
+    "candidates": ["Always run bun test and bun run typecheck before commit"],
+    "recall_query": "test command typecheck bun",
+    "expected_recalled_memory_ids": ["mem_always_run_bun_test_and_bun_run_typecheck_before_commit"],
+    "expected_omissions": ["npm test"]
+  }
+}

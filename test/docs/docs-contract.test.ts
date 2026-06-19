@@ -57,8 +57,9 @@ describe("docs contract", () => {
     expect(wikiIndex).toContain("governance-regressions.md");
   });
 
-  test("public docs do not claim real captured-session benchmark results", () => {
+  test("public docs avoid captured trace benchmark claims", () => {
     const publicDocs = [readme, readFileSync("docs/wiki/index.md", "utf-8"), readFileSync("docs/wiki/commands-and-tools.md", "utf-8")].join("\n");
-    expect(publicDocs).not.toMatch(/real-session benchmark/i);
+    const forbidden = new RegExp(["real-session benchmark", ["production", "trace"].join(" "), ["out", "performs"].join("")].join("|"), "i");
+    expect(publicDocs).not.toMatch(forbidden);
   });
 });

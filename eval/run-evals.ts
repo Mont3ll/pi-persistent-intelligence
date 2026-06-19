@@ -37,7 +37,8 @@ import { runMemoryDiagnostics, renderDiagnosticsReport } from "../src/diagnostic
 import { linkEvidenceToCandidate } from "../src/evidence-link";
 import { createCompactionArtifact } from "../src/compaction-artifacts";
 import { computeCandidateConfidence } from "../src/confidence";
-import { runReplayFixture, redactReplayContent } from "../src/replay-fixtures";
+import { runReplayFixture, redactReplayContent, validateReplayFixturePrivacy } from "../src/replay-fixtures";
+import { runPostMutationChecks } from "../src/post-mutation-checks";
 import { draftSkillFromProcedureCandidate } from "../src/skill-draft";
 import { runFailureAnalysis } from "../src/failure-analysis";
 import type { CaptureCandidate, MemoryRecord } from "../src/types";
@@ -963,6 +964,39 @@ function evalBackgroundVaultPromotionReviewOnly(): EvalResult {
   return { category: "background_vault_promotion_review_only", description: "Background vault promotion creates review artifact only.", pass, metrics: { jobs: jobs.length }, failures: pass ? [] : ["Vault promotion boundary failed."], hard_invariant: true };
 }
 
+function evalPostMutationIntegrityChecks(): EvalResult {
+  const root = tempRoot();
+  const rec = record("mem_post_eval", "Always redact sensitive replay content before committing.");
+  const patch = { patch_id: "patch_post_eval", created_at: "2026-06-19T10:00:00.000Z", generated_by: "manual" as const, mode: "propose" as const, summary: "add", ops: [{ op_id: "op_add", op: "add" as const, record: rec, risk: "low" as const, default_selected: true }], status: "proposed" as const, applied_at: null, applied_ops: [], skipped_ops: [] };
+  applyPatch(root, patch, { selectedOpIds: ["op_add"], now: "2026-06-19T10:00:00.000Z" });
+  const findings = runPostMutationChecks({ root, patchId: patch.patch_id, ops: patch.ops, affectedRecordIds: [rec.id], mode: "normal" });
+  return { category: "post_mutation_integrity_checks", description: "Post-mutation checks are diagnostic and clean for a valid add patch.", pass: findings.length === 0, metrics: { findings: findings.length }, failures: findings.map((f) => f.code), hard_invariant: true };
+}
+
+function evalPrivacyPurgePostMutationBoundary(): EvalResult {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("mem_purge_eval", "Sensitive token [REDACTED_SECRET] should be purged."));
+  const patch = { patch_id: "patch_purge_eval", created_at: "2026-06-19T10:00:00.000Z", generated_by: "manual" as const, mode: "propose" as const, summary: "purge", ops: [{ op_id: "op_del", op: "delete" as const, target_id: "mem_purge_eval", deletion_mode: "privacy_purge" as const, deletion_reason: "privacy_sensitive" as const, risk: "high" as const, default_selected: true }], status: "proposed" as const, applied_at: null, applied_ops: [], skipped_ops: [] };
+  applyPatch(root, patch, { selectedOpIds: ["op_del"], now: "2026-06-19T10:00:00.000Z" });
+  const findings = runPostMutationChecks({ root, patchId: patch.patch_id, ops: patch.ops, affectedRecordIds: ["mem_purge_eval"], mode: "privacy_purge" });
+  const events = readRecentRuntimeEvents(root, { minSeverity: "medium" });
+  return { category: "privacy_purge_post_mutation_boundary", description: "Privacy-purged content remains outside active memory and clean post-mutation checks do not add events.", pass: findings.length === 0 && loadActiveRecords(root).every((r) => r.id !== "mem_purge_eval") && events.length === 0, metrics: { findings: findings.length, runtime_events: events.length }, failures: findings.map((f) => f.code), hard_invariant: true };
+}
+
+function replayFixture(name: string): any { return JSON.parse(readFileSync(join("eval", "fixtures", name), "utf-8")); }
+
+function evalRedactedReplayFixturePrivacyValidation(): EvalResult {
+  const names = ["durable-correction-survives.json", "temporary-instruction-not-durable.json", "privacy-purge-boundary.json", "l1-l2-playbook-relevance.json", "noisy-session-overcapture.json"];
+  const failures = names.flatMap((name) => validateReplayFixturePrivacy(replayFixture(name)).map((finding) => `${name}:${finding}`));
+  return { category: "redacted_replay_fixture_privacy_validation", description: "Committed replay fixtures pass local privacy validation.", pass: failures.length === 0, metrics: { fixtures: names.length, privacy_findings: failures.length }, failures, hard_invariant: true };
+}
+
+function evalRedactedReplayFixture(name: string, category: string, description: string): EvalResult {
+  const root = tempRoot();
+  const result = runReplayFixture(root, replayFixture(name));
+  return { category, description, pass: result.failures.length === 0, metrics: { candidates: result.candidates_created, rejected: result.rejected_observations, expected_recall_hits: result.expected_recall_hits, unexpected_recall_count: result.unexpected_recall_count, privacy_leak_count: result.privacy_leak_count, context_size: result.context_size }, failures: result.failures, hard_invariant: category.includes("privacy") };
+}
+
 async function runEvals(): Promise<void> {
   const start = Date.now();
   const results: EvalResult[] = [];
@@ -1021,6 +1055,13 @@ async function runEvals(): Promise<void> {
     ["Retrieval Hot Path Budget", evalRetrievalHotPathBudget],
     ["Background Queue Lock And Recovery", evalBackgroundQueueLockAndRecovery],
     ["Silent Failure Runtime Event Visibility", evalSilentFailureRuntimeEventVisibility],
+    ["Post Mutation Integrity Checks", evalPostMutationIntegrityChecks],
+    ["Privacy Purge Post Mutation Boundary", evalPrivacyPurgePostMutationBoundary],
+    ["Redacted Replay Fixture Privacy Validation", evalRedactedReplayFixturePrivacyValidation],
+    ["Redacted Replay Durable Correction", () => evalRedactedReplayFixture("durable-correction-survives.json", "redacted_replay_durable_correction", "Durable correction fixture recalls expected convention without unexpected recall.")],
+    ["Redacted Replay Temporary Instruction Rejection", () => evalRedactedReplayFixture("temporary-instruction-not-durable.json", "redacted_replay_temporary_instruction_rejection", "Temporary instruction fixture rejects one-off instruction as durable memory.")],
+    ["Redacted Replay Privacy Purge Boundary", () => evalRedactedReplayFixture("privacy-purge-boundary.json", "redacted_replay_privacy_purge_boundary", "Privacy purge fixture reports no privacy leaks.")],
+    ["Redacted Replay L1 L2 Relevance", () => evalRedactedReplayFixture("l1-l2-playbook-relevance.json", "redacted_replay_l1_l2_relevance", "Task-specific replay fixture recalls the expected L2 playbook.")],
   ];
 
   for (const [label, fn] of evals) {

@@ -1,0 +1,25 @@
+{
+  "fixture_id": "redacted_replay_temporary_instruction_not_durable",
+  "description": "Captured-style synthetic fixture: a one-run skip instruction should not become durable memory.",
+  "redaction_version": "redacted-v1",
+  "metadata": {
+    "fixture_id": "redacted_replay_temporary_instruction_not_durable",
+    "fixture_kind": "captured_style_synthetic",
+    "redaction_version": "redacted-v1",
+    "source_description": "Small synthetic session shaped like a captured coding exchange; no real user content.",
+    "created_at": "2026-06-19",
+    "privacy_reviewed": true,
+    "contains_real_user_content": false
+  },
+  "sessions": [
+    { "session_id": "redacted-session-201", "turns": [
+      { "role": "user", "content": "For this one run, skip lint and just inspect the failing unit test.", "tags": ["testing"], "expected_no_capture": true },
+      { "role": "assistant", "content": "I will skip lint for this run only." }
+    ]}
+  ],
+  "expected": {
+    "rejected": ["For this one run, skip lint"],
+    "recall_query": "always skip lint",
+    "expected_recalled_memory_ids": []
+  }
+}

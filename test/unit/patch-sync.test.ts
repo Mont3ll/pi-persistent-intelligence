@@ -9,6 +9,7 @@ import { MemoryFtsIndex } from "../../src/search/fts";
 import { syncFtsIndex } from "../../src/retriever";
 import { applyPatchAndSync } from "../../index";
 import { extractHardRules } from "../../src/rules";
+import { readRecentRuntimeEvents } from "../../src/runtime-events";
 import { loadAllRecords } from "../../src/store";
 import type { MemoryPatch, MemoryRecord } from "../../src/types";
 
@@ -35,6 +36,21 @@ function record(overrides: Partial<MemoryRecord> = {}): MemoryRecord {
     vault_ref: null,
     ruleType: "avoid_pattern",
     ...overrides,
+  };
+}
+
+function addPatch(): MemoryPatch {
+  return {
+    patch_id: "patch_add_sync_check",
+    created_at: "2026-05-19T10:00:00.000Z",
+    generated_by: "manual",
+    mode: "propose",
+    summary: "add sync check",
+    ops: [{ op_id: "op_add", op: "add", record: record({ id: "mem_added_sync", statement: "Use FTS-aware sync diagnostics." }), risk: "low", default_selected: true }],
+    status: "proposed",
+    applied_at: null,
+    applied_ops: [],
+    skipped_ops: [],
   };
 }
 
@@ -98,6 +114,16 @@ describe("patch sync integration", () => {
     syncFtsIndex(dir, fts);
     expect(fts.search("abc123", 5)).toHaveLength(0);
     fts.close();
+  });
+
+  test("applyPatchAndSync runs FTS-aware diagnostics after sync", () => {
+    const dir = root();
+    const fts = { isAvailable: true, sync: () => {}, close: () => {}, search: (query: string) => query === "__post_mutation_probe__" ? [] : [{ id: "wrong", statement: "wrong", layer: "L2", confidence: 0.9, score: 1 }] } as unknown as MemoryFtsIndex;
+
+    applyPatchAndSync(dir, addPatch(), { selectedOpIds: ["op_add"], now: "2026-05-19T10:00:00.000Z" }, fts);
+
+    const events = readRecentRuntimeEvents(dir, { minSeverity: "medium" });
+    expect(events.some((event) => event.component === "post-mutation" && event.message.includes("post_fts_sync") && event.message.includes("mem_added_sync"))).toBe(true);
   });
 
   test("applyPatchAndSync preserves patch behavior (audit trail, projection)", () => {

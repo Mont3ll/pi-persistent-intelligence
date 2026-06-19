@@ -1,0 +1,29 @@
+{
+  "fixture_id": "redacted_replay_noisy_session_overcapture",
+  "description": "Captured-style synthetic fixture: transient tool noise should mostly be rejected while durable convention survives.",
+  "redaction_version": "redacted-v1",
+  "metadata": {
+    "fixture_id": "redacted_replay_noisy_session_overcapture",
+    "fixture_kind": "captured_style_synthetic",
+    "redaction_version": "redacted-v1",
+    "source_description": "Synthetic noisy session for internal capture precision proxy validation.",
+    "created_at": "2026-06-19",
+    "privacy_reviewed": true,
+    "contains_real_user_content": false
+  },
+  "sessions": [
+    { "session_id": "redacted-session-501", "turns": [
+      { "role": "tool", "content": "Transient network retry failed once." },
+      { "role": "user", "content": "Ignore that one-off timeout; it is not a project rule.", "expected_no_capture": true },
+      { "role": "user", "content": "Going forward, prefer bun run typecheck before committing TypeScript changes.", "expected_capture": true },
+      { "role": "user", "content": "Just this once, skip the package dry run.", "expected_no_capture": true }
+    ]}
+  ],
+  "expected": {
+    "candidates": ["Going forward, prefer bun run typecheck before committing TypeScript changes"],
+    "rejected": ["one-off timeout", "Just this once"],
+    "recall_query": "TypeScript changes before commit",
+    "expected_recalled_memory_ids": ["mem_going_forward_prefer_bun_run_typecheck_before_committing_typescript_changes"],
+    "expected_omissions": ["skip the package dry run"]
+  }
+}

@@ -358,6 +358,7 @@ PI includes read-only reports for inspecting why memories exist and whether thei
 - **Procedure candidates** identify repeated workflow memory as review-only procedure drafts. `/memory-skill draft` can create a review artifact from a procedure candidate, but PI never writes skill files automatically.
 - **Failure analysis** summarizes failed jobs and rejected candidates into review-only inquiries or candidates; it does not mutate durable memory.
 - **Compaction traceability** stores reversible metadata for context-compaction artifacts where source sessions, evidence IDs, and digests are available.
+- **Post-mutation checks** run after successful patch application and FTS sync paths to detect recoverable inconsistencies around affected records, deletion/privacy purge boundaries, tombstones, rendered projections, and lightweight FTS state. Findings are diagnostic runtime events; they do not bypass or roll back the patch lifecycle.
 
 ### Injection modes
 
@@ -587,6 +588,7 @@ Template: https://github.com/Mont3ll/llm-wiki-vault-template
 | Deleted records not searchable after FTS sync | FTS synced atomically with delete via `applyPatchAndSync()` |
 | Tombstoned records cannot be re-promoted | `patch.ts` throws on tombstoned add; `verifier.ts` rejects |
 | Privacy purge leaves no recoverable content | Statement and evidence content redacted in-place |
+| Post-mutation inconsistencies surface as runtime events | Diagnostic only; no rollback or mutation bypass |
 | Cross-profile injection blocked | `ProfileScopeProcessor` enforces isolation |
 | Cross-profile meta-consolidation blocked | `clusterL2Records` enforces profile boundary |
 | Contested records never in hard rules | `extractHardRules()` requires `status === "active"` |
@@ -625,12 +627,18 @@ JSONL mutation
 Markdown render
   |
   v
+Post-mutation diagnostics
+  |
+  v
 FTS / qmd update
+  |
+  v
+FTS-aware post-mutation diagnostics when using applyPatchAndSync()
 ```
 
 Supported patch operations: `add`, `update`, `update_stability`, `flag_for_review`, `decay`, `deprecate`, `supersede`, `contest`, `uncontest`, `add_exception`, `delete`, `reject_candidate`, `promote_to_vault_candidate`.
 
-`applyPatchAndSync(root, patch, options, ftsIndex)` is the preferred public helper for delete and privacy-purge flows. It applies the patch and syncs FTS atomically.
+`applyPatchAndSync(root, patch, options, ftsIndex)` is the preferred public helper for delete and privacy-purge flows. It applies the patch, syncs FTS, and runs best-effort post-mutation diagnostics. Diagnostics report recoverable inconsistencies through redacted runtime events and do not replace patch review.
 
 ---
 
@@ -654,6 +662,6 @@ bun run eval
 npm pack --dry-run
 ```
 
-`bun run eval` runs deterministic governance, recall, background-job, codebase-evidence, replay, package/docs, and hardening checks.
+`bun run eval` runs deterministic governance, recall, background-job, codebase-evidence, replay, package/docs, post-mutation integrity, and hardening checks. Replay fixtures include synthetic and captured-style synthetic validation fixtures, plus schema support for redacted-real fixtures when privacy-reviewed. They are internal deterministic validation inputs, not public real-world performance benchmarks.
 
 `bun run build` is intentionally unavailable because this package has no build script.

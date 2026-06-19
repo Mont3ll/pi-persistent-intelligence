@@ -1,0 +1,26 @@
+{
+  "fixture_id": "redacted_replay_privacy_purge_boundary",
+  "description": "Captured-style synthetic fixture: sensitive content is purged and must not reappear in recall.",
+  "redaction_version": "redacted-v1",
+  "metadata": {
+    "fixture_id": "redacted_replay_privacy_purge_boundary",
+    "fixture_kind": "captured_style_synthetic",
+    "redaction_version": "redacted-v1",
+    "source_description": "Synthetic privacy purge path with redacted placeholder content only.",
+    "created_at": "2026-06-19",
+    "privacy_reviewed": true,
+    "contains_real_user_content": false
+  },
+  "sessions": [
+    { "session_id": "redacted-session-301", "turns": [
+      { "role": "user", "content": "Remember: sensitive deployment code is [REDACTED_SECRET].", "expected_capture": true },
+      { "role": "user", "content": "Privacy purge that sensitive deployment-code memory now.", "expected_no_capture": true }
+    ]}
+  ],
+  "expected": {
+    "rejected": ["[REDACTED_SECRET]"],
+    "recall_query": "sensitive deployment code",
+    "expected_recalled_memory_ids": [],
+    "expected_omissions": ["[REDACTED_SECRET]"]
+  }
+}

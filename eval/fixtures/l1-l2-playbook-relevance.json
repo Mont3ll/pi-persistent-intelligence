@@ -1,0 +1,26 @@
+{
+  "fixture_id": "redacted_replay_l1_l2_playbook_relevance",
+  "description": "Captured-style synthetic fixture: task-specific L2 playbook should appear despite broad L1 rules.",
+  "redaction_version": "redacted-v1",
+  "metadata": {
+    "fixture_id": "redacted_replay_l1_l2_playbook_relevance",
+    "fixture_kind": "captured_style_synthetic",
+    "redaction_version": "redacted-v1",
+    "source_description": "Synthetic replay for internal L1/L2 context-noise validation.",
+    "created_at": "2026-06-19",
+    "privacy_reviewed": true,
+    "contains_real_user_content": false
+  },
+  "sessions": [
+    { "session_id": "redacted-session-401", "turns": [
+      { "role": "user", "content": "This project playbook: when changing replay fixtures, run bun test test/unit/replay-fixtures.test.ts before the full suite.", "expected_capture": true },
+      { "role": "user", "content": "I am editing replay fixtures. What targeted check matters?", "expected_recall": ["bun test test/unit/replay-fixtures.test.ts"] }
+    ]}
+  ],
+  "expected": {
+    "candidates": ["When changing replay fixtures, run bun test test/unit/replay-fixtures.test.ts before the full suite"],
+    "recall_query": "editing replay fixtures targeted check",
+    "expected_recalled_memory_ids": ["mem_when_changing_replay_fixtures_run_bun_test_test_unit_replay_fixtures_test_ts_before_the_full_suite"],
+    "expected_omissions": []
+  }
+}
