@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { addMemoryRecordFromPatch, loadAllRecords, PATCH_APPLY_CONTEXT, updateMemoryRecord } from "./store";
-import { updateCandidateStatus } from "./inbox";
+import { listCandidates, updateCandidateStatus } from "./inbox";
 import { renderMemoryToDisk } from "./render";
 import { ensureMemoryDirs } from "./paths";
 import { writeVaultPromotionReport } from "./vaultPromotion";
@@ -50,6 +50,11 @@ function canApplyOp(root: string, op: PatchOp): boolean {
     return Boolean(target && target.status !== "deleted");
   }
   return true;
+}
+
+function markCandidateIfNew(root: string, id: string, status: "patched" | "rejected"): void {
+  const candidate = listCandidates(root).find((item) => item.id === id);
+  if (candidate?.status === "new") updateCandidateStatus(root, id, status);
 }
 
 function applyOp(root: string, patchId: string, op: PatchOp, now: string): void {
@@ -149,6 +154,7 @@ function applyOp(root: string, patchId: string, op: PatchOp, now: string): void 
       updated_at: now.slice(0, 10),
     }), PATCH_APPLY_CONTEXT);
     addMemoryRecordFromPatch(root, replacement);
+    if (op.candidate_id) markCandidateIfNew(root, op.candidate_id, "patched");
     return;
   }
 
@@ -186,10 +192,12 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
   const applied_ops: string[] = [];
   const skipped_ops: string[] = [];
   for (const op of patch.ops) {
-    if (isSelected(op, options.selectedOpIds) && canApplyOp(root, op)) {
+    const selected = isSelected(op, options.selectedOpIds);
+    if (selected && canApplyOp(root, op)) {
       applyOp(root, patch.patch_id, op, options.now);
       applied_ops.push(op.op_id);
     } else {
+      if (selected && op.candidate_id) markCandidateIfNew(root, op.candidate_id, "rejected");
       skipped_ops.push(op.op_id);
     }
   }
