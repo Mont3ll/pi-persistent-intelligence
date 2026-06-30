@@ -15,9 +15,39 @@ pi install npm:pi-persistent-intelligence
 
 `pi-persistent-intelligence` gives the pi coding agent a persistent, auditable operational memory that builds up across sessions.
 
+It is standalone and remains the lightweight pi-agent-native memory extension. It does not require `pi-governance-rs`, does not run an MCP server, and keeps pi-agent-native capture, curation, session search, Recall X-ray, diagnostics, reports, and vault workflows.
+
 PI carries project-specific learning from one session to the next. When you correct the agent, express a preference, or describe a project convention, PI scores whether the observation is worth preserving, captures useful items as candidates, verifies them, and promotes them to long-term memory through a reviewable patch flow. Memory is then scoped and injected back into future sessions.
 
 The public model is **Retain, Recall, Reflect**: retain useful candidates with evidence, recall scoped memory with policy and diagnostics, and reflect by producing reviewable maintenance, abstraction, and procedure artifacts. See [`docs/retain-recall-reflect.md`](docs/retain-recall-reflect.md) for the longer model. All durable memory changes are patch-governed. No record is silently mutated. L1 identity records are never auto-applied.
+
+---
+
+## Relationship to pi-governance-rs
+
+Both projects implement or map to the shared PI memory contract.
+
+`pi-persistent-intelligence`:
+
+- pi-agent-native lightweight extension
+- capture, recall, and reflect workflow inside pi-agent
+- optional vault/session/report integrations
+- can export/import PI memory contract bundles
+
+`pi-governance-rs`:
+
+- standalone Rust CLI/MCP runtime
+- global governed memory for Codex, Claude, OpenCode, Cursor, PI agent, and other MCP clients
+- can consume/produce compatible PI memory bundles
+
+Users may use either project alone. Users may use both when they want pi-agent-native UX and global MCP memory governance. Compatibility is through shared schemas, import/export, and optional bridge diagnostics.
+
+Docs:
+
+- [Shared PI memory contract](docs/pi-memory-contract.md)
+- [pi-governance-rs compatibility](docs/pi-governance-rs-compatibility.md)
+- [Standalone vs shared mode](docs/standalone-vs-shared-mode.md)
+- [Export/import with pi-governance-rs](docs/export-import-pi-governance.md)
 
 ---
 
@@ -154,6 +184,9 @@ The `ruleType` field on a memory record affects retrieval priority and hard-rule
 | `/memory-doctor` | Show memory root, session count, FTS status, governance mode, vault path, inbox count |
 | `/memory-diagnostics [--save]` | Run integrity, secret, provenance, and re-verification checks; `--save` writes JSON report to `reports/diagnostics/` |
 | `/memory-recall-xray <query>` | Explain why memories are included or excluded for a query; read-only and redacted |
+| `/memory-export --format pi-governance [--redacted] [--output bundle.json]` | Export a pi-governance-compatible PI memory contract bundle |
+| `/memory-import --format pi-governance <bundle.json> [--apply] [--backup] [--redacted-aware]` | Dry-run or merge-import a pi-governance-compatible bundle |
+| `/memory-governance doctor` | Check optional pi-governance-rs bridge configuration; disabled standalone mode is valid |
 | `/memory-worth <observation>` | Score whether an observation should be rejected, kept daily-only, captured as a candidate, or turned into an inquiry |
 | `/memory-background enqueue <kind>` | Queue an inspectable local background analysis job (`diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`, `meta_consolidation`, `vault_promotion_candidates`) |
 | `/memory-background run` | Run queued background jobs and write report artifacts |
@@ -217,6 +250,24 @@ PI supports two governance modes, configured in `~/.pi/agent/pi-memory/config.js
 |---|---|
 | `"compatibility"` | **Default.** Legacy candidates without trust metadata remain auto-eligible. Compatible with all pre-0.8.0 records. |
 | `"strict"` | Candidates must carry trust metadata, a `verified` status, and at least one evidence ID before being default-selected for auto-apply. Opt-in. |
+
+### Optional pi-governance-rs bridge
+
+The bridge is disabled by default and normal pi-agent memory operation does not require Rust:
+
+```json
+{
+  "piGovernance": {
+    "enabled": false,
+    "mode": "external",
+    "command": null,
+    "store": null,
+    "namespace": "default"
+  }
+}
+```
+
+Run `/memory-governance doctor` to confirm standalone mode or check an intentionally configured external Rust runtime. This package does not run an MCP server.
 
 **L1 records are never auto-applied in any mode.**
 

@@ -37,7 +37,7 @@ describe("docs contract", () => {
   });
 
   test("package files exclude local reports, fixtures, tests, and private memory", () => {
-    expect(pkg.files ?? []).toEqual(expect.arrayContaining(["index.ts", "src", "skills", "docs/wiki", "docs/retain-recall-reflect.md", "README.md", "CHANGELOG.md", "LICENSE"]));
+    expect(pkg.files ?? []).toEqual(expect.arrayContaining(["index.ts", "src", "skills", "docs/wiki", "docs/retain-recall-reflect.md", "docs/pi-memory-contract.md", "docs/pi-governance-rs-compatibility.md", "docs/standalone-vs-shared-mode.md", "docs/export-import-pi-governance.md", "README.md", "CHANGELOG.md", "LICENSE"]));
     for (const forbidden of ["docs", "reports", "test", "eval", ".pi", "memory", "fixtures"]) {
       expect(pkg.files ?? []).not.toContain(forbidden);
     }
@@ -48,7 +48,7 @@ describe("docs contract", () => {
 
   test("docs root contains only public documentation entry points", () => {
     const rootDocs = readdirSync("docs", { withFileTypes: true }).map((entry) => entry.name).sort();
-    expect(rootDocs).toEqual(["retain-recall-reflect.md", "wiki"]);
+    expect(rootDocs).toEqual(["export-import-pi-governance.md", "pi-governance-rs-compatibility.md", "pi-memory-contract.md", "retain-recall-reflect.md", "standalone-vs-shared-mode.md", "wiki"]);
   });
 
   test("wiki index links governance policy docs", () => {

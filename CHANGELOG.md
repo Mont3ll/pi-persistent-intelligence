@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-30
+
+### Added
+
+- Added shared PI memory contract documentation.
+- Added pi-governance-rs compatibility documentation.
+- Added pi-governance-compatible export bundle support.
+- Added pi-governance-compatible import/dry-run support.
+- Added optional pi-governance-rs bridge configuration.
+- Added `/memory-governance doctor` for checking optional Rust runtime compatibility.
+- Added schema/status/layer mapping tests.
+
+### Changed
+
+- Aligned public terminology with the shared PI memory contract: namespace, layer, memory_kind, rule_type, trust_class, durability, source_kind, verification, proposed/applied/rejected/deferred.
+- Clarified standalone mode versus optional shared global governance mode.
+- Clarified that pi-governance-rs owns the MCP server for non-pi and multi-agent usage.
+
+### Governance
+
+- pi-persistent-intelligence remains standalone.
+- No MCP server was added to this JavaScript package.
+- No dependency on pi-governance-rs was introduced for normal pi-agent use.
+- No automatic L1 promotion was added.
+- No durable mutation bypass was added.
+- Imports are dry-run/merge-safe unless explicitly applied through governed flows.
+- No hosted service, database, vector store, graph database, dashboard, connector, or cloud sync was added.
+
+### Verification
+
+- `bun run typecheck`
+- `bun test`
+- `bun run eval`
+- `bun run test:stress`
+- `npm pack --dry-run`
+- pi-governance compatibility fixture, if available
+
 ## [0.11.2] - 2026-06-19
 
 ### Added

@@ -23,7 +23,7 @@ function makeSession(dir: string, entries: object[]): string {
   return file;
 }
 
-const HEADER = { type: "session", version: 3, id: "test-session-uuid", timestamp: "2026-05-12T10:00:00.000Z", cwd: "/home/mel/projects/foo" };
+const HEADER = { type: "session", version: 3, id: "test-session-uuid", timestamp: "2026-05-12T10:00:00.000Z", cwd: "/tmp/pi-demo/projects/foo" };
 const USER_MSG = (text: string, ts = "2026-05-12T10:01:00.000Z") => ({
   type: "message", id: "aa1", parentId: null, timestamp: ts,
   message: { role: "user", content: text, timestamp: Date.now() }
@@ -55,7 +55,7 @@ describe("parseSession", () => {
     const parsed = parseSession(file, false);
     expect(parsed).not.toBeNull();
     expect(parsed!.id).toBe("test-session-uuid");
-    expect(parsed!.cwd).toBe("/home/mel/projects/foo");
+    expect(parsed!.cwd).toBe("/tmp/pi-demo/projects/foo");
     expect(parsed!.date).toBe("2026-05-12");
     expect(parsed!.archived).toBe(false);
   });

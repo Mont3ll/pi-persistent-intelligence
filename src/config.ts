@@ -29,6 +29,7 @@ export interface PiMemoryConfig {
   llm: { enabled: boolean; model: string | null; instructions?: string; command?: string | null };
   vault: { enabled: boolean; path: string | null; reportOnly: boolean };
   governance: { mode: "compatibility" | "strict" };
+  piGovernance: { enabled: boolean; mode: "external"; command: string | null; store: string | null; namespace: string };
   retrieval: { injectionMode: "scoped" | "policy_only" | "wakeup"; maxRecords?: number; maxL1Records?: number; maxL2Records?: number };
   metaConsolidation: {
     enabled: boolean;
@@ -55,6 +56,7 @@ export const defaultConfig: PiMemoryConfig = {
   llm: { enabled: false, model: null, command: null },
   vault: { enabled: false, path: null, reportOnly: true },
   governance: { mode: "compatibility" as const },
+  piGovernance: { enabled: false, mode: "external" as const, command: null, store: null, namespace: "default" },
   retrieval: { injectionMode: "scoped" as const },
   metaConsolidation: {
     enabled: false,
@@ -77,6 +79,7 @@ function mergeConfig(base: PiMemoryConfig, override: DeepPartial<PiMemoryConfig>
     llm: { ...base.llm, ...(override.llm ?? {}) },
     vault: { ...base.vault, ...(override.vault ?? {}) },
     governance: { ...base.governance, ...(override.governance ?? {}) },
+    piGovernance: { ...base.piGovernance, ...(override.piGovernance ?? {}) },
     retrieval: { ...base.retrieval, ...(override.retrieval ?? {}) },
     metaConsolidation: { ...base.metaConsolidation, ...(override.metaConsolidation ?? {}) },
   };

@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { watch as fsWatch } from "node:fs";
+import { readFileSync, watch as fsWatch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; details: unknown };
@@ -69,6 +69,7 @@ import { scoreMemoryWorth } from "./src/memory-worth";
 import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
 import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-analysis";
 import { resolveMemoryProfile } from "./src/profile";
+import { exportToPiGovernanceBundle, importFromPiGovernanceBundle, runPiGovernanceDoctor } from "./src/pi-governance-compat";
 import type { CaptureCandidate, CodebaseAnalysisKind, CodebaseAnalysisTool, MemoryKind } from "./src/types";
 
 function nowIso(): string { return new Date().toISOString(); }
@@ -696,6 +697,46 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("memory-export", {
+    description: "Export memory bundles. Usage: /memory-export --format pi-governance [--redacted] [--output bundle.json]",
+    handler: async (args, ctx) => {
+      const parsed = parseCommandArgs(args);
+      if (parsed.flags.format !== "pi-governance") { ctx.ui.notify("Usage: /memory-export --format pi-governance [--redacted] [--output bundle.json]", "warning"); return; }
+      const cfg = loadConfig(root);
+      const out = typeof parsed.flags.output === "string" ? parsed.flags.output : join(root, "runtime", `pi-governance-export-${Date.now()}.json`);
+      const profile = resolveMemoryProfile(root, sessionCwd);
+      const bundle = exportToPiGovernanceBundle(root, {
+        namespace: typeof parsed.flags.namespace === "string" ? parsed.flags.namespace : cfg.piGovernance.namespace,
+        project: typeof parsed.flags.project === "string" ? parsed.flags.project : undefined,
+        profile_id: profile.profile_id,
+        redacted: parsed.flags.redacted === true,
+      });
+      writeFileSync(out, `${JSON.stringify(bundle, null, 2)}\n`, "utf-8");
+      ctx.ui.notify(`Exported pi-governance bundle: ${out}`, "success");
+    },
+  });
+
+  pi.registerCommand("memory-import", {
+    description: "Import memory bundles. Usage: /memory-import --format pi-governance <bundle.json> [--apply] [--backup] [--redacted-aware]",
+    handler: async (args, ctx) => {
+      const parsed = parseCommandArgs(args);
+      if (parsed.flags.format !== "pi-governance" || !parsed.positional[0]) { ctx.ui.notify("Usage: /memory-import --format pi-governance <bundle.json> [--apply] [--backup] [--redacted-aware]", "warning"); return; }
+      const path = parsed.positional[0];
+      const bundle = JSON.parse(readFileSync(path, "utf-8"));
+      const result = importFromPiGovernanceBundle(root, bundle, { dryRun: parsed.flags.apply !== true, backup: parsed.flags.backup === true, redactedAware: parsed.flags["redacted-aware"] === true });
+      ctx.ui.notify(JSON.stringify(result, null, 2), result.dry_run ? "info" : "success");
+    },
+  });
+
+  pi.registerCommand("memory-governance", {
+    description: "Check optional pi-governance-rs bridge status. Usage: /memory-governance doctor",
+    handler: async (args, ctx) => {
+      if ((parseCommandArgs(args).positional[0] ?? "doctor") !== "doctor") { ctx.ui.notify("Usage: /memory-governance doctor", "warning"); return; }
+      const report = runPiGovernanceDoctor(root);
+      ctx.ui.notify(JSON.stringify(report, null, 2), report.ok ? "success" : "warning");
+    },
+  });
+
   pi.registerCommand("memory-recall-xray", {
     description: "Explain why memory would be included or excluded for a query (read-only). Usage: /memory-recall-xray <query>",
     handler: async (args, ctx) => {
@@ -1253,3 +1294,6 @@ export function applyPatchAndSync(
   runFtsAwarePostMutationChecksAfterSync({ root, patchId: patch.patch_id, ops: appliedOps, ftsIndex });
   return result;
 }
+
+export { exportToPiGovernanceBundle, importFromPiGovernanceBundle, runPiGovernanceDoctor } from "./src/pi-governance-compat";
+export type { PiGovernanceBundle, PiGovernanceExportOptions, PiGovernanceImportOptions, PiGovernanceImportResult, PiGovernanceDoctorReport } from "./src/pi-governance-compat";
