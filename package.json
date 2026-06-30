@@ -1,6 +1,6 @@
 {
   "name": "pi-persistent-intelligence",
-  "version": "0.11.2",
+  "version": "0.12.0",
   "description": "Governed long-term memory, built-in session search, and Obsidian vault integration for the pi coding agent.",
   "license": "MIT",
   "repository": {
@@ -22,6 +22,10 @@
     "skills",
     "docs/wiki",
     "docs/retain-recall-reflect.md",
+    "docs/pi-memory-contract.md",
+    "docs/pi-governance-rs-compatibility.md",
+    "docs/standalone-vs-shared-mode.md",
+    "docs/export-import-pi-governance.md",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -57,6 +61,7 @@
     "test:stress": "bun test test/stress",
     "typecheck": "tsc --noEmit",
     "eval": "bun eval/run-evals.ts",
+    "release-audit": "bun run typecheck && bun test && bun run eval && bun run test:stress && npm pack --dry-run",
     "prepublishOnly": "bun run typecheck && bun test"
   },
   "dependencies": {

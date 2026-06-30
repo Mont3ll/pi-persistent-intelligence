@@ -71,7 +71,7 @@ describe("extractCorrectionCandidate", () => {
     const cand = extractCorrectionCandidate(
       "always use canonical JSONL as the source of truth, never edit MEMORY.md directly",
       "2026-05-13",
-      "/home/mel/project",
+      "/tmp/pi-demo-project",
     );
     expect(cand).not.toBeNull();
     expect(cand!.confidence).toBeGreaterThanOrEqual(0.85);
@@ -84,14 +84,14 @@ describe("extractCorrectionCandidate", () => {
     const cand = extractCorrectionCandidate(
       "that could be better", // no real correction pattern
       "2026-05-13",
-      "/home/mel/project",
+      "/tmp/pi-demo-project",
     );
     expect(cand).toBeNull();
   });
 
   test("truncates very long correction text", () => {
     const longText = "always use X instead of Y. ".repeat(20);
-    const cand = extractCorrectionCandidate(longText, "2026-05-13", "/home/mel");
+    const cand = extractCorrectionCandidate(longText, "2026-05-13", "/tmp/pi-demo");
     expect(cand).not.toBeNull();
     expect(cand!.text.length).toBeLessThanOrEqual(300);
   });

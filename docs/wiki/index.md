@@ -1,6 +1,6 @@
 # pi-persistent-intelligence Wiki
 
-Welcome to the documentation wiki for `pi-persistent-intelligence` v0.11.0.
+Welcome to the documentation wiki for `pi-persistent-intelligence` v0.12.0.
 
 This wiki is the deeper operating manual for the package. The README covers installation and quick start. This wiki covers how the system works, why it is designed the way it is, and how to operate it effectively.
 
@@ -14,6 +14,10 @@ This wiki is the deeper operating manual for the package. The README covers inst
 | [Memory Model](memory-model.md) | L1, L2, L3 layers, record schema, rule types |
 | [Lifecycle](lifecycle.md) | How memory flows from capture to injection to review |
 | [Retain, Recall, Reflect](../retain-recall-reflect.md) | Public mental model for governed capture, scoped retrieval, and reviewable reflection |
+| [Shared PI Memory Contract](../pi-memory-contract.md) | Shared record, patch, candidate, evidence, session, and status contract |
+| [pi-governance-rs Compatibility](../pi-governance-rs-compatibility.md) | Optional import/export and bridge diagnostics with the Rust CLI/MCP runtime |
+| [Standalone vs Shared Mode](../standalone-vs-shared-mode.md) | When to use this package alone or together with pi-governance-rs |
+| [Export/Import with pi-governance-rs](../export-import-pi-governance.md) | Bundle shape, redaction, dry-run import, and examples |
 | [Commands and Tools](commands-and-tools.md) | All public commands and tools with examples |
 | [Governance](governance.md) | Compatibility mode, strict mode, and what never auto-applies |
 | [Conflict Resolution Policy](conflict-resolution-policy.md) | How conflicts, contested records, supersession, exceptions, tombstones, and privacy purge are resolved |
@@ -41,7 +45,7 @@ This wiki is the deeper operating manual for the package. The README covers inst
 
 It manages durable operational beliefs through evidence, trust classification, deterministic verification, patch-governed mutation, scoped injection, conflict handling, deletion with privacy purge, reinforcement feedback, diagnostics, and review-required abstraction proposals.
 
-Canonical memory is JSONL. Markdown is a rendered projection. The JSONL is always the source of truth.
+Canonical memory is JSONL. Markdown is a rendered projection. The JSONL is always the source of truth. The package remains standalone, does not run an MCP server, and can optionally exchange PI memory contract bundles with `pi-governance-rs`.
 
 ---
 

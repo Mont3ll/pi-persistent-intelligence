@@ -39,6 +39,13 @@ All settings are optional. Missing keys fall back to defaults.
   "governance": {
     "mode": "compatibility"
   },
+  "piGovernance": {
+    "enabled": false,
+    "mode": "external",
+    "command": null,
+    "store": null,
+    "namespace": "default"
+  },
   "retrieval": {
     "injectionMode": "scoped"
   },
@@ -80,6 +87,18 @@ All settings are optional. Missing keys fall back to defaults.
 | Key | Default | Description |
 |---|---|---|
 | `mode` | `"compatibility"` | `"compatibility"` or `"strict"` (see [Governance](governance.md)) |
+
+### `piGovernance`
+
+Optional external `pi-governance-rs` bridge diagnostics. Disabled standalone mode is valid and does not require Rust.
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `false` | Enable optional diagnostics against an external Rust runtime |
+| `mode` | `"external"` | External bridge mode; this package does not run an MCP server |
+| `command` | `null` | Optional path to a `pi` Rust binary |
+| `store` | `null` | Optional Rust store path |
+| `namespace` | `"default"` | Namespace for compatibility checks |
 
 ### `retrieval`
 

@@ -45,6 +45,44 @@ The report includes memory kind, retrieval score, available score provenance, co
 
 ---
 
+### `/memory-export --format pi-governance [--redacted] [--output bundle.json]`
+
+Exports a PI memory contract bundle compatible with `pi-governance-rs`.
+
+```
+/memory-export --format pi-governance --output /tmp/pi-demo-store/bundle.json
+/memory-export --format pi-governance --redacted --output /tmp/pi-demo-store/redacted-bundle.json
+```
+
+Redacted export is best-effort and should be user-reviewed before sharing.
+
+---
+
+### `/memory-import --format pi-governance <bundle.json> [--apply] [--backup] [--redacted-aware]`
+
+Dry-runs or merge-imports a PI memory contract bundle. Without `--apply`, import reports planned changes only.
+
+```
+/memory-import --format pi-governance /tmp/pi-demo-store/bundle.json
+/memory-import --format pi-governance /tmp/pi-demo-store/bundle.json --apply --backup --redacted-aware
+```
+
+Imports skip duplicate record IDs, route proposed patches to the inbox, and keep L3/session context out of authoritative L1/L2 memory.
+
+---
+
+### `/memory-governance doctor`
+
+Checks optional `pi-governance-rs` bridge configuration.
+
+```
+/memory-governance doctor
+```
+
+If the bridge is disabled, the command reports that standalone mode is active and valid. This package does not run an MCP server.
+
+---
+
 ### `/memory-worth <observation>`
 
 Scores whether an observation should become durable memory.
