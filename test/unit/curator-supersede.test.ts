@@ -2,9 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendCandidate } from "../../src/inbox";
-import { unsafeAddMemoryRecord as addMemoryRecord } from "../../src/store";
+import { appendCandidate, listCandidates } from "../../src/inbox";
+import { loadActiveRecords, unsafeAddMemoryRecord as addMemoryRecord } from "../../src/store";
 import { curateInbox } from "../../src/curator";
+import { applyPatch } from "../../src/patch";
 import type { CaptureCandidate, MemoryRecord } from "../../src/types";
 
 let dirs: string[] = [];
@@ -23,5 +24,32 @@ describe("curator supersede detection", () => {
     expect(patch.ops[0].op).toBe("supersede");
     expect(patch.ops[0].target_id).toBe("mem_old");
     expect(patch.ops[0].to_record?.statement).toContain("patch files");
+  });
+
+  test("applying a supersede op marks its source candidate patched", () => {
+    const dir = root();
+    addMemoryRecord(dir, record());
+    appendCandidate(dir, candidate());
+    const patch = curateInbox(dir, { now: "2026-05-09T00:00:00Z", mode: "propose" });
+
+    const applied = applyPatch(dir, patch, { selectedOpIds: ["op_001"], now: "2026-05-09T00:00:00Z" });
+
+    expect(applied.applied_ops).toEqual(["op_001"]);
+    expect(loadActiveRecords(dir).some((r) => r.id === "mem_new")).toBe(true);
+    expect(listCandidates(dir).find((c) => c.id === "cap_new")?.status).toBe("patched");
+  });
+
+  test("selected supersede ops that become non-applicable do not remain new", () => {
+    const dir = root();
+    addMemoryRecord(dir, record());
+    appendCandidate(dir, candidate());
+    appendCandidate(dir, { ...candidate(), id: "cap_other", text: "Use a reviewed patch workflow", tags: ["workflow", "supersedes:mem_old"] });
+    const patch = curateInbox(dir, { now: "2026-05-09T00:00:00Z", mode: "propose" });
+
+    const applied = applyPatch(dir, patch, { selectedOpIds: ["op_001", "op_002"], now: "2026-05-09T00:00:00Z" });
+
+    expect(applied.applied_ops).toEqual(["op_001"]);
+    expect(applied.skipped_ops).toEqual(["op_002"]);
+    expect(listCandidates(dir).find((c) => c.id === "cap_other")?.status).toBe("rejected");
   });
 });
