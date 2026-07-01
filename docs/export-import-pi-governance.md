@@ -1,6 +1,26 @@
 # Export and Import with pi-governance-rs
 
-## Export Bundle Shape
+Use pi-governance-compatible bundles to move governed memory between `pi-persistent-intelligence` and `pi-governance-rs` through the shared PI memory contract.
+
+## Export examples
+
+```bash
+/memory-export --format pi-governance --output bundle.json
+/memory-export --format pi-governance --redacted --output bundle.json
+```
+
+Redacted export omits private source excerpts where possible and includes redaction metadata for review.
+
+## Import examples
+
+```bash
+/memory-import --format pi-governance bundle.json
+/memory-import --format pi-governance bundle.json --apply --backup --redacted-aware
+```
+
+By default, import shows what would change before it writes anything. Use `--apply` only after reviewing the preview.
+
+## Bundle shape
 
 ```json
 {
@@ -26,7 +46,7 @@
 }
 ```
 
-## Conservative Defaults
+## Conservative defaults
 
 - Exports preserve L1/L2 records and L3 daily/session entries.
 - `ruleType` maps to `rule_type`.
@@ -37,13 +57,6 @@
 - Proposed Rust patches import as reviewable inbox candidates.
 - L3/session entries import into daily/session context rather than authoritative L1/L2 memory.
 
-## Examples
+## User review expectations
 
-```text
-/memory-export --format pi-governance --output /tmp/pi-demo-store/bundle.json
-/memory-export --format pi-governance --redacted --output /tmp/pi-demo-store/redacted-bundle.json
-/memory-import --format pi-governance /tmp/pi-demo-store/bundle.json
-/memory-import --format pi-governance /tmp/pi-demo-store/bundle.json --apply
-```
-
-Review dry-run output before applying imported bundles.
+Import/export compatibility is designed for governed portability, not silent synchronization. Review the dry-run import output, keep backups when applying imported bundles, and treat redacted export as best-effort rather than a complete DLP guarantee.

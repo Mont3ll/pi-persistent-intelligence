@@ -1,20 +1,46 @@
 # pi-governance-rs Compatibility
 
-`pi-persistent-intelligence` can exchange PI memory contract bundles with `pi-governance-rs`.
+`pi-persistent-intelligence` can exchange PI memory contract bundles with `pi-governance-rs` while remaining a standalone pi-agent extension.
 
 ## Relationship
 
-`pi-persistent-intelligence` remains a standalone lightweight pi-agent extension. It does not require Rust and does not run an MCP server.
+`pi-persistent-intelligence` is native governed memory for the pi coding agent. It does not require Rust and does not host or run an MCP server.
 
-`pi-governance-rs` remains the standalone Rust CLI/MCP runtime for Codex, Claude, OpenCode, Cursor, PI agent, and other MCP-capable tools.
+`pi-governance-rs` is the standalone Rust CLI/MCP runtime for governed memory across Codex, Claude, OpenCode, Cursor, PI agent, and other MCP-capable tools. It remains the MCP runtime.
 
-Use either project alone, or use both when you want pi-agent-native UX plus a global MCP governed memory runtime.
+Both projects can be used alone. Use both only when you want pi-agent-native memory UX and a separate global MCP governed-memory runtime.
+
+## When to use pi-persistent-intelligence alone
+
+Use this package by itself when you want:
+
+- durable memory inside pi-agent;
+- local JSONL-backed storage;
+- inbox review and patch-governed mutation;
+- session search and Recall X-ray;
+- diagnostics and optional Obsidian vault integration;
+- no Rust runtime and no MCP server requirement.
+
+This is the default normal pi-agent deployment.
+
+## When to use pi-governance-rs alone
+
+Use `pi-governance-rs` by itself when you want a standalone Rust CLI/MCP governed-memory runtime for multiple MCP-capable tools, independent of pi-agent.
+
+## When to use both
+
+Use both when you want:
+
+- pi-agent-native capture, review, and recall from `pi-persistent-intelligence`; and
+- a separate `pi-governance-rs` runtime for MCP-capable clients or cross-tool workflows.
+
+Interoperability is through the shared PI memory contract, compatible import/export, and optional bridge diagnostics.
 
 ## Export
 
-```text
-/memory-export --format pi-governance --output /tmp/pi-demo-store/pi-memory-bundle.json
-/memory-export --format pi-governance --redacted --output /tmp/pi-demo-store/pi-memory-redacted.json
+```bash
+/memory-export --format pi-governance --output bundle.json
+/memory-export --format pi-governance --redacted --output redacted-bundle.json
 ```
 
 API:
@@ -23,13 +49,13 @@ API:
 exportToPiGovernanceBundle(root, { namespace: "default", redacted: true })
 ```
 
-The default export is conservative. Redacted export omits private source excerpts and includes redaction metadata.
+Redacted export omits private source excerpts where possible and includes redaction metadata for review.
 
 ## Import
 
-```text
-/memory-import --format pi-governance /tmp/pi-demo-store/pi-memory-bundle.json
-/memory-import --format pi-governance /tmp/pi-demo-store/pi-memory-bundle.json --apply --backup --redacted-aware
+```bash
+/memory-import --format pi-governance bundle.json
+/memory-import --format pi-governance bundle.json --apply --backup --redacted-aware
 ```
 
 API:
@@ -38,20 +64,22 @@ API:
 importFromPiGovernanceBundle(root, bundle, { dryRun: true })
 ```
 
-Import is dry-run by default, merge-only, skips duplicate IDs, and routes proposed patches to the normal inbox/candidate flow.
+By default, import shows what would change before it writes anything. Applied imports are merge-oriented, skip duplicate IDs, and route proposed patches through the normal inbox/candidate flow.
 
-## Optional Bridge Doctor
+## Optional bridge diagnostics
 
-```text
+```bash
 /memory-governance doctor
 ```
 
-When disabled, the doctor reports:
+When the bridge is disabled, the doctor should report standalone mode as valid. When the bridge is enabled, it checks configuration for an external Rust runtime.
 
-```text
-pi-governance-rs bridge is disabled.
-pi-persistent-intelligence standalone mode is active.
-This is valid.
-```
+The bridge does not make Rust required for normal pi-agent usage and does not add an MCP server to this package.
 
-When enabled, the bridge checks configuration shape. It does not run an MCP server and does not make Rust required for normal operation.
+## What is intentionally not coupled
+
+- No runtime dependency on `pi-governance-rs`.
+- No JavaScript MCP server in this package.
+- No shared storage path requirement.
+- No command behavior changes for normal pi-agent memory use.
+- No replacement relationship between the two projects.
