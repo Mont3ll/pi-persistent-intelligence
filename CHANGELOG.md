@@ -32,7 +32,7 @@ All notable changes to this project will be documented in this file.
 - Imports are dry-run/merge-safe unless explicitly applied through governed flows.
 - No hosted service, database, vector store, graph database, dashboard, connector, or cloud sync was added.
 
-### Verification
+### Quality checks
 
 - `bun run typecheck`
 - `bun test`
@@ -61,7 +61,7 @@ All notable changes to this project will be documented in this file.
 - Privacy-purged content remains excluded from normal memory files and recall.
 - No automatic L1 promotion, skill writing, vault mutation, or durable mutation path was added.
 
-### Verification
+### Quality checks
 
 - `bun run typecheck`
 - `bun test`
@@ -86,7 +86,7 @@ All notable changes to this project will be documented in this file.
 - Added runtime health events for recoverable failures and slow/failed background jobs.
 - Hardened background queue execution with lockfile protection and stale-running recovery.
 
-### Verification
+### Quality checks
 
 - `bun run typecheck`
 - `bun test`
@@ -129,7 +129,7 @@ All notable changes to this project will be documented in this file.
 - No automatic L1 promotion was added.
 - No hosted service, database, vector store, or graph database dependency was added.
 
-### Verification
+### Quality checks
 
 - `bun run typecheck`
 - `bun test`
@@ -174,7 +174,7 @@ All notable changes to this project will be documented in this file.
 - Codebase-analysis evidence supports review but does not bypass governance.
 - Procedure candidates remain review-only and do not auto-write skills.
 
-### Verification
+### Quality checks
 
 - `bun run typecheck`
 - `bun test`

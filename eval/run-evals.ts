@@ -763,12 +763,18 @@ function evalCodebaseEvidenceNoBypass(): EvalResult {
 
 function evalDocsContractCommandConfigSync(): EvalResult {
   const readme = readFileSync("README.md", "utf-8");
+  const commandsDoc = readFileSync("docs/commands.md", "utf-8");
+  const docs = `${readme}\n${commandsDoc}`;
   const index = readFileSync("index.ts", "utf-8");
   const registered = new Set([...index.matchAll(/registerCommand\("([^"]+)"/g)].map((m) => m[1]));
-  const documented = [...readme.matchAll(/`\/(memory-[a-z0-9-]+|curate-memory|maintain-memory|meta-consolidation|render-memory|consolidate-memory|setup-session-search|session-sync|session-reindex|procedure-candidates)(?:\s[^`]*)?`/g)].map((m) => m[1]);
+  const documented = [...docs.matchAll(/`\/(memory-[a-z0-9-]+|curate-memory|maintain-memory|meta-consolidation|render-memory|consolidate-memory|setup-session-search|session-sync|session-reindex|procedure-candidates)(?:\s[^`]*)?`/g)].map((m) => m[1]);
   const missing = [...new Set(documented)].filter((cmd) => !registered.has(cmd));
-  const pass = missing.length === 0 && readme.includes("autoCurate") && !readme.includes("auto_curate");
-  return { category: "docs_contract_command_config_sync", description: "README documented commands/config keys stay in sync with registry and schema naming.", pass, metrics: { documented_commands: documented.length, missing: missing.length }, failures: missing.map((cmd) => `Missing registered command: ${cmd}`) };
+  const hasCommandReference = readme.includes("docs/commands.md") && commandsDoc.includes("# Command Reference");
+  const pass = missing.length === 0 && hasCommandReference && !docs.includes("auto_curate");
+  const failures = missing.map((cmd) => `Missing registered command: ${cmd}`);
+  if (!hasCommandReference) failures.push("README must link to docs/commands.md and command reference must exist.");
+  if (docs.includes("auto_curate")) failures.push("Docs should use camelCase config keys, not auto_curate.");
+  return { category: "docs_contract_command_config_sync", description: "Public documented commands/config keys stay in sync with registry and schema naming.", pass, metrics: { documented_commands: documented.length, missing: missing.length, has_command_reference: hasCommandReference }, failures };
 }
 
 function evalReplayProjectConventionRecall(): EvalResult {
