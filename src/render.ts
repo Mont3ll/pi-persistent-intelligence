@@ -35,7 +35,7 @@ function renderRecord(record: MemoryRecord): string {
 }
 
 export function renderMemoryMarkdown(records: MemoryRecord[]): string {
-  const visible = records.filter((record) => record.status !== "deleted");
+  const visible = records.filter((record) => record.status === "active" || record.status === "contested");
   const l1 = visible.filter((record) => record.layer === "L1");
   const l2 = visible.filter((record) => record.layer === "L2");
   const sections = [

@@ -39,6 +39,7 @@ import { createCompactionArtifact } from "../src/compaction-artifacts";
 import { computeCandidateConfidence } from "../src/confidence";
 import { runReplayFixture, redactReplayContent, validateReplayFixturePrivacy } from "../src/replay-fixtures";
 import { runPostMutationChecks } from "../src/post-mutation-checks";
+import { renderMemoryMarkdown } from "../src/render";
 import { draftSkillFromProcedureCandidate } from "../src/skill-draft";
 import { runFailureAnalysis } from "../src/failure-analysis";
 import type { CaptureCandidate, MemoryRecord } from "../src/types";
@@ -989,6 +990,37 @@ function evalPrivacyPurgePostMutationBoundary(): EvalResult {
   return { category: "privacy_purge_post_mutation_boundary", description: "Privacy-purged content remains outside active memory and clean post-mutation checks do not add events.", pass: findings.length === 0 && loadActiveRecords(root).every((r) => r.id !== "mem_purge_eval") && events.length === 0, metrics: { findings: findings.length, runtime_events: events.length }, failures: findings.map((f) => f.code), hard_invariant: true };
 }
 
+function evalRejectCandidatePatchLifecycle(): EvalResult {
+  const root = tempRoot();
+  appendCandidate(root, candidate("Generated low-trust content should not persist.", { id: "cap_eval_reject", confidence: 0.2 }));
+  const before = loadAllRecords(root).length;
+  const patch = { patch_id: "patch_eval_reject", created_at: "2026-07-04T00:00:00Z", generated_by: "manual" as const, mode: "supervised" as const, summary: "reject", ops: [{ op_id: "op_reject", op: "reject_candidate" as const, candidate_id: "cap_eval_reject", risk: "low" as const, default_selected: true }], status: "proposed" as const, applied_at: null, applied_ops: [], skipped_ops: [] };
+  const applied = applyPatch(root, patch, { now: "2026-07-04T00:01:00Z" });
+  const candidateStatus = listCandidates(root).find((item) => item.id === "cap_eval_reject")?.status;
+  const pass = applied.applied_ops.includes("op_reject") && candidateStatus === "rejected" && loadAllRecords(root).length === before;
+  return { category: "reject_candidate_patch_lifecycle", description: "Reject-candidate patch ops update inbox state without durable memory mutation.", pass, metrics: { records_before: before, records_after: loadAllRecords(root).length, applied_ops: applied.applied_ops.length }, failures: pass ? [] : ["reject_candidate did not atomically reject the candidate without mutating memory."], hard_invariant: true };
+}
+
+function evalSupersedePatchWritesTemporalFields(): EvalResult {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("mem_eval_old", "Use npm test for verification.", { created_at: "2026-07-01", updated_at: "2026-07-01" }));
+  const patch = { patch_id: "patch_eval_sup", created_at: "2026-07-04T00:00:00Z", generated_by: "manual" as const, mode: "supervised" as const, summary: "supersede", ops: [{ op_id: "op_sup", op: "supersede" as const, target_id: "mem_eval_old", to_record: record("mem_eval_new", "Use bun test for verification.", { created_at: "2026-07-04", updated_at: "2026-07-04" }), risk: "medium" as const, default_selected: true }], status: "proposed" as const, applied_at: null, applied_ops: [], skipped_ops: [] };
+  applyPatch(root, patch, { now: "2026-07-04T00:01:00Z" });
+  const old = loadAllRecords(root).find((item) => item.id === "mem_eval_old");
+  const replacement = loadAllRecords(root).find((item) => item.id === "mem_eval_new");
+  const pass = old?.status === "superseded" && old.valid_to === "2026-07-04" && old.invalidated_by === "mem_eval_new" && replacement?.valid_from === "2026-07-04";
+  return { category: "supersede_patch_writes_temporal_fields", description: "Supersede patch persists explicit temporal invalidation fields in canonical JSONL.", pass, metrics: { has_valid_to: old?.valid_to ? 1 : 0, has_valid_from: replacement?.valid_from ? 1 : 0 }, failures: pass ? [] : ["Supersede patch did not persist explicit temporal validity fields."], hard_invariant: true };
+}
+
+function evalProjectionExcludesSupersededMemory(): EvalResult {
+  const markdown = renderMemoryMarkdown([
+    record("mem_eval_old", "Use npm test for verification.", { status: "superseded", superseded_by: ["mem_eval_new"] }),
+    record("mem_eval_new", "Use bun test for verification.", { supersedes: ["mem_eval_old"] }),
+  ]);
+  const pass = !markdown.includes("Use npm test for verification.") && markdown.includes("Use bun test for verification.");
+  return { category: "projection_excludes_superseded_memory", description: "Markdown projection excludes superseded records from active rendered memory.", pass, metrics: { markdown_chars: markdown.length }, failures: pass ? [] : ["Superseded memory appeared in rendered active projection."], hard_invariant: true };
+}
+
 function replayFixture(name: string): any { return JSON.parse(readFileSync(join("eval", "fixtures", name), "utf-8")); }
 
 function evalRedactedReplayFixturePrivacyValidation(): EvalResult {
@@ -1063,6 +1095,9 @@ async function runEvals(): Promise<void> {
     ["Silent Failure Runtime Event Visibility", evalSilentFailureRuntimeEventVisibility],
     ["Post Mutation Integrity Checks", evalPostMutationIntegrityChecks],
     ["Privacy Purge Post Mutation Boundary", evalPrivacyPurgePostMutationBoundary],
+    ["Reject Candidate Patch Lifecycle", evalRejectCandidatePatchLifecycle],
+    ["Supersede Patch Writes Temporal Fields", evalSupersedePatchWritesTemporalFields],
+    ["Projection Excludes Superseded Memory", evalProjectionExcludesSupersededMemory],
     ["Redacted Replay Fixture Privacy Validation", evalRedactedReplayFixturePrivacyValidation],
     ["Redacted Replay Durable Correction", () => evalRedactedReplayFixture("durable-correction-survives.json", "redacted_replay_durable_correction", "Durable correction fixture recalls expected convention without unexpected recall.")],
     ["Redacted Replay Temporary Instruction Rejection", () => evalRedactedReplayFixture("temporary-instruction-not-durable.json", "redacted_replay_temporary_instruction_rejection", "Temporary instruction fixture rejects one-off instruction as durable memory.")],

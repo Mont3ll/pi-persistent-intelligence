@@ -142,19 +142,30 @@ function applyOp(root: string, patchId: string, op: PatchOp, now: string): void 
 
   if (op.op === "supersede") {
     if (!op.target_id || !op.to_record) throw new Error(`Patch op ${op.op_id} missing supersede fields`);
+    const invalidationDate = op.to_record.created_at || now.slice(0, 10);
     const replacement = {
       ...op.to_record,
       supersedes: [...new Set([...(op.to_record.supersedes ?? []), op.target_id])],
+      valid_from: op.to_record.valid_from ?? invalidationDate,
       updated_at: now.slice(0, 10),
     };
     updateMemoryRecord(root, op.target_id, (record) => ({
       ...record,
       status: "superseded",
       superseded_by: [...new Set([...record.superseded_by, replacement.id])],
+      valid_to: record.valid_to ?? invalidationDate,
+      invalidated_by: record.invalidated_by ?? replacement.id,
+      validity_reason: record.validity_reason ?? `Superseded by ${replacement.id}.`,
       updated_at: now.slice(0, 10),
     }), PATCH_APPLY_CONTEXT);
     addMemoryRecordFromPatch(root, replacement);
     if (op.candidate_id) markCandidateIfNew(root, op.candidate_id, "patched");
+    return;
+  }
+
+  if (op.op === "reject_candidate") {
+    if (!op.candidate_id) throw new Error(`Patch op ${op.op_id} missing candidate_id`);
+    updateCandidateStatus(root, op.candidate_id, "rejected");
     return;
   }
 
