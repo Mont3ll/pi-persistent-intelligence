@@ -11,6 +11,11 @@ docs/PI-*-INTEGRATION-*.md
 docs/*RELEASE-PREP*.md
 docs/dogfood-checklist.md
 reports/sprints/
+reports/performance/
+reports/governance/
+reports/diagnostics/
+reports/quality/
+reports/audit/
 
 # Generated local verification artifacts
 reports/eval/*-eval-report.*
