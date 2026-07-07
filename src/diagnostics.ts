@@ -13,6 +13,8 @@ import { checkProvenanceLiveness } from "./provenance-liveness";
 import { generateReverificationRecommendations } from "./reverification";
 import { inferMemoryKind } from "./memory-kind";
 import { readCompactionArtifacts } from "./compaction-artifacts";
+import type { InvocationProfileReport } from "./profiling";
+import { InvocationProfiler } from "./profiling";
 import type { MemoryRecord } from "./types";
 
 export type DiagnosticSeverity = "ok" | "info" | "warning" | "error";
@@ -28,6 +30,7 @@ export interface DiagnosticsReport {
   timestamp: string;
   root: string;
   findings: DiagnosticFinding[];
+  profile?: InvocationProfileReport;
   summary: {
     ok: number;
     info: number;
@@ -51,23 +54,29 @@ function error(code: string, message: string, ids?: string[]): DiagnosticFinding
   return { code, severity: "error", message, affected_ids: ids };
 }
 
-export function runMemoryDiagnostics(root: string): DiagnosticsReport {
+export function runMemoryDiagnostics(root: string, options: { profile?: boolean } = {}): DiagnosticsReport {
+  const profiler = options.profile ? new InvocationProfiler("memory_diagnostics") : undefined;
   const paths = ensureMemoryDirs(root);
   const findings: DiagnosticFinding[] = [];
   const now = new Date().toISOString();
 
   // 1. Required stores exist
+  const endStoreExistence = profiler?.startSpan("store_existence");
   const requiredFiles = [paths.memory.L1, paths.memory.L2, paths.memory.profiles, paths.memory.evidence, paths.memory.tombstones, paths.inbox.captured];
   for (const file of requiredFiles) {
     if (!existsSync(file)) findings.push(warn("missing_store_file", `Expected JSONL store not found: ${file}`));
   }
+  endStoreExistence?.({ required_files: requiredFiles.length });
 
+  const endLoad = profiler?.startSpan("record_evidence_load");
   const allRecords = loadAllRecords(root);
   const allEvidence = readEvidenceRecords(root);
+  endLoad?.({ records: allRecords.length, evidence: allEvidence.length });
   const activeIds = new Set(allRecords.filter((r) => r.status === "active").map((r) => r.id));
   const allIds = new Set(allRecords.map((r) => r.id));
 
   // 2. Orphan evidence (references non-existent memories)
+  const endOrphanEvidence = profiler?.startSpan("orphan_evidence");
   const orphanEvidence = allEvidence.filter((ev) =>
     ev.related_memory_ids.length > 0 &&
     ev.related_memory_ids.every((id) => !allIds.has(id)) &&
@@ -78,6 +87,7 @@ export function runMemoryDiagnostics(root: string): DiagnosticsReport {
   } else {
     findings.push(ok("orphan_evidence", "No orphan evidence records."));
   }
+  endOrphanEvidence?.({ orphan_evidence: orphanEvidence.length });
 
   // 3. Tombstoned records appearing in the store with active status
   const zombied = allRecords.filter((r) =>
@@ -154,6 +164,7 @@ export function runMemoryDiagnostics(root: string): DiagnosticsReport {
   }
 
   // 9. Secret-like content in canonical stores. Messages never include raw matches.
+  const endPrivacyScan = profiler?.startSpan("privacy_scan");
   const secretAffected: string[] = [];
   for (const record of allRecords) {
     if (scanSecrets(JSON.stringify(record)).hasHighConfidenceSecret) secretAffected.push(record.id);
@@ -163,8 +174,10 @@ export function runMemoryDiagnostics(root: string): DiagnosticsReport {
   }
   if (secretAffected.length > 0) findings.push(error("secret_like_content_detected", `${secretAffected.length} record(s) contain high-confidence secret-like content. Values redacted from diagnostics.`, secretAffected));
   else findings.push(ok("secret_like_content_detected", "No high-confidence secret-like content detected in memory or evidence stores."));
+  endPrivacyScan?.({ affected: secretAffected.length });
 
   // 10. Provenance liveness and dependency re-verification.
+  const endProvenance = profiler?.startSpan("provenance_liveness");
   const liveness = checkProvenanceLiveness(root, now);
   for (const finding of liveness.findings) {
     const ids = [finding.memory_id, finding.evidence_id].filter((id): id is string => Boolean(id));
@@ -173,6 +186,7 @@ export function runMemoryDiagnostics(root: string): DiagnosticsReport {
   const reverify = generateReverificationRecommendations(root);
   if (reverify.length > 0) findings.push(warn("reverification_recommended", `${reverify.length} memory record(s) should be re-verified due to invalidated dependencies.`, reverify.map((r) => r.memory_id)));
   else findings.push(ok("reverification_recommended", "No dependency-based re-verification recommendations."));
+  endProvenance?.({ findings: liveness.findings.length, reverify: reverify.length });
 
   // 11. Public memory kind taxonomy coverage.
   const kindCounts = allRecords.reduce<Record<string, number>>((counts, record) => {
@@ -214,7 +228,9 @@ export function runMemoryDiagnostics(root: string): DiagnosticsReport {
     total_evidence: allEvidence.length,
   };
 
-  return { timestamp: now, root, findings, summary };
+  const report: DiagnosticsReport = { timestamp: now, root, findings, summary };
+  if (profiler) report.profile = profiler.toReport();
+  return report;
 }
 
 export function renderDiagnosticsReport(report: DiagnosticsReport): string {
