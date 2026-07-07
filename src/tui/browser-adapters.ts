@@ -2,6 +2,7 @@ import { createInteractiveBrowser, type BrowserItem, type BrowserOptions, type B
 import type { BackgroundAnalysisJob } from "../background-analysis";
 import type { DiagnosticsReport } from "../diagnostics";
 import type { TimelineEvent, MemoryTimelineReport } from "../timeline";
+import type { MemoryHealthAuditReport, HealthCategoryScore } from "../health-audit";
 import type { RecallXrayReport, IncludedMemoryXray, ExcludedMemoryXray } from "../recall-xray";
 import type { CaptureCandidate, EvidenceRecord, MemoryRecord } from "../types";
 
@@ -182,6 +183,42 @@ export function timelineBrowserOptions(report: MemoryTimelineReport): BrowserOpt
       { key: "type", label: "Type", width: 14, minWidth: 8, priority: 2, render: (e) => e.type },
       { key: "memory", label: "Memory", width: 20, minWidth: 10, priority: 3, render: (e) => e.memory_id ?? "—" },
       { key: "summary", label: "Summary", minWidth: 20, priority: 1, render: (e) => e.summary },
+    ],
+  };
+}
+
+export function healthAuditBrowserOptions(report: MemoryHealthAuditReport): BrowserOptions<HealthCategoryScore> {
+  const findingsByCategory = new Map(report.categories.map((category) => [category.id, report.findings.filter((finding) => finding.category === category.id)]));
+  const recommendationsByCategory = new Map(report.categories.map((category) => [category.id, report.recommendations.filter((rec) => rec.category === category.id)]));
+  const trendLine = report.trend ? `Trend vs ${report.trend.previous_timestamp}: overall ${report.trend.overall_delta >= 0 ? "+" : ""}${report.trend.overall_delta}; duplicates ${report.trend.duplicates_delta >= 0 ? "+" : ""}${report.trend.duplicates_delta}; inbox ${report.trend.inbox_delta >= 0 ? "+" : ""}${report.trend.inbox_delta}; runtime warnings ${report.trend.runtime_warnings_delta >= 0 ? "+" : ""}${report.trend.runtime_warnings_delta}.` : "Trend: first snapshot.";
+  return {
+    title: "Memory Health Audit",
+    subtitle: `Health ${report.health_score.overall}/100 · ${report.generated_at} · report-only`,
+    items: report.categories.map((category) => {
+      const findings = findingsByCategory.get(category.id) ?? [];
+      const recommendations = recommendationsByCategory.get(category.id) ?? [];
+      return {
+        id: category.id,
+        item: category,
+        status: category.errors > 0 ? "error" : category.warnings > 0 ? "warning" : "healthy",
+        searchText: `${category.label} ${category.score} ${findings.map((f) => `${f.code} ${f.reason}`).join(" ")} ${recommendations.map((r) => r.summary).join(" ")}`,
+        details: [
+          `Score: ${category.score}/100 (${category.errors} errors, ${category.warnings} warnings)`,
+          trendLine,
+          `Snapshot: ${report.snapshot.active_memories} active memories · ${report.snapshot.candidate_count} new candidates · ${report.snapshot.duplicates} duplicate signals · ${report.snapshot.conflicts} conflicts`,
+          ...(findings.length ? findings.map((finding) => `${finding.severity.toUpperCase()} ${finding.code}: ${finding.reason} Affected: ${finding.affected_ids.join(", ") || "none"}. No automatic mutation performed.`) : ["No findings for this category. No automatic mutation performed."]),
+          ...(recommendations.length ? recommendations.map((rec) => `Recommendation: ${rec.summary} — ${rec.reason} Review required; no automatic mutation performed.`) : ["No recommendations for this category."]),
+        ],
+      } satisfies BrowserItem<HealthCategoryScore>;
+    }),
+    pageSize: 10,
+    sortBy: "score",
+    columns: [
+      { key: "category", label: "Category", width: 18, minWidth: 10, priority: 1, render: (c) => c.label },
+      { key: "score", label: "Score", width: 7, minWidth: 5, priority: 2, render: (c) => String(c.score), sortValue: (c) => c.score },
+      { key: "errors", label: "Err", width: 5, minWidth: 4, priority: 3, render: (c) => String(c.errors), sortValue: (c) => c.errors },
+      { key: "warnings", label: "Warn", width: 6, minWidth: 4, priority: 4, render: (c) => String(c.warnings), sortValue: (c) => c.warnings },
+      { key: "findings", label: "Summary", minWidth: 20, priority: 1, render: (c) => `${c.findings} finding(s)` },
     ],
   };
 }

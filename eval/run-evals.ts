@@ -34,6 +34,7 @@ import { scoreMemoryWorth } from "../src/memory-worth";
 import { enqueueBackgroundAnalysis, listBackgroundAnalysisJobs, runBackgroundAnalysisQueue } from "../src/background-analysis";
 import { appendRuntimeEvent, readRecentRuntimeEvents } from "../src/runtime-events";
 import { runMemoryDiagnostics, renderDiagnosticsReport } from "../src/diagnostics";
+import { runMemoryHealthAudit } from "../src/health-audit";
 import { linkEvidenceToCandidate } from "../src/evidence-link";
 import { createCompactionArtifact } from "../src/compaction-artifacts";
 import { computeCandidateConfidence } from "../src/confidence";
@@ -43,7 +44,7 @@ import { draftSkillFromProcedureCandidate } from "../src/skill-draft";
 import { runFailureAnalysis } from "../src/failure-analysis";
 import { buildMemoryTimeline } from "../src/timeline";
 import { InteractiveBrowser } from "../src/tui/InteractiveBrowser";
-import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, memoryRecordBrowserOptions, recallXrayBrowserOptions, timelineBrowserOptions } from "../src/tui/browser-adapters";
+import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, healthAuditBrowserOptions, memoryRecordBrowserOptions, recallXrayBrowserOptions, timelineBrowserOptions } from "../src/tui/browser-adapters";
 import type { CaptureCandidate, MemoryRecord } from "../src/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -973,6 +974,19 @@ function evalBackgroundVaultPromotionReviewOnly(): EvalResult {
   return { category: "background_vault_promotion_review_only", description: "Background vault promotion creates review artifact only.", pass, metrics: { jobs: jobs.length }, failures: pass ? [] : ["Vault promotion boundary failed."], hard_invariant: true };
 }
 
+function evalBackgroundHealthAuditReportOnly(): EvalResult {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("m_health_a", "Always run bun test before commit.", { profile_id: "default", normalized_key: "workflow:test" }));
+  unsafeAddMemoryRecord(root, record("m_health_b", "Always run bun test before commit.", { profile_id: "default", normalized_key: "workflow:test" }));
+  appendCandidate(root, candidate("Old health candidate", { id: "cap_health_old", created_at: "2026-05-01T00:00:00Z" }));
+  enqueueBackgroundAnalysis(root, { kind: "memory_health_audit" }, "2026-07-07T00:00:00Z");
+  const before = loadAllRecords(root).length;
+  const jobs = runBackgroundAnalysisQueue(root, { now: "2026-07-07T00:01:00Z" });
+  const after = loadAllRecords(root).length;
+  const pass = jobs[0].status === "succeeded" && before === after && Boolean(jobs[0].output_artifact_path) && (jobs[0].warnings?.join(" ") ?? "").includes("Review-only");
+  return { category: "background_health_audit_report_only", description: "Background health audit writes recommendations/snapshots without durable memory mutation.", pass, metrics: { before_records: before, after_records: after, jobs: jobs.length }, failures: pass ? [] : ["Health audit mutated memory, failed, or lacked review-only warning."], hard_invariant: true };
+}
+
 function evalPostMutationIntegrityChecks(): EvalResult {
   const root = tempRoot();
   const rec = record("mem_post_eval", "Always redact sensitive replay content before committing.");
@@ -1041,10 +1055,11 @@ function evalDashboardAndDomainBrowsers(): EvalResult {
   const timeline = buildMemoryTimeline(root);
   enqueueBackgroundAnalysis(root, { kind: "diagnostics" });
   const candidates = [candidate("Candidate browser item", { id: "cap_ui" })];
-  const browsers = [diagnosticsBrowserOptions(diagnostics), recallXrayBrowserOptions(xray), timelineBrowserOptions(timeline), backgroundBrowserOptions(listBackgroundAnalysisJobs(root)), candidateBrowserOptions(candidates)];
+  const health = runMemoryHealthAudit(root, { now: "2026-07-07T00:00:00Z" });
+  const browsers = [diagnosticsBrowserOptions(diagnostics), healthAuditBrowserOptions(health), recallXrayBrowserOptions(xray), timelineBrowserOptions(timeline), backgroundBrowserOptions(listBackgroundAnalysisJobs(root)), candidateBrowserOptions(candidates)];
   const rendered = browsers.map((opts) => new InteractiveBrowser(opts as any).render(100).join("\n"));
-  const pass = rendered.every((text) => text.includes("Page 1 /")) && rendered.join("\n").includes("Memory Doctor Dashboard") && rendered.join("\n").includes("Recall X-Ray Explorer");
-  return { category: "doctor_dashboard_xray_timeline_background_browsers", description: "Doctor, X-ray, timeline, background, and inbox adapters produce pageable browsers.", pass, metrics: { browsers: browsers.length }, failures: pass ? [] : ["One or more domain browsers did not render pageable output."] };
+  const pass = rendered.every((text) => text.includes("Page 1 /")) && rendered.join("\n").includes("Memory Doctor Dashboard") && rendered.join("\n").includes("Memory Health Audit") && rendered.join("\n").includes("Recall X-Ray Explorer");
+  return { category: "doctor_dashboard_xray_timeline_background_browsers", description: "Doctor, health audit, X-ray, timeline, background, and inbox adapters produce pageable browsers.", pass, metrics: { browsers: browsers.length }, failures: pass ? [] : ["One or more domain browsers did not render pageable output."] };
 }
 
 function evalResponsiveLayout(): EvalResult {
@@ -1128,6 +1143,7 @@ async function runEvals(): Promise<void> {
     ["Failure Analysis Review Only Candidates", evalFailureAnalysisReviewOnlyCandidates],
     ["Background Meta-Consolidation Report Only", evalBackgroundMetaConsolidationReportOnly],
     ["Background Vault Promotion Review Only", evalBackgroundVaultPromotionReviewOnly],
+    ["Background Health Audit Report Only", evalBackgroundHealthAuditReportOnly],
     ["Injection Stats Accuracy", evalInjectionStatsAccuracy],
     ["qmd Unavailable Fast Fallback", evalQmdUnavailableFastFallback],
     ["Retrieval Hot Path Budget", evalRetrievalHotPathBudget],

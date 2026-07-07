@@ -51,7 +51,7 @@ import { createInboxReviewComponent, buildInboxNotification, type InboxOverlayAc
 import { maybeCorrectionSignal, extractCorrectionCandidate } from "./src/corrections";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
-import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallXrayBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
+import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallXrayBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
@@ -66,6 +66,7 @@ import { buildMemoryTimeline, renderMemoryTimeline, saveMemoryTimelineReport } f
 import { generateProcedureCandidates, renderProcedureCandidateReport, saveProcedureCandidateReport } from "./src/procedure-candidates";
 import { buildRecallXray, renderRecallXrayReport } from "./src/recall-xray";
 import { enqueueBackgroundAnalysis, listBackgroundAnalysisJobs, runBackgroundAnalysisQueue, type BackgroundAnalysisKind } from "./src/background-analysis";
+import { renderHealthAuditReport, runMemoryHealthAudit, saveHealthAuditReport } from "./src/health-audit";
 import { scoreMemoryWorth } from "./src/memory-worth";
 import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
 import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-analysis";
@@ -719,6 +720,26 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
+
+  pi.registerCommand("memory-health-audit", {
+    description: "Run a report-only autonomous memory health audit dashboard (use --plain, --json, or --save)",
+    handler: async (args, ctx) => {
+      try {
+        const parsed = parseCommandArgs(args);
+        const report = runMemoryHealthAudit(root, { now: nowIso() });
+        const text = renderHealthAuditReport(report);
+        rememberCommand("memory-health-audit", text, `health audit: ${report.health_score.overall}/100, ${report.recommendations.length} recommendations`);
+        if (parsed.flags.save === true) {
+          const paths = saveHealthAuditReport(root, report);
+          ctx.ui.notify(`Health audit saved: ${paths.markdownPath}`, "success");
+        }
+        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.health_score.overall < 80 ? "warning" : "success");
+        else await openBrowser(ctx, healthAuditBrowserOptions(report), text);
+      } catch (err) {
+        ctx.ui.notify(`Health audit failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
 
   pi.registerCommand("memory-diagnostics", {
     description: "Run memory integrity diagnostics and open an interactive dashboard (use --plain or --json for scripted output)",
