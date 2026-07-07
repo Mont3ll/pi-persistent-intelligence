@@ -30,6 +30,7 @@ PI stores data locally under `~/.pi/agent/pi-memory/` by default. Project-local 
 /memory-inbox
 /curate-memory
 /memory-doctor
+/memory-health-audit
 /memory-diagnostics
 ```
 
@@ -54,6 +55,8 @@ Search memory and prior sessions:
 memory_search "bun test"
 session_search "Lambda timeout debug"
 ```
+
+PI inspection commands are interactive by default when the terminal TUI is available: inbox, memory browsing, evidence, diagnostics, doctor, Recall X-ray, timeline, background activity, and command history open pageable/searchable browsers with expandable details. Use `--plain` or `--json` when scripting.
 
 See [Command reference](docs/commands.md) for the full command and tool list.
 

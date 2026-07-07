@@ -4,15 +4,33 @@ This page lists the public commands and tools provided by `pi-persistent-intelli
 
 For first-time setup and the short workflow, start with the [README](../README.md).
 
+## Interactive output
+
+Inspection commands open an interactive terminal browser by default when pi's TUI is available. Standard keys are:
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | Move selection |
+| `PgUp` / `PgDn` or `p` / `n` | Previous / next page |
+| `Home` / `End` | Jump to first / last result |
+| `/` | Start live filtering within current results |
+| `Enter` / `Space` | Expand or collapse details |
+| `Tab` | Cycle sortable columns where available |
+| `S` | Reverse sort direction |
+| `q` / `Esc` | Close browser |
+
+Use `--plain` for text output or `--json` for machine-readable output on commands that support interactive browsing.
+
 ## Core commands
 
 | Command | Description |
 |---|---|
-| `/memory-inbox` | List pending inbox candidates awaiting curation. |
+| `/memory-inbox [--plain\|--json]` | Browse pending inbox candidates with pagination, search, expandable provenance, and governed approve/review actions. |
 | `/curate-memory [--mode=propose\|auto]` | Review pending candidates and apply selected patch operations. |
-| `/memory-doctor` | Show memory root, session count, FTS status, governance mode, vault path, and inbox count. |
-| `/memory-diagnostics [--save]` | Run integrity, secret, provenance, and re-verification checks; `--save` writes a diagnostics report. |
-| `/memory-recall-xray <query>` | Explain why memories are included or excluded for a query; read-only and redacted. |
+| `/memory-doctor [--plain\|--json]` | Open a collapsible dashboard for runtime, memory, governance, privacy, and diagnostics health. |
+| `/memory-health-audit [--save] [--plain\|--json]` | Run a report-only health audit with category scores, trends, and review recommendations; never mutates memory. |
+| `/memory-diagnostics [--save] [--plain\|--json]` | Run integrity, secret, provenance, and re-verification checks in a dashboard; `--save` writes a diagnostics report. |
+| `/memory-recall-xray <query> [--plain\|--json]` | Browse included/excluded memories, scores, evidence, and selection reasons; read-only and redacted. |
 | `/memory-export --format pi-governance [--redacted] [--output bundle.json]` | Export a pi-governance-compatible PI memory contract bundle. |
 | `/memory-import --format pi-governance <bundle.json> [--apply] [--backup] [--redacted-aware]` | Preview or apply a pi-governance-compatible bundle import. By default this is a dry-run import. |
 | `/memory-governance doctor` | Check optional pi-governance-rs bridge configuration; disabled standalone mode is valid. |
@@ -34,17 +52,19 @@ For first-time setup and the short workflow, start with the [README](../README.m
 
 | Command | Description |
 |---|---|
-| `/memory-background enqueue <kind>` | Queue an inspectable local background analysis job. Supported kinds include `diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`, `meta_consolidation`, and `vault_promotion_candidates`. |
+| `/memory-background enqueue <kind>` | Queue an inspectable local background analysis job. Supported kinds include `diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`, `memory_health_audit`, `meta_consolidation`, and `vault_promotion_candidates`. |
 | `/memory-background run` | Run queued background jobs and write report artifacts. |
-| `/memory-background list` | List queued, running, succeeded, and failed background analysis jobs. |
+| `/memory-background list [--plain\|--json]` | Browse queued, running, succeeded, and failed background analysis jobs. |
+| `/memory-evidence [list] [--plain\|--json]` | Browse evidence and provenance records. |
 | `/memory-evidence add-codebase-analysis ...` | Add deterministic codebase-analysis evidence from tools such as `tsc`, ESLint, Playwright, Vitest, Fallow-like analysis, or custom scripts. |
 | `/memory-evidence link <evidence-id> --statement "..."` | Turn existing evidence into a reviewable inbox candidate without bypassing governance. |
 | `/memory-skill draft <procedure-candidate-id>` | Generate a review-only skill draft artifact from a procedure candidate; never writes `SKILL.md` automatically. |
 | `/memory-failures analyze [--save]` | Mine failed jobs or rejected candidates into review-only learning artifacts. |
 | `/memory-graph [--save]` | Export a read-only dependency graph of memory, evidence, inquiries, tombstones, candidates, and reinforcement. |
-| `/memory-timeline [--memory <id>] [--save]` | Show timeline events and effective validity for one memory or the whole store. |
+| `/memory-timeline [--memory <id>] [--save] [--plain\|--json]` | Browse timeline events and effective validity for one memory or the whole store. |
 | `/procedure-candidates [--save]` | Generate review-only procedure candidates from repeated workflow memory. |
-| `/memory-learnings` | Interactive TUI for browsing, expanding, or deprecating L2 memory records. |
+| `/memory-learnings [--plain\|--json]` | Interactive pageable/searchable browser for long-term memory records. |
+| `/memory-history [--plain\|--json]` | Browse session-local PI command outputs without rerunning commands. |
 
 ## Session search commands
 
@@ -73,6 +93,7 @@ For first-time setup and the short workflow, start with the [README](../README.m
 /memory-inbox
 /curate-memory
 /memory-diagnostics --save
+/memory-health-audit --save
 /memory-recall-xray "release workflow"
 /memory-export --format pi-governance --redacted --output bundle.json
 /memory-import --format pi-governance bundle.json

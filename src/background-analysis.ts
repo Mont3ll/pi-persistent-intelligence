@@ -12,6 +12,7 @@ import { listCandidates } from "./inbox";
 import { scoreMemoryWorth } from "./memory-worth";
 import { runMetaConsolidation, DEFAULT_META_CONSOLIDATION_CONFIG } from "./meta-consolidation";
 import { appendRuntimeEvent } from "./runtime-events";
+import { runMemoryHealthAudit, saveHealthAuditReport } from "./health-audit";
 
 export type BackgroundAnalysisKind =
   | "diagnostics"
@@ -22,7 +23,8 @@ export type BackgroundAnalysisKind =
   | "procedure_candidates"
   | "meta_consolidation"
   | "vault_promotion_candidates"
-  | "memory_worth_review";
+  | "memory_worth_review"
+  | "memory_health_audit";
 
 export interface BackgroundAnalysisJob {
   id: string;
@@ -187,6 +189,13 @@ function runOne(root: string, job: BackgroundAnalysisJob, supportedKinds?: Backg
     const scored = candidates.map((candidate) => ({ candidate_id: candidate.id, text: candidate.text, ...scoreMemoryWorth({ observation: candidate.text, existingStatements: candidates.filter((c) => c.id !== candidate.id).map((c) => c.text) }) }));
     const path = writeMarkdownReport(root, job, [`# Memory-worth Review`, ``, `Generated: ${job.created_at}`, ``, ...scored.map((item) => `- ${item.candidate_id}: ${item.decision} (${item.worth_score}) ${item.reasons.join(", ")}`)].join("\n"));
     return { ...job, status: "succeeded", output_artifact_path: path, warnings: scored.some((item) => item.decision === "reject") ? ["One or more candidates scored as reject"] : [] };
+  }
+  if (job.kind === "memory_health_audit") {
+    const report = runMemoryHealthAudit(root, { now: job.created_at });
+    const paths = saveHealthAuditReport(root, report);
+    const warnings = ["Review-only: no durable memory was mutated."];
+    if (report.recommendations.length) warnings.push(`${report.recommendations.length} health recommendation(s)`);
+    return { ...job, status: "succeeded", output_artifact_path: paths.markdownPath, warnings };
   }
   throw new Error(`Unsupported background analysis kind: ${job.kind}`);
 }
