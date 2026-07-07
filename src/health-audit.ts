@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } fr
 import { join } from "node:path";
 import { readEvidenceRecords } from "./evidence";
 import { listCandidates } from "./inbox";
+import { analyzeMemoryQuality } from "./memory-quality";
 import { ensureMemoryDirs } from "./paths";
 import { readRecentRuntimeEvents } from "./runtime-events";
 import { redactSecrets, redactSecretsInObject } from "./secret-scanner";
@@ -153,6 +154,9 @@ const qualityModule: MemoryHealthAuditModule = {
     if (lowConfidence.length) findings.push(finding({ code: "low_confidence_active_memory", category: "memory_quality", severity: "warning", reason: `${lowConfidence.length} active memory record(s) have confidence below 0.65.`, affected_ids: lowConfidence.map((r) => r.id), evidence_ids: lowConfidence.flatMap((r) => r.evidence.map((ev) => ev.ref)) }));
     const conflicts = ctx.records.filter((record) => record.status === "contested");
     if (conflicts.length) findings.push(finding({ code: "contested_memory_active_review", category: "memory_quality", severity: "warning", reason: `${conflicts.length} contested memory record(s) remain unresolved.`, affected_ids: conflicts.map((r) => r.id), evidence_ids: [] }));
+    const quality = analyzeMemoryQuality(ctx.root, { now: ctx.now });
+    const lowQuality = quality.items.filter((item) => item.quality_score < 70);
+    if (lowQuality.length) findings.push(finding({ code: "low_quality_memory", category: "memory_quality", severity: "warning", reason: `${lowQuality.length} memory record(s) have quality score below 70 and should be reviewed.`, affected_ids: lowQuality.map((item) => item.memory_id), evidence_ids: [] }));
     return findings;
   },
 };
