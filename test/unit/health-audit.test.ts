@@ -70,7 +70,8 @@ describe("memory health audit", () => {
     expect(codes).toContain("low_confidence_active_memory");
     expect(codes).toContain("stale_inbox_candidate");
     expect(codes).toContain("recent_runtime_warnings");
-    expect(report.recommendations.length).toBeGreaterThanOrEqual(4);
+    expect(codes).toContain("low_quality_memory");
+    expect(report.recommendations.length).toBeGreaterThanOrEqual(5);
     expect(report.recommendations.every((rec) => rec.review_required && rec.mutation_performed === false)).toBe(true);
     rmSync(r, { recursive: true, force: true });
   });
