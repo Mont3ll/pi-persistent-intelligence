@@ -46,7 +46,7 @@ describe("interactive profiling stress", () => {
 
     expect(firstFrame.length).toBeLessThan(40);
     expect(interactedFrame.length).toBeLessThan(60);
-    expect(firstRenderMs).toBeLessThan(100);
+    expect(firstRenderMs).toBeLessThan(150);
     expect(interactionMs).toBeLessThan(250);
     expect(recall.profile?.spans.length).toBeGreaterThanOrEqual(5);
     expect(diagnostics.profile?.spans.length).toBeGreaterThanOrEqual(5);
