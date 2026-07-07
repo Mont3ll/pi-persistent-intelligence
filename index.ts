@@ -51,7 +51,7 @@ import { createInboxReviewComponent, buildInboxNotification, type InboxOverlayAc
 import { maybeCorrectionSignal, extractCorrectionCandidate } from "./src/corrections";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
-import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallXrayBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
+import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, memoryQualityBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallXrayBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
@@ -67,6 +67,7 @@ import { generateProcedureCandidates, renderProcedureCandidateReport, saveProced
 import { buildRecallXray, renderRecallXrayReport } from "./src/recall-xray";
 import { enqueueBackgroundAnalysis, listBackgroundAnalysisJobs, runBackgroundAnalysisQueue, type BackgroundAnalysisKind } from "./src/background-analysis";
 import { renderHealthAuditReport, runMemoryHealthAudit, saveHealthAuditReport } from "./src/health-audit";
+import { analyzeMemoryQuality, renderMemoryQualityReport } from "./src/memory-quality";
 import { InvocationProfiler, renderInvocationProfileReport } from "./src/profiling";
 import { scoreMemoryWorth } from "./src/memory-worth";
 import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
@@ -936,6 +937,21 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         else await openBrowser(ctx, backgroundBrowserOptions(jobs), plain);
       } catch (err) {
         ctx.ui.notify(`Background analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-quality", {
+    description: "Browse report-only per-memory quality and lifecycle analysis. Usage: /memory-quality [--plain|--json]",
+    handler: async (args, ctx) => {
+      try {
+        const report = analyzeMemoryQuality(root, { now: nowIso() });
+        const text = renderMemoryQualityReport(report);
+        rememberCommand("memory-quality", text, `memory quality: avg ${report.summary.average_quality}/100, ${report.recommendations.length} recommendations`);
+        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.summary.low_quality_count ? "warning" : "success");
+        else await openBrowser(ctx, memoryQualityBrowserOptions(report), text);
+      } catch (err) {
+        ctx.ui.notify(`Memory quality analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
       }
     },
   });
