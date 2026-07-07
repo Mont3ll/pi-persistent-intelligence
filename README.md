@@ -31,6 +31,7 @@ PI stores data locally under `~/.pi/agent/pi-memory/` by default. Project-local 
 /curate-memory
 /memory-doctor
 /memory-health-audit
+/memory-quality
 /memory-diagnostics
 ```
 
