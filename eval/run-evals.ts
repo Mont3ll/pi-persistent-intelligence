@@ -31,7 +31,7 @@ import { createInquiryRecord, appendInquiryRecord, readOpenInquiries, selectRele
 import { isTombstonedRecord } from "../src/tombstones";
 import { buildRecallXray } from "../src/recall-xray";
 import { scoreMemoryWorth } from "../src/memory-worth";
-import { enqueueBackgroundAnalysis, runBackgroundAnalysisQueue } from "../src/background-analysis";
+import { enqueueBackgroundAnalysis, listBackgroundAnalysisJobs, runBackgroundAnalysisQueue } from "../src/background-analysis";
 import { appendRuntimeEvent, readRecentRuntimeEvents } from "../src/runtime-events";
 import { runMemoryDiagnostics, renderDiagnosticsReport } from "../src/diagnostics";
 import { linkEvidenceToCandidate } from "../src/evidence-link";
@@ -41,6 +41,9 @@ import { runReplayFixture, redactReplayContent, validateReplayFixturePrivacy } f
 import { runPostMutationChecks } from "../src/post-mutation-checks";
 import { draftSkillFromProcedureCandidate } from "../src/skill-draft";
 import { runFailureAnalysis } from "../src/failure-analysis";
+import { buildMemoryTimeline } from "../src/timeline";
+import { InteractiveBrowser } from "../src/tui/InteractiveBrowser";
+import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, memoryRecordBrowserOptions, recallXrayBrowserOptions, timelineBrowserOptions } from "../src/tui/browser-adapters";
 import type { CaptureCandidate, MemoryRecord } from "../src/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -997,6 +1000,75 @@ function evalRedactedReplayFixturePrivacyValidation(): EvalResult {
   return { category: "redacted_replay_fixture_privacy_validation", description: "Committed replay fixtures pass local privacy validation.", pass: failures.length === 0, metrics: { fixtures: names.length, privacy_findings: failures.length }, failures, hard_invariant: true };
 }
 
+function evalInteractiveNavigation(): EvalResult {
+  const panel = new InteractiveBrowser(memoryRecordBrowserOptions(Array.from({ length: 45 }, (_, i) => record(`mem_ui_${i}`, `UI pagination memory ${i}`))), undefined as any);
+  panel.handleInput("n");
+  panel.handleInput("down");
+  const state = panel.getState();
+  const pass = state.page === 1 && state.cursor === 21;
+  return { category: "interactive_navigation", description: "Interactive browser supports keyboard page and row navigation.", pass, metrics: { page: state.page, cursor: state.cursor }, failures: pass ? [] : ["Navigation state did not update as expected."] };
+}
+
+function evalPaginationCorrectness(): EvalResult {
+  const panel = new InteractiveBrowser(memoryRecordBrowserOptions(Array.from({ length: 100 }, (_, i) => record(`mem_page_${i}`, `Paged memory ${i}`))));
+  const text = panel.render(120).join("\n");
+  const pass = text.includes("Page 1 / 5") && text.includes("Showing 1–20 of 100") && panel.render(120).length < 40;
+  return { category: "pagination_correctness", description: "Large UI collections render a page summary instead of dumping all rows.", pass, metrics: { rendered_lines: panel.render(120).length }, failures: pass ? [] : ["Pagination header or bounded render was missing."] };
+}
+
+function evalLiveSearch(): EvalResult {
+  const panel = new InteractiveBrowser(memoryRecordBrowserOptions(Array.from({ length: 50 }, (_, i) => record(`mem_search_${i}`, i % 5 === 0 ? `Privacy memory ${i}` : `Testing memory ${i}`))));
+  panel.handleInput("/");
+  for (const ch of "privacy") panel.handleInput(ch);
+  const state = panel.getState();
+  const pass = state.filtered === 10 && state.total === 50;
+  return { category: "live_search", description: "Slash search filters current results without rerunning retrieval.", pass, metrics: { filtered: state.filtered, total: state.total }, failures: pass ? [] : ["Live search did not narrow results correctly."] };
+}
+
+function evalExpandableViews(): EvalResult {
+  const panel = new InteractiveBrowser(memoryRecordBrowserOptions([record("mem_expand", "Expandable detail memory.")]));
+  panel.handleInput("enter");
+  const text = panel.render(100).join("\n");
+  const pass = text.includes("Evidence:") && text.includes("Review:");
+  return { category: "expandable_views", description: "Rows can expand to inspect provenance/detail without leaving the browser.", pass, metrics: {}, failures: pass ? [] : ["Expanded details missing."] };
+}
+
+function evalDashboardAndDomainBrowsers(): EvalResult {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("mem_dash", "Dashboard memory."));
+  const diagnostics = runMemoryDiagnostics(root);
+  const xray = buildRecallXray(root, { query: "dashboard memory" });
+  const timeline = buildMemoryTimeline(root);
+  enqueueBackgroundAnalysis(root, { kind: "diagnostics" });
+  const candidates = [candidate("Candidate browser item", { id: "cap_ui" })];
+  const browsers = [diagnosticsBrowserOptions(diagnostics), recallXrayBrowserOptions(xray), timelineBrowserOptions(timeline), backgroundBrowserOptions(listBackgroundAnalysisJobs(root)), candidateBrowserOptions(candidates)];
+  const rendered = browsers.map((opts) => new InteractiveBrowser(opts as any).render(100).join("\n"));
+  const pass = rendered.every((text) => text.includes("Page 1 /")) && rendered.join("\n").includes("Memory Doctor Dashboard") && rendered.join("\n").includes("Recall X-Ray Explorer");
+  return { category: "doctor_dashboard_xray_timeline_background_browsers", description: "Doctor, X-ray, timeline, background, and inbox adapters produce pageable browsers.", pass, metrics: { browsers: browsers.length }, failures: pass ? [] : ["One or more domain browsers did not render pageable output."] };
+}
+
+function evalResponsiveLayout(): EvalResult {
+  const panel = new InteractiveBrowser(memoryRecordBrowserOptions(Array.from({ length: 10 }, (_, i) => record(`mem_resp_${i}`, `Responsive layout memory with a long statement ${i}`))));
+  const widths = [60, 80, 120, 200];
+  const pass = widths.every((width) => panel.render(width).every((line) => line.replace(/\x1b\[[0-9;]*m/g, "").length <= width));
+  return { category: "responsive_layout", description: "Browser output respects narrow and wide terminal widths.", pass, metrics: { widths: widths.join(",") }, failures: pass ? [] : ["A rendered line exceeded terminal width."] };
+}
+
+function evalLargeStoreUi(): EvalResult {
+  const panel = new InteractiveBrowser(memoryRecordBrowserOptions(Array.from({ length: 10000 }, (_, i) => record(`mem_large_${i}`, `Large store memory ${i}`))));
+  const start = performance.now();
+  const lines = panel.render(120);
+  const renderMs = performance.now() - start;
+  const pass = lines.length < 40 && renderMs < 100;
+  return { category: "large_store_ui", description: "Large UI stores render only the current page quickly.", pass, metrics: { render_ms: Number(renderMs.toFixed(2)), lines: lines.length }, failures: pass ? [] : ["Large store browser rendered too much or too slowly."] };
+}
+
+function evalOutputModeCompatibility(): EvalResult {
+  const json = JSON.stringify(memoryRecordBrowserOptions([record("mem_json", "JSON compatible memory.")]).items.map((item) => item.item));
+  const pass = json.includes("mem_json") && !json.includes("\u001b[");
+  return { category: "output_mode_compatibility", description: "Browser adapters keep raw data serializable for --json/--plain bypass paths.", pass, metrics: { json_chars: json.length }, failures: pass ? [] : ["Adapter data was not machine-readable."] };
+}
+
 function evalRedactedReplayFixture(name: string, category: string, description: string): EvalResult {
   const root = tempRoot();
   const result = runReplayFixture(root, replayFixture(name));
@@ -1063,6 +1135,14 @@ async function runEvals(): Promise<void> {
     ["Silent Failure Runtime Event Visibility", evalSilentFailureRuntimeEventVisibility],
     ["Post Mutation Integrity Checks", evalPostMutationIntegrityChecks],
     ["Privacy Purge Post Mutation Boundary", evalPrivacyPurgePostMutationBoundary],
+    ["Interactive Navigation", evalInteractiveNavigation],
+    ["Pagination Correctness", evalPaginationCorrectness],
+    ["Live Search", evalLiveSearch],
+    ["Expandable Views", evalExpandableViews],
+    ["Doctor Dashboard Xray Timeline Background Browsers", evalDashboardAndDomainBrowsers],
+    ["Responsive Layout", evalResponsiveLayout],
+    ["Large Store UI", evalLargeStoreUi],
+    ["Output Mode Compatibility", evalOutputModeCompatibility],
     ["Redacted Replay Fixture Privacy Validation", evalRedactedReplayFixturePrivacyValidation],
     ["Redacted Replay Durable Correction", () => evalRedactedReplayFixture("durable-correction-survives.json", "redacted_replay_durable_correction", "Durable correction fixture recalls expected convention without unexpected recall.")],
     ["Redacted Replay Temporary Instruction Rejection", () => evalRedactedReplayFixture("temporary-instruction-not-durable.json", "redacted_replay_temporary_instruction_rejection", "Temporary instruction fixture rejects one-off instruction as durable memory.")],
