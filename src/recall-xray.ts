@@ -4,6 +4,7 @@ import { runMemoryProcessorPipeline } from "./processors";
 import { extractHardRules } from "./rules";
 import { redactSecrets } from "./secret-scanner";
 import { loadAllRecords } from "./store";
+import type { InvocationProfiler, InvocationProfileReport } from "./profiling";
 import { isTombstonedRecord } from "./tombstones";
 import type { EvidenceRecord, EvidenceSourceKind, MemoryKind, MemoryRecord, SessionContext } from "./types";
 
@@ -19,6 +20,7 @@ export interface RecallXrayOptions {
   maxRecords?: number;
   governance_mode?: "compatibility" | "strict";
   injection_mode?: "scoped" | "policy_only" | "wakeup";
+  profiler?: InvocationProfiler;
 }
 
 export interface IncludedMemoryXray {
@@ -105,6 +107,7 @@ export interface RecallXrayReport {
   summary: RecallXraySummary;
   included: IncludedMemoryXray[];
   excluded: ExcludedMemoryXray[];
+  profile?: InvocationProfileReport;
 }
 
 function terms(query: string): Set<string> {
@@ -152,10 +155,11 @@ function contextFrom(options: RecallXrayOptions): SessionContext {
 }
 
 export function buildRecallXray(root: string, options: RecallXrayOptions): RecallXrayReport {
-  const all = loadAllRecords(root);
-  const evidence = readEvidenceRecords(root);
+  const profiler = options.profiler;
+  const all = profiler?.measure("candidate_retrieval", () => loadAllRecords(root)) ?? loadAllRecords(root);
+  const evidence = profiler?.measure("evidence_lookup", () => readEvidenceRecords(root)) ?? readEvidenceRecords(root);
   const q = terms(options.query);
-  const pipeline = runMemoryProcessorPipeline(all, contextFrom(options));
+  const pipeline = profiler?.measure("policy_pipeline", () => runMemoryProcessorPipeline(all, contextFrom(options))) ?? runMemoryProcessorPipeline(all, contextFrom(options));
   const hardRuleIds = new Set(extractHardRules(pipeline.records).map((record) => record.id));
   const surviving = new Set(pipeline.records.map((r) => r.id));
   const exclusionById = new Map<string, { reasons: string[]; processors: string[] }>();
@@ -170,6 +174,7 @@ export function buildRecallXray(root: string, options: RecallXrayOptions): Recal
   const included: IncludedMemoryXray[] = [];
   const excluded: ExcludedMemoryXray[] = [];
   const omissionReasons: Record<string, number> = {};
+  const endExplanation = profiler?.startSpan("explanation_generation");
   for (const record of all) {
     const evs = evidenceFor(record, evidence);
     const invalidated = dependencyInvalidated(evs);
@@ -241,10 +246,14 @@ export function buildRecallXray(root: string, options: RecallXrayOptions): Recal
     }
   }
 
+  endExplanation?.({ included: included.length, excluded: excluded.length });
+
+  const endBudget = profiler?.startSpan("budget_summary");
   const rawCandidateChars = all.reduce((sum, record) => sum + record.statement.length, 0);
   const selectedChars = included.reduce((sum, item) => sum + (item.statement_excerpt?.length ?? 0), 0);
   const hardRuleCount = included.filter((m) => m.retrieval_tier === "hard_rule").length;
-  return {
+  endBudget?.({ raw_candidate_chars: rawCandidateChars, selected_chars: selectedChars });
+  const report: RecallXrayReport = {
     summary: {
       query: options.query,
       included_count: included.length,
@@ -271,6 +280,8 @@ export function buildRecallXray(root: string, options: RecallXrayOptions): Recal
     included,
     excluded,
   };
+  if (profiler) report.profile = profiler.toReport();
+  return report;
 }
 
 export function renderRecallXrayReport(report: RecallXrayReport): string {
