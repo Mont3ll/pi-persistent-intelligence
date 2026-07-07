@@ -28,6 +28,7 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 | `/memory-inbox [--plain\|--json]` | Browse pending inbox candidates with pagination, search, expandable provenance, and governed approve/review actions. |
 | `/curate-memory [--mode=propose\|auto]` | Review pending candidates and apply selected patch operations. |
 | `/memory-doctor [--plain\|--json]` | Open a collapsible dashboard for runtime, memory, governance, privacy, and diagnostics health. |
+| `/memory-health-audit [--save] [--plain\|--json]` | Run a report-only health audit with category scores, trends, and review recommendations; never mutates memory. |
 | `/memory-diagnostics [--save] [--plain\|--json]` | Run integrity, secret, provenance, and re-verification checks in a dashboard; `--save` writes a diagnostics report. |
 | `/memory-recall-xray <query> [--plain\|--json]` | Browse included/excluded memories, scores, evidence, and selection reasons; read-only and redacted. |
 | `/memory-export --format pi-governance [--redacted] [--output bundle.json]` | Export a pi-governance-compatible PI memory contract bundle. |
@@ -51,7 +52,7 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 
 | Command | Description |
 |---|---|
-| `/memory-background enqueue <kind>` | Queue an inspectable local background analysis job. Supported kinds include `diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`, `meta_consolidation`, and `vault_promotion_candidates`. |
+| `/memory-background enqueue <kind>` | Queue an inspectable local background analysis job. Supported kinds include `diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`, `memory_health_audit`, `meta_consolidation`, and `vault_promotion_candidates`. |
 | `/memory-background run` | Run queued background jobs and write report artifacts. |
 | `/memory-background list [--plain\|--json]` | Browse queued, running, succeeded, and failed background analysis jobs. |
 | `/memory-evidence [list] [--plain\|--json]` | Browse evidence and provenance records. |
@@ -92,6 +93,7 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 /memory-inbox
 /curate-memory
 /memory-diagnostics --save
+/memory-health-audit --save
 /memory-recall-xray "release workflow"
 /memory-export --format pi-governance --redacted --output bundle.json
 /memory-import --format pi-governance bundle.json

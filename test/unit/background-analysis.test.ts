@@ -31,7 +31,7 @@ describe("background analysis queue", () => {
     rmSync(r, { recursive: true, force: true });
   });
 
-  test("runs provenance liveness, reverification, graph, timeline, procedure, and worth review report jobs", () => {
+  test("runs provenance liveness, reverification, graph, timeline, procedure, worth review, and health audit report jobs", () => {
     const r = mkdtempSync(join(tmpdir(), "pi-bg-")); ensureMemoryDirs(r);
     const missing = join(r, "missing-source.md");
     unsafeAddMemoryRecord(r, rec("mem_bg", "ev_redacted"));
@@ -40,15 +40,18 @@ describe("background analysis queue", () => {
     appendEvidenceRecord(r, { id: "ev_redacted", resource_id: "r", profile_id: "p", created_at: "2026-06-01", source_kind: "file", source_file: missing, source_summary: "gone", trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: ["mem_bg"], redaction_status: "redacted" });
     appendEvidenceRecord(r, { id: "ev_ok", resource_id: "r", profile_id: "p", created_at: "2026-06-01", source_kind: "conversation", source_summary: "ok", trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: ["mem_proc_a", "mem_proc_b"], redaction_status: "none" });
     writeFileSync(join(r, "inbox", "captured.jsonl"), JSON.stringify({ id: "cap_worth", created_at: "2026-06-01", source: { type: "manual", ref: "daily" }, text: "ok thanks", tags: [], evidence_refs: ["daily"], status: "new" }) + "\n");
-    for (const kind of ["provenance_liveness", "reverification", "memory_graph", "memory_timeline", "procedure_candidates", "memory_worth_review"] as const) enqueueBackgroundAnalysis(r, { kind }, `2026-06-01T00:00:0${kind.length % 10}Z`);
+    for (const kind of ["provenance_liveness", "reverification", "memory_graph", "memory_timeline", "procedure_candidates", "memory_worth_review", "memory_health_audit"] as const) enqueueBackgroundAnalysis(r, { kind }, `2026-06-01T00:00:0${kind.length % 10}Z`);
     const before = loadAllRecords(r).length;
     const result = runBackgroundAnalysisQueue(r, { now: "2026-06-01T00:01:00Z" });
     const completed = result.filter((job) => job.status === "succeeded");
-    expect(completed).toHaveLength(6);
+    expect(completed).toHaveLength(7);
     for (const job of completed) {
       expect(job.output_artifact_path).toBeTruthy();
       expect(existsSync(job.output_artifact_path!)).toBe(true);
     }
+    const auditJob = completed.find((job) => job.kind === "memory_health_audit")!;
+    expect(readFileSync(auditJob.output_artifact_path!, "utf-8")).toContain("PI Memory Health Audit");
+    expect(auditJob.warnings?.join(" ") ?? "").toContain("Review-only");
     expect(loadAllRecords(r)).toHaveLength(before);
     rmSync(r, { recursive: true, force: true });
   });
