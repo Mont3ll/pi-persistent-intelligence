@@ -3,6 +3,7 @@ import type { BackgroundAnalysisJob } from "../background-analysis";
 import type { DiagnosticsReport } from "../diagnostics";
 import type { TimelineEvent, MemoryTimelineReport } from "../timeline";
 import type { MemoryHealthAuditReport, HealthCategoryScore } from "../health-audit";
+import type { MemoryQualityItem, MemoryQualityReport } from "../memory-quality";
 import type { RecallXrayReport, IncludedMemoryXray, ExcludedMemoryXray } from "../recall-xray";
 import type { CaptureCandidate, EvidenceRecord, MemoryRecord } from "../types";
 
@@ -183,6 +184,42 @@ export function timelineBrowserOptions(report: MemoryTimelineReport): BrowserOpt
       { key: "type", label: "Type", width: 14, minWidth: 8, priority: 2, render: (e) => e.type },
       { key: "memory", label: "Memory", width: 20, minWidth: 10, priority: 3, render: (e) => e.memory_id ?? "—" },
       { key: "summary", label: "Summary", minWidth: 20, priority: 1, render: (e) => e.summary },
+    ],
+  };
+}
+
+export function memoryQualityBrowserOptions(report: MemoryQualityReport): BrowserOptions<MemoryQualityItem> {
+  const recommendationsByMemory = new Map(report.items.map((item) => [item.memory_id, report.recommendations.filter((rec) => rec.memory_id === item.memory_id)]));
+  return {
+    title: "Memory Quality Browser",
+    subtitle: `Average ${report.summary.average_quality}/100 · ${report.summary.low_quality_count} low-quality · ${report.summary.stale_count} stale · report-only`,
+    items: report.items.map((item) => {
+      const recommendations = recommendationsByMemory.get(item.memory_id) ?? [];
+      return {
+        id: item.memory_id,
+        item,
+        status: item.quality_score < 50 ? "error" : item.quality_score < 70 ? "warning" : "healthy",
+        searchText: `${item.memory_id} ${item.lifecycle_state} ${item.status} ${item.signals.join(" ")} ${item.reasons.join(" ")} ${item.statement_excerpt}`,
+        details: [
+          `Score: ${item.quality_score}/100 · lifecycle ${item.lifecycle_state} · status ${item.status}`,
+          `Evidence: ${item.live_evidence_count}/${item.evidence_count} live · confidence ${item.confidence.toFixed(2)}`,
+          `Age: ${item.age_days} days · updated ${item.days_since_update} days ago`,
+          `Signals: ${item.signals.join(", ") || "healthy"}`,
+          ...item.reasons.map((reason) => `Reason: ${reason}`),
+          ...(recommendations.length ? recommendations.map((rec) => `Recommendation: ${rec.summary} — ${rec.reason}. Review required; No automatic mutation performed.`) : ["No recommendations for this memory. No automatic mutation performed."]),
+          `Excerpt: ${item.statement_excerpt}`,
+        ],
+      } satisfies BrowserItem<MemoryQualityItem>;
+    }),
+    pageSize: 20,
+    sortBy: "score",
+    columns: [
+      { key: "id", label: "Memory", width: 20, minWidth: 10, priority: 1, render: (item) => item.memory_id },
+      { key: "score", label: "Score", width: 7, minWidth: 5, priority: 2, render: (item) => String(item.quality_score), sortValue: (item) => item.quality_score },
+      { key: "lifecycle", label: "Lifecycle", width: 12, minWidth: 8, priority: 3, render: (item) => item.lifecycle_state },
+      { key: "confidence", label: "Conf", width: 6, minWidth: 5, priority: 4, render: (item) => item.confidence.toFixed(2), sortValue: (item) => item.confidence },
+      { key: "signals", label: "Signals", width: 24, minWidth: 10, priority: 5, render: (item) => item.signals.join(",") || "healthy" },
+      { key: "statement", label: "Statement", minWidth: 20, priority: 1, render: (item) => item.statement_excerpt },
     ],
   };
 }

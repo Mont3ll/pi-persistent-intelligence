@@ -39,6 +39,7 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 
 | Command | Description |
 |---|---|
+| `/memory-quality [--plain\|--json]` | Browse report-only per-memory quality and lifecycle analysis with review recommendations; never mutates memory. |
 | `/memory-worth <observation>` | Score whether an observation should be rejected, kept daily-only, captured as a candidate, or turned into an inquiry. |
 | `/memory-patches` | List pending patch files. |
 | `/apply-memory-patch <id>` | Apply default-selected operations from a patch file. |
@@ -94,6 +95,7 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 /curate-memory
 /memory-diagnostics --save
 /memory-health-audit --save
+/memory-quality
 /memory-recall-xray "release workflow" --profile
 /memory-export --format pi-governance --redacted --output bundle.json
 /memory-import --format pi-governance bundle.json
