@@ -130,12 +130,16 @@ export class InteractiveBrowser<T> {
   private cachedWidth?: number;
   private cachedState?: string;
   private cachedLines?: string[];
+  private filteredCacheKey?: string;
+  private filteredCache?: BrowserItem<T>[];
 
   constructor(private opts: BrowserOptions<T>, private theme: BrowserTheme = defaultBrowserTheme()) {
     this.sortKey = opts.sortBy;
   }
 
   getFilteredItems(): BrowserItem<T>[] {
+    const cacheKey = JSON.stringify({ q: this.query, sortKey: this.sortKey, sortAsc: this.sortAsc, total: this.opts.items.length });
+    if (this.filteredCache && this.filteredCacheKey === cacheKey) return this.filteredCache;
     const q = normalize(this.query);
     let items = q ? this.opts.items.filter((entry) => normalize(`${entry.id} ${entry.searchText}`).includes(q)) : [...this.opts.items];
     if (this.sortKey) {
@@ -149,6 +153,8 @@ export class InteractiveBrowser<T> {
         });
       }
     }
+    this.filteredCacheKey = cacheKey;
+    this.filteredCache = items;
     return items;
   }
 
@@ -163,7 +169,7 @@ export class InteractiveBrowser<T> {
     this.cursor = filteredCount === 0 ? 0 : Math.min(Math.max(start, this.cursor), end);
   }
   private invalidateState(): void { this.cachedWidth = undefined; this.cachedState = undefined; this.cachedLines = undefined; }
-  invalidate(): void { this.invalidateState(); }
+  invalidate(): void { this.invalidateState(); this.filteredCacheKey = undefined; this.filteredCache = undefined; }
 
   private move(delta: number): void {
     const count = this.getFilteredItems().length;
