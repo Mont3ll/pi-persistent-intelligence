@@ -51,6 +51,7 @@ import { createInboxReviewComponent, buildInboxNotification, type InboxOverlayAc
 import { maybeCorrectionSignal, extractCorrectionCandidate } from "./src/corrections";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
+import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallXrayBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
@@ -58,13 +59,14 @@ import { buildCandidateTrustMetadata } from "./src/trust";
 import { linkExplicitCorrectionToMemory } from "./src/reinforcement";
 import { selectRelevantInquiries, renderInquiryInjectionBlock } from "./src/inquiries";
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
-import { appendEvidenceRecord } from "./src/evidence";
+import { appendEvidenceRecord, readEvidenceRecords } from "./src/evidence";
 import { linkEvidenceToCandidate } from "./src/evidence-link";
 import { exportMemoryGraph, renderMemoryGraphSummary, saveMemoryGraphReport } from "./src/memory-graph";
 import { buildMemoryTimeline, renderMemoryTimeline, saveMemoryTimelineReport } from "./src/timeline";
 import { generateProcedureCandidates, renderProcedureCandidateReport, saveProcedureCandidateReport } from "./src/procedure-candidates";
 import { buildRecallXray, renderRecallXrayReport } from "./src/recall-xray";
 import { enqueueBackgroundAnalysis, listBackgroundAnalysisJobs, runBackgroundAnalysisQueue, type BackgroundAnalysisKind } from "./src/background-analysis";
+import { renderHealthAuditReport, runMemoryHealthAudit, saveHealthAuditReport } from "./src/health-audit";
 import { scoreMemoryWorth } from "./src/memory-worth";
 import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
 import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-analysis";
@@ -90,6 +92,15 @@ function parseCommandArgs(input: string): { positional: string[]; flags: Record<
     } else positional.push(token);
   }
   return { positional, flags };
+}
+function wantsPlainOutput(args: string): boolean {
+  const { flags } = parseCommandArgs(args);
+  return flags.plain === true || flags.json === true || flags.yaml === true || flags.interactive === false;
+}
+function notifyStructured(ctx: UiContext, args: string, value: unknown, plain: string, kind = "info"): void {
+  const { flags } = parseCommandArgs(args);
+  if (flags.json === true) ctx.ui.notify(JSON.stringify(value, null, 2), kind);
+  else ctx.ui.notify(plain, kind);
 }
 
 const CODEBASE_EVIDENCE_TOOLS = new Set<CodebaseAnalysisTool>(["tsc", "eslint", "playwright", "vitest", "fallow", "custom"]);
@@ -131,6 +142,11 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   let syncTimer: ReturnType<typeof setInterval> | null = null;
   let syncDebounce: ReturnType<typeof setTimeout> | null = null;
   const fsWatchers: ReturnType<typeof fsWatch>[] = [];
+  const commandHistory: Array<{ id: string; command: string; created_at: string; summary: string; output: string }> = [];
+  function rememberCommand(command: string, output: string, summary = output.split(/\r?\n/)[0] ?? ""): void {
+    commandHistory.unshift({ id: shortId("cmd"), command, created_at: nowIso(), summary: summary.slice(0, 160), output });
+    commandHistory.splice(25);
+  }
 
   // ─── Lifecycle ──────────────────────────────────────────────────────
 
@@ -662,31 +678,79 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
   // ─── Commands ────────────────────────────────────────────────────────
 
+  pi.registerCommand("memory-history", {
+    description: "Browse previous PI interactive command outputs without rerunning them",
+    handler: async (args, ctx) => {
+      const plain = commandHistory.map((entry, i) => `${i + 1}. ${entry.created_at} ${entry.command} — ${entry.summary}`).join("\n") || "No PI command history in this session.";
+      if (wantsPlainOutput(args) || !ctx.ui.custom) { notifyStructured(ctx, args, commandHistory, plain, "info"); return; }
+      await openBrowser(ctx, {
+        title: "Command Result History",
+        subtitle: "Session-local result cache. Selecting expands stored output; no command is rerun.",
+        items: commandHistory.map((entry) => ({ id: entry.id, item: entry, status: "info" as const, searchText: `${entry.command} ${entry.summary} ${entry.output}`, details: entry.output.split(/\r?\n/).slice(0, 200) })),
+        pageSize: 20,
+        columns: [
+          { key: "created", label: "Created", width: 20, minWidth: 10, priority: 2, render: (entry) => entry.created_at, sortValue: (entry) => entry.created_at },
+          { key: "command", label: "Command", width: 22, minWidth: 10, priority: 1, render: (entry) => entry.command },
+          { key: "summary", label: "Summary", minWidth: 20, priority: 1, render: (entry) => entry.summary },
+        ],
+      }, plain);
+    },
+  });
+
   pi.registerCommand("memory-doctor", {
-    description: "Diagnose PI memory and session search setup",
-    handler: async (_args, ctx) => {
+    description: "Diagnose PI memory and session search setup as an interactive dashboard (use --plain or --json for scripted output)",
+    handler: async (args, ctx) => {
       const paths = ensureMemoryDirs(root);
       const cfg = loadConfig(root);
-      ctx.ui.notify(`PI memory root: ${paths.root}`, "info");
-      ctx.ui.notify(`Session index: ${sessionStore.size()} sessions (file-watch + 5min sync active)`, "success");
-      ctx.ui.notify(`Auto-curation: ${cfg.curator.autoCurate} (threshold: ${cfg.curator.autoCurateHighThreshold})`, cfg.curator.autoCurate !== "off" ? "success" : "warning");
-      ctx.ui.notify(`Injection mode: ${cfg.retrieval.injectionMode}`, "info");
-      ctx.ui.notify(`Consolidation model: ${process.env.PI_MEMORY_CONSOLIDATION_MODEL ?? "claude-haiku-4-5-20251001 (default)"}`, "info");
-      ctx.ui.notify(`Vault: ${process.env.PI_VAULT_PATH ?? cfg.vault.path ?? "not configured (set PI_VAULT_PATH)"}`, (process.env.PI_VAULT_PATH || cfg.vault.path) ? "success" : "warning");
-      const pending = listCandidates(root).filter((c) => c.status === "new").length;
-      if (pending > 0) ctx.ui.notify(`Inbox: ${pending} candidate(s) awaiting /curate-memory`, "warning");
+      const report = runMemoryDiagnostics(root);
+      const header = [
+        `PI memory root: ${paths.root}`,
+        `Session index: ${sessionStore.size()} sessions (file-watch + 5min sync active)`,
+        `Auto-curation: ${cfg.curator.autoCurate} (threshold: ${cfg.curator.autoCurateHighThreshold})`,
+        `Injection mode: ${cfg.retrieval.injectionMode}`,
+        `Consolidation model: ${process.env.PI_MEMORY_CONSOLIDATION_MODEL ?? "claude-haiku-4-5-20251001 (default)"}`,
+        `Vault: ${process.env.PI_VAULT_PATH ?? cfg.vault.path ?? "not configured (set PI_VAULT_PATH)"}`,
+        `Inbox: ${listCandidates(root).filter((c) => c.status === "new").length} pending candidate(s)`,
+        "",
+        renderDiagnosticsReport(report),
+      ].join("\n");
+      rememberCommand("memory-doctor", header, `doctor: ${report.summary.errors} errors, ${report.summary.warnings} warnings`);
+      if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, { paths, config: cfg, diagnostics: report }, header, report.summary.errors ? "error" : report.summary.warnings ? "warning" : "success");
+      else await openBrowser(ctx, diagnosticsBrowserOptions(report), header);
     },
   });
 
 
+  pi.registerCommand("memory-health-audit", {
+    description: "Run a report-only autonomous memory health audit dashboard (use --plain, --json, or --save)",
+    handler: async (args, ctx) => {
+      try {
+        const parsed = parseCommandArgs(args);
+        const report = runMemoryHealthAudit(root, { now: nowIso() });
+        const text = renderHealthAuditReport(report);
+        rememberCommand("memory-health-audit", text, `health audit: ${report.health_score.overall}/100, ${report.recommendations.length} recommendations`);
+        if (parsed.flags.save === true) {
+          const paths = saveHealthAuditReport(root, report);
+          ctx.ui.notify(`Health audit saved: ${paths.markdownPath}`, "success");
+        }
+        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.health_score.overall < 80 ? "warning" : "success");
+        else await openBrowser(ctx, healthAuditBrowserOptions(report), text);
+      } catch (err) {
+        ctx.ui.notify(`Health audit failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("memory-diagnostics", {
-    description: "Run memory integrity diagnostics and report findings (severity: ok/info/warning/error)",
+    description: "Run memory integrity diagnostics and open an interactive dashboard (use --plain or --json for scripted output)",
     handler: async (args, ctx) => {
       const saveReport = args.includes("--save");
       try {
         const report = runMemoryDiagnostics(root);
         const text = renderDiagnosticsReport(report);
-        ctx.ui.notify(text, report.summary.errors > 0 ? "error" : report.summary.warnings > 0 ? "warning" : "success");
+        rememberCommand("memory-diagnostics", text, `diagnostics: ${report.summary.errors} errors, ${report.summary.warnings} warnings`);
+        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.summary.errors > 0 ? "error" : report.summary.warnings > 0 ? "warning" : "success");
+        else await openBrowser(ctx, diagnosticsBrowserOptions(report), text);
         if (saveReport) {
           const path = saveDiagnosticsReport(root, report);
           ctx.ui.notify(`Diagnostics report saved: ${path}`, "info");
@@ -738,13 +802,17 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("memory-recall-xray", {
-    description: "Explain why memory would be included or excluded for a query (read-only). Usage: /memory-recall-xray <query>",
+    description: "Browse why memory would be included or excluded for a query (read-only). Usage: /memory-recall-xray <query> [--plain|--json]",
     handler: async (args, ctx) => {
       try {
-        const query = args.trim();
+        const parsed = parseCommandArgs(args);
+        const query = parsed.positional.join(" ") || args.replace(/--(plain|json|yaml|interactive)\b/g, "").trim();
         const profile = resolveMemoryProfile(root, sessionCwd);
         const report = buildRecallXray(root, { query, profile_id: profile.profile_id, resource_id: profile.resource_id, working_directory: sessionCwd, project_root: sessionCwd });
-        ctx.ui.notify(renderRecallXrayReport(report), "info");
+        const text = renderRecallXrayReport(report);
+        rememberCommand("memory-recall-xray", text, `xray: ${report.summary.included_count} included, ${report.summary.excluded_count} excluded`);
+        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, "info");
+        else await openBrowser(ctx, recallXrayBrowserOptions(report), text);
       } catch (err) {
         ctx.ui.notify(`Recall x-ray failed: ${err instanceof Error ? err.message : String(err)}`, "error");
       }
@@ -756,6 +824,14 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       const parsed = parseCommandArgs(args);
       const action = parsed.positional[0];
+      if (!action || action === "list") {
+        const evidence = readEvidenceRecords(root);
+        const plain = evidence.map((ev) => `${ev.id} [${ev.source_kind}, ${ev.trust_class}, ${ev.polarity}] ${ev.source_summary}`).join("\n") || "No evidence records.";
+        rememberCommand("memory-evidence", plain, `evidence: ${evidence.length} records`);
+        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, evidence, plain, "info");
+        else await openBrowser(ctx, evidenceBrowserOptions(evidence), plain);
+        return;
+      }
       if (action === "link") {
         const evidenceId = parsed.positional[1];
         const statement = typeof parsed.flags.statement === "string" ? parsed.flags.statement : "";
@@ -849,7 +925,10 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
           return;
         }
         const jobs = listBackgroundAnalysisJobs(root);
-        ctx.ui.notify(jobs.map((j) => `${j.id} [${j.status}] ${j.kind}`).join("\n") || "No background jobs.", "info");
+        const plain = jobs.map((j) => `${j.id} [${j.status}] ${j.kind}`).join("\n") || "No background jobs.";
+        rememberCommand("memory-background", plain, `background: ${jobs.length} jobs`);
+        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, jobs, plain, "info");
+        else await openBrowser(ctx, backgroundBrowserOptions(jobs), plain);
       } catch (err) {
         ctx.ui.notify(`Background analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
       }
@@ -889,7 +968,10 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         const memoryIndex = parts.indexOf("--memory");
         const memoryId = memoryIndex >= 0 ? parts[memoryIndex + 1] : undefined;
         const report = buildMemoryTimeline(root, { memoryId }, nowIso());
-        ctx.ui.notify(renderMemoryTimeline(report), "info");
+        const plain = renderMemoryTimeline(report);
+        rememberCommand("memory-timeline", plain, `timeline: ${report.events.length} events`);
+        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, plain, "info");
+        else await openBrowser(ctx, timelineBrowserOptions(report), plain);
         if (parts.includes("--save")) {
           const path = saveMemoryTimelineReport(root, report);
           ctx.ui.notify(`Memory timeline saved: ${path}`, "success");
@@ -939,26 +1021,22 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
   pi.registerCommand("memory-inbox", {
     description: "Show and interactively review pending inbox candidates",
-    handler: async (_args, ctx) => {
+    handler: async (args, ctx) => {
       const candidates = listCandidates(root).filter((c) => c.status === "new");
       if (candidates.length === 0) { ctx.ui.notify("Inbox empty.", "info"); return; }
 
-      // Show interactive overlay if TUI is available
+      const plain = candidates.map((c, i) => `${i + 1}. [conf ${(c.confidence ?? 0).toFixed(2)}${c.ruleType ? ", " + c.ruleType : ""}] ${c.text.slice(0, 120)}`).join("\n");
+      rememberCommand("memory-inbox", plain, `inbox: ${candidates.length} candidates`);
+      if (wantsPlainOutput(args) || !ctx.ui.custom) { notifyStructured(ctx, args, candidates, `${candidates.length} pending candidate(s):\n${plain}`, "info"); return; }
+
+      // Show pageable/searchable browser if TUI is available
       if (ctx.ui.custom) {
         const cfg = loadConfig(root);
         const threshold = cfg.curator.autoCurateHighThreshold ?? 0.85;
         const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
-        const autoEligible = candidates.filter((c) => (c.confidence ?? 0) >= threshold);
         try {
-          const action = await ctx.ui.custom<import("./src/tui/InboxReviewOverlay").InboxOverlayAction>(
-            (tui, theme, _kb, done) =>
-              createInboxReviewComponent(
-                { candidates, autoEligibleCount: autoEligible.length, highThreshold: threshold },
-                done,
-                tui as { requestRender(): void },
-                theme,
-              ),
-          );
+          const result = await openBrowser(ctx, candidateBrowserOptions(candidates), plain);
+          const action = result?.action as import("./src/tui/InboxReviewOverlay").InboxOverlayAction | undefined;
           if (action === "approve") {
             const patch = curateInbox(root, { now: nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
             const eligibleIds = patch.ops
@@ -992,45 +1070,33 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
             }
           }
         } catch {
-          // Headless fallback
-          const lines = candidates.map((c, i) => `${i + 1}. [conf ${(c.confidence ?? 0).toFixed(2)}] ${c.text.slice(0, 80)}`);
-          ctx.ui.notify(`${candidates.length} pending candidate(s):\n${lines.join("\n")}`, "info");
+          ctx.ui.notify(`${candidates.length} pending candidate(s):\n${plain}`, "info");
         }
-      } else {
-        // Plain text fallback for headless/RPC mode
-        const lines = candidates.map((c, i) => `${i + 1}. [conf ${(c.confidence ?? 0).toFixed(2)}${c.ruleType ? ", " + c.ruleType : ""}] ${c.text.slice(0, 80)}`);
-        ctx.ui.notify(`${candidates.length} pending candidate(s):\n${lines.join("\n")}`, "info");
       }
     },
   });
 
   pi.registerCommand("memory-learnings", {
-    description: "Browse and manage long-term memory records in an interactive TUI table",
-    handler: async (_args, ctx) => {
-      if (!ctx.ui.custom) {
-        // Headless fallback: list records as text
-        const records = loadActiveRecords(root);
-        const lines = records.map((r) =>
-          `[${r.layer}, conf ${r.confidence.toFixed(2)}${r.ruleType ? ", " + r.ruleType : ""}] ${r.statement}`
-        );
-        ctx.ui.notify(lines.join("\n") || "No memory records.", "info");
-        return;
-      }
+    description: "Browse and manage long-term memory records in an interactive pageable table (use --plain or --json for scripted output)",
+    handler: async (args, ctx) => {
       const records = loadActiveRecords(root)
         .filter((r) => r.status === "active")
         .sort((a, b) => b.confidence - a.confidence);
+      const plain = records.map((r) =>
+        `[${r.layer}, conf ${r.confidence.toFixed(2)}${r.ruleType ? ", " + r.ruleType : ""}] ${r.statement}`
+      ).join("\n") || "No memory records.";
+      rememberCommand("memory-learnings", plain, `memory: ${records.length} active records`);
+      if (wantsPlainOutput(args) || !ctx.ui.custom) { notifyStructured(ctx, args, records, plain, "info"); return; }
 
-      const result = await ctx.ui.custom<import("./src/tui/MemoryListPanel").ListPanelResult | null>(
-        (tui, theme, _kb, done) => createMemoryListComponent(records, done, tui as { requestRender(): void }, theme),
-      );
+      const result = await openBrowser(ctx, memoryRecordBrowserOptions(records), plain);
 
       if (result?.action === "deprecate") {
         const { loadLayerRecords, unsafeReplaceLayerRecords } = await import("./src/store");
         for (const layer of ["L1", "L2"] as const) {
           const layerRecords = loadLayerRecords(root, layer);
-          if (!layerRecords.some((r) => r.id === result.recordId)) continue;
+          if (!result.id || !layerRecords.some((r) => r.id === result.id)) continue;
           unsafeReplaceLayerRecords(root, layer,
-            layerRecords.map((r) => r.id === result.recordId
+            layerRecords.map((r) => r.id === result.id
               ? { ...r, status: "deprecated" as const, updated_at: new Date().toISOString().slice(0, 10) }
               : r
             )
@@ -1039,7 +1105,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
           syncFtsIndex(root, ftsIndex);
           await updateQmd();
               syncFtsIndex(root, ftsIndex);
-          ctx.ui.notify(`Deprecated: ${result.recordId}`, "success");
+          ctx.ui.notify(`Deprecated: ${result.id}`, "success");
           break;
         }
       }
