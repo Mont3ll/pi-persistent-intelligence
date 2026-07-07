@@ -35,6 +35,7 @@ import { enqueueBackgroundAnalysis, listBackgroundAnalysisJobs, runBackgroundAna
 import { appendRuntimeEvent, readRecentRuntimeEvents } from "../src/runtime-events";
 import { runMemoryDiagnostics, renderDiagnosticsReport } from "../src/diagnostics";
 import { runMemoryHealthAudit } from "../src/health-audit";
+import { analyzeMemoryQuality } from "../src/memory-quality";
 import { linkEvidenceToCandidate } from "../src/evidence-link";
 import { createCompactionArtifact } from "../src/compaction-artifacts";
 import { computeCandidateConfidence } from "../src/confidence";
@@ -974,6 +975,16 @@ function evalBackgroundVaultPromotionReviewOnly(): EvalResult {
   return { category: "background_vault_promotion_review_only", description: "Background vault promotion creates review artifact only.", pass, metrics: { jobs: jobs.length }, failures: pass ? [] : ["Vault promotion boundary failed."], hard_invariant: true };
 }
 
+function evalMemoryQualityReportOnly(): EvalResult {
+  const root = tempRoot();
+  unsafeAddMemoryRecord(root, record("mem_quality_eval", "Prefer report-only memory quality analysis.", { confidence: 0.5 }));
+  const before = JSON.stringify(loadAllRecords(root));
+  const report = analyzeMemoryQuality(root, { now: "2026-07-07T00:00:00Z" });
+  const after = JSON.stringify(loadAllRecords(root));
+  const pass = before === after && report.mutation_performed === false && report.recommendations.every((rec) => rec.review_required && rec.mutation_performed === false);
+  return { category: "memory_quality_report_only", description: "Memory quality analysis recommends review without mutating durable memory.", pass, metrics: { recommendations: report.recommendations.length, low_quality: report.summary.low_quality_count }, failures: pass ? [] : ["Memory quality analysis mutated durable memory or produced non-review recommendations."], hard_invariant: true };
+}
+
 function evalBackgroundHealthAuditReportOnly(): EvalResult {
   const root = tempRoot();
   unsafeAddMemoryRecord(root, record("m_health_a", "Always run bun test before commit.", { profile_id: "default", normalized_key: "workflow:test" }));
@@ -1144,6 +1155,7 @@ async function runEvals(): Promise<void> {
     ["Background Meta-Consolidation Report Only", evalBackgroundMetaConsolidationReportOnly],
     ["Background Vault Promotion Review Only", evalBackgroundVaultPromotionReviewOnly],
     ["Background Health Audit Report Only", evalBackgroundHealthAuditReportOnly],
+    ["Memory Quality Report Only", evalMemoryQualityReportOnly],
     ["Injection Stats Accuracy", evalInjectionStatsAccuracy],
     ["qmd Unavailable Fast Fallback", evalQmdUnavailableFastFallback],
     ["Retrieval Hot Path Budget", evalRetrievalHotPathBudget],
