@@ -67,6 +67,7 @@ import { generateProcedureCandidates, renderProcedureCandidateReport, saveProced
 import { buildRecallXray, renderRecallXrayReport } from "./src/recall-xray";
 import { enqueueBackgroundAnalysis, listBackgroundAnalysisJobs, runBackgroundAnalysisQueue, type BackgroundAnalysisKind } from "./src/background-analysis";
 import { renderHealthAuditReport, runMemoryHealthAudit, saveHealthAuditReport } from "./src/health-audit";
+import { InvocationProfiler, renderInvocationProfileReport } from "./src/profiling";
 import { scoreMemoryWorth } from "./src/memory-worth";
 import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
 import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-analysis";
@@ -702,7 +703,8 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       const paths = ensureMemoryDirs(root);
       const cfg = loadConfig(root);
-      const report = runMemoryDiagnostics(root);
+      const parsed = parseCommandArgs(args);
+      const report = runMemoryDiagnostics(root, { profile: parsed.flags.profile === true });
       const header = [
         `PI memory root: ${paths.root}`,
         `Session index: ${sessionStore.size()} sessions (file-watch + 5min sync active)`,
@@ -713,6 +715,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         `Inbox: ${listCandidates(root).filter((c) => c.status === "new").length} pending candidate(s)`,
         "",
         renderDiagnosticsReport(report),
+        report.profile ? `\n${renderInvocationProfileReport(report.profile)}` : "",
       ].join("\n");
       rememberCommand("memory-doctor", header, `doctor: ${report.summary.errors} errors, ${report.summary.warnings} warnings`);
       if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, { paths, config: cfg, diagnostics: report }, header, report.summary.errors ? "error" : report.summary.warnings ? "warning" : "success");
@@ -746,8 +749,9 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       const saveReport = args.includes("--save");
       try {
-        const report = runMemoryDiagnostics(root);
-        const text = renderDiagnosticsReport(report);
+        const parsed = parseCommandArgs(args);
+        const report = runMemoryDiagnostics(root, { profile: parsed.flags.profile === true });
+        const text = [renderDiagnosticsReport(report), report.profile ? `\n${renderInvocationProfileReport(report.profile)}` : ""].filter(Boolean).join("\n");
         rememberCommand("memory-diagnostics", text, `diagnostics: ${report.summary.errors} errors, ${report.summary.warnings} warnings`);
         if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.summary.errors > 0 ? "error" : report.summary.warnings > 0 ? "warning" : "success");
         else await openBrowser(ctx, diagnosticsBrowserOptions(report), text);
@@ -808,8 +812,9 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         const parsed = parseCommandArgs(args);
         const query = parsed.positional.join(" ") || args.replace(/--(plain|json|yaml|interactive)\b/g, "").trim();
         const profile = resolveMemoryProfile(root, sessionCwd);
-        const report = buildRecallXray(root, { query, profile_id: profile.profile_id, resource_id: profile.resource_id, working_directory: sessionCwd, project_root: sessionCwd });
-        const text = renderRecallXrayReport(report);
+        const profiler = parsed.flags.profile === true ? new InvocationProfiler("recall_xray") : undefined;
+        const report = buildRecallXray(root, { query, profile_id: profile.profile_id, resource_id: profile.resource_id, working_directory: sessionCwd, project_root: sessionCwd, profiler });
+        const text = [renderRecallXrayReport(report), report.profile ? `\n${renderInvocationProfileReport(report.profile)}` : ""].filter(Boolean).join("\n");
         rememberCommand("memory-recall-xray", text, `xray: ${report.summary.included_count} included, ${report.summary.excluded_count} excluded`);
         if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, "info");
         else await openBrowser(ctx, recallXrayBrowserOptions(report), text);
