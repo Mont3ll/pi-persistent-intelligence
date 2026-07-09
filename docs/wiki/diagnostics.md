@@ -1,6 +1,6 @@
 # Diagnostics
 
-The `/memory-diagnostics` command runs a battery of integrity checks on your memory store and reports findings with severity levels.
+The `/memory-diagnostics` command runs a battery of integrity checks on your memory store and reports findings with severity levels. For higher-level review dashboards, use `/memory-health-audit`, `/memory-store-quality`, `/memory-quality`, `/memory-relationship-quality`, and `/memory-recall-effectiveness`; those commands are also report-only.
 
 ---
 

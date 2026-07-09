@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildConsolidationPrompt, parseConsolidationResponse, applyConsolidation, CONSOLIDATION_PROMPT_TEMPLATE } from "../../src/consolidator";
+import { buildConsolidationPrompt, parseConsolidationResponse, applyConsolidation, runConsolidation, buildConsolidationCommandArgs, CONSOLIDATION_PROMPT_TEMPLATE } from "../../src/consolidator";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -63,6 +63,31 @@ describe("parseConsolidationResponse", () => {
     const raw = `Okay here you go: {"candidates": [{"statement": "Use patch files first", "tags": ["memory"], "confidence": 0.85, "evidence_hint": "recurring pattern"}]} done.`;
     const result = parseConsolidationResponse(raw);
     expect(result).toHaveLength(1);
+  });
+});
+
+describe("runConsolidation", () => {
+  test("omits --model when no preferred or observed model is supplied", async () => {
+    expect(buildConsolidationCommandArgs("prompt", null)).toEqual(["-p", "prompt", "--print", "--no-extensions"]);
+    expect(buildConsolidationCommandArgs("prompt", "openai/gpt-5")).toEqual(["-p", "prompt", "--print", "--no-extensions", "--model", "openai/gpt-5"]);
+  });
+
+  test("returns visible failure metadata for consolidation CLI failure", async () => {
+    const { dir, cleanup } = tempRoot();
+    ensureMemoryDirs(dir);
+    const calls: { command: string; args: string[] }[] = [];
+    const result = await runConsolidation(dir, ["Use the current Pi model for consolidation", "Make failures visible", "Keep memory governed"], [], "2026-07-09", dir, {
+      async exec(command, args) {
+        calls.push({ command, args });
+        return { code: 1, stdout: "", stderr: "No API key found for anthropic." };
+      },
+    }, null);
+    expect(calls[0].args).not.toContain("--model");
+    expect(result.candidates_added).toBe(0);
+    expect(result.status).toBe("failed");
+    expect(result.failure_reason).toContain("No API key found for anthropic");
+    expect(listCandidates(dir)).toHaveLength(0);
+    cleanup();
   });
 });
 

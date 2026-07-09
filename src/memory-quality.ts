@@ -1,7 +1,7 @@
 import { readEvidenceRecords } from "./evidence";
 import { redactSecrets, redactSecretsInObject } from "./secret-scanner";
 import { loadAllRecords } from "./store";
-import type { MemoryRecord } from "./types";
+import type { EvidenceRecord, MemoryRecord } from "./types";
 
 export type MemoryLifecycleState = "active" | "stale" | "dormant" | "contested" | "superseded" | "deleted";
 
@@ -79,10 +79,7 @@ function recommendationFor(item: MemoryQualityItem): MemoryQualityRecommendation
   };
 }
 
-export function analyzeMemoryQuality(root: string, options: AnalyzeMemoryQualityOptions = {}): MemoryQualityReport {
-  const now = options.now ?? new Date().toISOString();
-  const records = loadAllRecords(root);
-  const evidence = readEvidenceRecords(root);
+export function analyzeMemoryQualityFromRecords(records: MemoryRecord[], evidence: EvidenceRecord[], now: string): MemoryQualityReport {
   const evidenceById = new Map(evidence.map((ev) => [ev.id, ev]));
   const keyMap = new Map<string, string[]>();
   for (const record of records.filter((r) => r.status === "active")) {
@@ -152,6 +149,11 @@ export function analyzeMemoryQuality(root: string, options: AnalyzeMemoryQuality
     recommendations,
     mutation_performed: false,
   }) as MemoryQualityReport;
+}
+
+export function analyzeMemoryQuality(root: string, options: AnalyzeMemoryQualityOptions = {}): MemoryQualityReport {
+  const now = options.now ?? new Date().toISOString();
+  return analyzeMemoryQualityFromRecords(loadAllRecords(root), readEvidenceRecords(root), now);
 }
 
 export function renderMemoryQualityReport(report: MemoryQualityReport): string {

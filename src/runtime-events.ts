@@ -38,13 +38,14 @@ export function appendRuntimeEvent(root: string, event: Omit<RuntimeEvent, "time
   } catch { /* runtime event logging must never interrupt work */ }
 }
 
-export function readRecentRuntimeEvents(root: string, options: { hours?: number; minSeverity?: RuntimeEventSeverity } = {}): RuntimeEvent[] {
+export function readRecentRuntimeEvents(root: string, options: { hours?: number; minSeverity?: RuntimeEventSeverity; now?: string } = {}): RuntimeEvent[] {
   try {
     const file = eventPath(root);
     if (!existsSync(file)) return [];
     const hours = options.hours ?? 24;
     const minSeverity = options.minSeverity ?? "medium";
-    const cutoff = Date.now() - hours * 60 * 60 * 1000;
+    const nowMs = options.now ? new Date(options.now).getTime() : Date.now();
+    const cutoff = (Number.isFinite(nowMs) ? nowMs : Date.now()) - hours * 60 * 60 * 1000;
     return readFileSync(file, "utf-8")
       .split(/\r?\n/)
       .filter(Boolean)

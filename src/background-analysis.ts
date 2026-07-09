@@ -13,6 +13,9 @@ import { scoreMemoryWorth } from "./memory-worth";
 import { runMetaConsolidation, DEFAULT_META_CONSOLIDATION_CONFIG } from "./meta-consolidation";
 import { appendRuntimeEvent } from "./runtime-events";
 import { runMemoryHealthAudit, saveHealthAuditReport } from "./health-audit";
+import { analyzeRecallEffectiveness, renderRecallEffectivenessReport } from "./recall-effectiveness";
+import { analyzeRelationshipQuality, renderRelationshipQualityReport } from "./relationship-quality";
+import { analyzeStoreQuality, renderStoreQualityReport } from "./store-quality";
 
 export type BackgroundAnalysisKind =
   | "diagnostics"
@@ -24,7 +27,10 @@ export type BackgroundAnalysisKind =
   | "meta_consolidation"
   | "vault_promotion_candidates"
   | "memory_worth_review"
-  | "memory_health_audit";
+  | "memory_health_audit"
+  | "memory_relationship_quality"
+  | "memory_store_quality"
+  | "memory_recall_effectiveness";
 
 export interface BackgroundAnalysisJob {
   id: string;
@@ -196,6 +202,27 @@ function runOne(root: string, job: BackgroundAnalysisJob, supportedKinds?: Backg
     const warnings = ["Review-only: no durable memory was mutated."];
     if (report.recommendations.length) warnings.push(`${report.recommendations.length} health recommendation(s)`);
     return { ...job, status: "succeeded", output_artifact_path: paths.markdownPath, warnings };
+  }
+  if (job.kind === "memory_relationship_quality") {
+    const report = analyzeRelationshipQuality(root, { now: job.created_at });
+    const path = writeMarkdownReport(root, job, renderRelationshipQualityReport(report));
+    const warnings = ["Review-only: no durable memory was mutated."];
+    if (report.recommendations.length) warnings.push(`${report.recommendations.length} relationship-quality recommendation(s)`);
+    return { ...job, status: "succeeded", output_artifact_path: path, warnings };
+  }
+  if (job.kind === "memory_recall_effectiveness") {
+    const report = analyzeRecallEffectiveness(root, { now: job.created_at });
+    const path = writeMarkdownReport(root, job, renderRecallEffectivenessReport(report));
+    const warnings = ["Review-only: no durable memory was mutated."];
+    if (report.recommendations.length) warnings.push(`${report.recommendations.length} recall-effectiveness recommendation(s)`);
+    return { ...job, status: "succeeded", output_artifact_path: path, warnings };
+  }
+  if (job.kind === "memory_store_quality") {
+    const report = analyzeStoreQuality(root, { now: job.created_at });
+    const path = writeMarkdownReport(root, job, renderStoreQualityReport(report));
+    const warnings = ["Review-only: no durable memory was mutated."];
+    if (report.recommendations.length) warnings.push(`${report.recommendations.length} store-quality recommendation(s)`);
+    return { ...job, status: "succeeded", output_artifact_path: path, warnings };
   }
   throw new Error(`Unsupported background analysis kind: ${job.kind}`);
 }

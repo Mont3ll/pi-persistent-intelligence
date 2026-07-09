@@ -4,6 +4,9 @@ import type { DiagnosticsReport } from "../diagnostics";
 import type { TimelineEvent, MemoryTimelineReport } from "../timeline";
 import type { MemoryHealthAuditReport, HealthCategoryScore } from "../health-audit";
 import type { MemoryQualityItem, MemoryQualityReport } from "../memory-quality";
+import type { RelationshipQualityEdgeItem, RelationshipQualityReport } from "../relationship-quality";
+import type { StoreQualityMetric, StoreQualityReport } from "../store-quality";
+import type { RecallEffectivenessReport, RecallMemoryStat } from "../recall-effectiveness";
 import type { RecallXrayReport, IncludedMemoryXray, ExcludedMemoryXray } from "../recall-xray";
 import type { CaptureCandidate, EvidenceRecord, MemoryRecord } from "../types";
 
@@ -220,6 +223,100 @@ export function memoryQualityBrowserOptions(report: MemoryQualityReport): Browse
       { key: "confidence", label: "Conf", width: 6, minWidth: 5, priority: 4, render: (item) => item.confidence.toFixed(2), sortValue: (item) => item.confidence },
       { key: "signals", label: "Signals", width: 24, minWidth: 10, priority: 5, render: (item) => item.signals.join(",") || "healthy" },
       { key: "statement", label: "Statement", minWidth: 20, priority: 1, render: (item) => item.statement_excerpt },
+    ],
+  };
+}
+
+export function relationshipQualityBrowserOptions(report: RelationshipQualityReport): BrowserOptions<RelationshipQualityEdgeItem> {
+  return {
+    title: "Relationship Quality Browser",
+    subtitle: `Average ${report.summary.average_relationship_quality}/100 · ${report.summary.weak_edge_count} weak · ${report.summary.orphan_memory_count} orphans · report-only`,
+    items: report.relationships.map((edge) => ({
+      id: edge.edge_id,
+      item: edge,
+      status: edge.quality_band === "broken" ? "error" : edge.quality_band === "weak" ? "warning" : "healthy",
+      searchText: `${edge.edge_id} ${edge.type} ${edge.from} ${edge.to} ${edge.quality_band} ${edge.signals.join(" ")} ${edge.reasons.join(" ")}`,
+      details: [
+        `Score: ${edge.quality_score}/100 · ${edge.quality_band}`,
+        `Type: ${edge.type}`,
+        `From: ${edge.from}`,
+        `To: ${edge.to}`,
+        `Signals: ${edge.signals.join(", ") || "healthy"}`,
+        ...edge.reasons.map((reason) => `Reason: ${reason}`),
+        "No automatic mutation performed.",
+      ],
+    })),
+    pageSize: 20,
+    sortBy: "score",
+    columns: [
+      { key: "id", label: "Relationship", width: 28, minWidth: 12, priority: 1, render: (edge) => edge.edge_id },
+      { key: "score", label: "Score", width: 7, minWidth: 5, priority: 2, render: (edge) => String(edge.quality_score), sortValue: (edge) => edge.quality_score },
+      { key: "band", label: "Band", width: 8, minWidth: 6, priority: 3, render: (edge) => edge.quality_band },
+      { key: "type", label: "Type", width: 16, minWidth: 8, priority: 4, render: (edge) => edge.type },
+      { key: "signals", label: "Signals", minWidth: 20, priority: 1, render: (edge) => edge.signals.join(",") || "healthy" },
+    ],
+  };
+}
+
+export function recallEffectivenessBrowserOptions(report: RecallEffectivenessReport): BrowserOptions<RecallMemoryStat> {
+  const recommendationsByMemory = new Map(report.memory_stats.map((stat) => [stat.memory_id, report.recommendations.filter((rec) => rec.memory_id === stat.memory_id)]));
+  return {
+    title: "Recall Effectiveness Browser",
+    subtitle: `Average ${report.summary.average_effectiveness}/100 · ${report.summary.total_events} events · ${report.summary.never_recalled_count} never recalled · report-only`,
+    items: report.memory_stats.map((stat) => {
+      const recommendations = recommendationsByMemory.get(stat.memory_id) ?? [];
+      return {
+        id: stat.memory_id,
+        item: stat,
+        status: stat.effectiveness_score < 50 ? "error" : stat.effectiveness_score < 70 ? "warning" : "healthy",
+        searchText: `${stat.memory_id} ${stat.status} ${stat.layer} ${stat.signals.join(" ")} selected ${stat.selected_count} excluded ${stat.excluded_count}`,
+        details: [
+          `Score: ${stat.effectiveness_score}/100 · selected ${stat.selected_count} · excluded ${stat.excluded_count} · corrections ${stat.correction_count}`,
+          `Last recalled: ${stat.last_recalled_at ?? "never"}`,
+          `Signals: ${stat.signals.join(", ") || "neutral"}`,
+          ...(recommendations.length ? recommendations.map((rec) => `Recommendation: ${rec.summary} — ${rec.reason} Review required; No automatic mutation performed.`) : ["No recommendations for this memory. No automatic mutation performed."]),
+        ],
+      } satisfies BrowserItem<RecallMemoryStat>;
+    }),
+    pageSize: 20,
+    sortBy: "score",
+    columns: [
+      { key: "memory", label: "Memory", width: 20, minWidth: 10, priority: 1, render: (stat) => stat.memory_id },
+      { key: "score", label: "Score", width: 7, minWidth: 5, priority: 2, render: (stat) => String(stat.effectiveness_score), sortValue: (stat) => stat.effectiveness_score },
+      { key: "selected", label: "Selected", width: 9, minWidth: 5, priority: 3, render: (stat) => String(stat.selected_count), sortValue: (stat) => stat.selected_count },
+      { key: "excluded", label: "Excluded", width: 9, minWidth: 5, priority: 4, render: (stat) => String(stat.excluded_count), sortValue: (stat) => stat.excluded_count },
+      { key: "signals", label: "Signals", minWidth: 20, priority: 1, render: (stat) => stat.signals.join(",") || "neutral" },
+    ],
+  };
+}
+
+export function storeQualityBrowserOptions(report: StoreQualityReport): BrowserOptions<StoreQualityMetric> {
+  const recommendationsByMetric = new Map(report.metrics.map((metric) => [metric.id, report.recommendations.filter((rec) => rec.metric_id === metric.id)]));
+  return {
+    title: "Store Quality Dashboard",
+    subtitle: `Overall ${report.overall_score}/100 [${report.status}] · ${report.inputs.active_memories} active memories · report-only`,
+    items: report.metrics.map((metric) => {
+      const recommendations = recommendationsByMetric.get(metric.id) ?? [];
+      return {
+        id: metric.id,
+        item: metric,
+        status: metric.status === "attention" ? "error" : metric.status === "watch" ? "warning" : "healthy",
+        searchText: `${metric.label} ${metric.score} ${metric.status} ${metric.signals.join(" ")} ${metric.summary}`,
+        details: [
+          `Score: ${metric.score}/100 · ${metric.status}`,
+          `Summary: ${metric.summary}`,
+          `Signals: ${metric.signals.join(", ") || "healthy"}`,
+          ...(recommendations.length ? recommendations.map((rec) => `Recommendation: ${rec.summary} — ${rec.reason} Review required; No automatic mutation performed.`) : ["No recommendations for this metric. No automatic mutation performed."]),
+        ],
+      } satisfies BrowserItem<StoreQualityMetric>;
+    }),
+    pageSize: 10,
+    sortBy: "score",
+    columns: [
+      { key: "metric", label: "Metric", width: 22, minWidth: 10, priority: 1, render: (metric) => metric.label },
+      { key: "score", label: "Score", width: 7, minWidth: 5, priority: 2, render: (metric) => String(metric.score), sortValue: (metric) => metric.score },
+      { key: "status", label: "Status", width: 10, minWidth: 7, priority: 3, render: (metric) => metric.status },
+      { key: "signals", label: "Signals", minWidth: 20, priority: 1, render: (metric) => metric.signals.join(",") || "healthy" },
     ],
   };
 }

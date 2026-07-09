@@ -15,6 +15,7 @@ import { resolveMemoryProfile } from "./profile";
 import { runMemoryProcessorPipeline } from "./processors";
 import { extractContestedMemory, renderContestedMemoryBlock } from "./contested-memory";
 import { appendRuntimeEvent } from "./runtime-events";
+import { appendRecallEvent, createRecallEventId, hashRecallQuery } from "./recall-events";
 import type { MemoryRecord, ProcessorTrace, SessionContext } from "./types";
 
 export interface RetrievalOptions {
@@ -234,6 +235,28 @@ function writeInjectionStats(root: string, stats: InjectionStats): void {
   writeFileSync(statsPath(root), `${JSON.stringify(stats, null, 2)}\n`, "utf-8");
 }
 
+async function writeRecallTelemetry(root: string, prompt: string, selectedMemory: MemoryRecord[], eligibleRecords: MemoryRecord[]): Promise<void> {
+  try {
+    const selectedIds = new Set(selectedMemory.map((record) => record.id));
+    const excludedIds = eligibleRecords.filter((record) => record.status === "active" && !selectedIds.has(record.id)).map((record) => record.id).slice(0, 100);
+    const now = new Date().toISOString();
+    const queryHash = await hashRecallQuery(prompt);
+    appendRecallEvent(root, {
+      id: createRecallEventId(now, queryHash),
+      timestamp: now,
+      query_hash: queryHash,
+      prompt_excerpt: prompt.slice(0, 240),
+      selected_memory_ids: [...selectedIds],
+      excluded_memory_ids: excludedIds,
+      source: "retrieval",
+      outcome: "selected",
+      mutation_performed: false,
+    });
+  } catch (err) {
+    appendRuntimeEvent(root, { type: "warn", severity: "low", component: "retriever", message: `recall telemetry write failed: ${err instanceof Error ? err.message : String(err)}` });
+  }
+}
+
 export function readLastInjectionStats(root: string): InjectionStats | null {
   const file = statsPath(root);
   if (!existsSync(file)) return null;
@@ -380,6 +403,7 @@ export async function buildRetrievalContext(root: string, options: RetrievalOpti
   timings.runtimeWriteMs = performance.now() - writeStart;
   timings.totalMs = performance.now() - totalStart;
   writeInjectionStats(root, { generated_at: new Date().toISOString(), injectionMode: "scoped", charCount: markdown.length, selectedMemoryCount: selectedMemory.length, hardRuleCount: hardRules.count, contestedMemoryCount: contestedMemory.length, inquiryCount: 0, dailyDigestChars: dailyDigest.length, timings });
+  await writeRecallTelemetry(root, options.prompt, selectedMemory, processed.records);
   return { markdown, selectedMemory, processorTraces: processed.traces, contestedMemory };
 }
 

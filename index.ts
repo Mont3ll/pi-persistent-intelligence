@@ -39,11 +39,11 @@ import { generateMaintenanceRecommendations, buildStabilityPatchFromRecommendati
 import { readReinforcementEventsForMemory, summarizeReinforcement } from "./src/reinforcement";
 import { runMetaConsolidation, generateHandoffSnapshot, generateGoalHandoffSnapshot, DEFAULT_META_CONSOLIDATION_CONFIG } from "./src/meta-consolidation";
 import { runMemoryDiagnostics, renderDiagnosticsReport, saveDiagnosticsReport } from "./src/diagnostics";
-import { applyPatch } from "./src/patch";
+import { applyPatch, readPatchFile } from "./src/patch";
 import { buildRetrievalContext, syncFtsIndex } from "./src/retriever";
 import { renderMemoryToDisk } from "./src/render";
 import { setupQmd, updateQmd, runQmd, qmdSearchArgs, qmdCollectionName, type MemorySearchMode } from "./src/qmd";
-import { runConsolidation } from "./src/consolidator";
+import { runConsolidation, type ConsolidationResult } from "./src/consolidator";
 import { loadConfig } from "./src/config";
 import { SessionStore, buildSessionSearchTools, buildSessionContextBlock, SESSION_SYNC_INTERVAL_MS } from "./src/session-search";
 import { isChildProcess } from "./src/sessions/store";
@@ -51,7 +51,7 @@ import { createInboxReviewComponent, buildInboxNotification, type InboxOverlayAc
 import { maybeCorrectionSignal, extractCorrectionCandidate } from "./src/corrections";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
-import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, memoryQualityBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallXrayBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
+import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, memoryQualityBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallEffectivenessBrowserOptions, recallXrayBrowserOptions, relationshipQualityBrowserOptions, storeQualityBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
@@ -64,14 +64,19 @@ import { linkEvidenceToCandidate } from "./src/evidence-link";
 import { exportMemoryGraph, renderMemoryGraphSummary, saveMemoryGraphReport } from "./src/memory-graph";
 import { buildMemoryTimeline, renderMemoryTimeline, saveMemoryTimelineReport } from "./src/timeline";
 import { generateProcedureCandidates, renderProcedureCandidateReport, saveProcedureCandidateReport } from "./src/procedure-candidates";
+import { analyzeRecallEffectiveness, renderRecallEffectivenessReport } from "./src/recall-effectiveness";
 import { buildRecallXray, renderRecallXrayReport } from "./src/recall-xray";
 import { enqueueBackgroundAnalysis, listBackgroundAnalysisJobs, runBackgroundAnalysisQueue, type BackgroundAnalysisKind } from "./src/background-analysis";
 import { renderHealthAuditReport, runMemoryHealthAudit, saveHealthAuditReport } from "./src/health-audit";
+import { appendRuntimeEvent } from "./src/runtime-events";
 import { analyzeMemoryQuality, renderMemoryQualityReport } from "./src/memory-quality";
+import { analyzeRelationshipQuality, renderRelationshipQualityReport } from "./src/relationship-quality";
+import { analyzeStoreQuality, renderStoreQualityReport } from "./src/store-quality";
 import { InvocationProfiler, renderInvocationProfileReport } from "./src/profiling";
 import { scoreMemoryWorth } from "./src/memory-worth";
 import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
 import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-analysis";
+import { renderGovernanceSimulationReport, simulatePatchImpact } from "./src/governance-simulation";
 import { resolveMemoryProfile } from "./src/profile";
 import { exportToPiGovernanceBundle, importFromPiGovernanceBundle, runPiGovernanceDoctor } from "./src/pi-governance-compat";
 import type { CaptureCandidate, CodebaseAnalysisKind, CodebaseAnalysisTool, MemoryKind } from "./src/types";
@@ -116,6 +121,20 @@ function extractText(content: unknown): string {
   return "";
 }
 
+function extractMessageModel(message: any): string | null {
+  const provider = typeof message?.provider === "string" ? message.provider.trim() : "";
+  const model = typeof message?.model === "string" ? message.model.trim() : "";
+  if (provider && model) return `${provider}/${model}`;
+  return model || null;
+}
+
+function resolveConsolidationModel(observedModel: string | null): { model: string | null; source: "env" | "current" | "pi-default" } {
+  const preferred = process.env.PI_MEMORY_CONSOLIDATION_MODEL?.trim();
+  if (preferred) return { model: preferred, source: "env" };
+  if (observedModel?.trim()) return { model: observedModel.trim(), source: "current" };
+  return { model: null, source: "pi-default" };
+}
+
 export default function persistentIntelligence(pi: ExtensionAPI) {
   // root is resolved at session_start based on cwd — mutable for localPath support
   let root = resolveRoot();
@@ -123,6 +142,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
   const pendingUserMessages: string[] = [];
   const pendingAssistantMessages: string[] = [];
+  let lastObservedModel: string | null = null;
   let sessionCwd = process.cwd();
 
   // FTS index — synced after every canonical mutation
@@ -464,6 +484,8 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
           }
         }
       } else if (msg.role === "assistant") {
+        const observed = extractMessageModel(msg);
+        if (observed) lastObservedModel = observed;
         const text = extractText(msg.content);
         if (text.trim()) {
           pendingAssistantMessages.push(text);
@@ -486,16 +508,23 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
     // LLM consolidation — extracts candidates to inbox, deduped by Jaccard
     const cfg = loadConfig(root);
-    const consolidationModel = process.env.PI_MEMORY_CONSOLIDATION_MODEL ?? "claude-haiku-4-5-20251001";
-    let consolidationResult: { candidates_added: number; candidates_skipped_dedup: number } | null = null;
+    const consolidationModel = resolveConsolidationModel(lastObservedModel);
+    let consolidationResult: ConsolidationResult | null = null;
 
     if (pendingUserMessages.length >= 3) {
-      try {
-        consolidationResult = await runConsolidation(
-          root, pendingUserMessages, pendingAssistantMessages,
-          todayString(), sessionCwd, pi, consolidationModel,
+      consolidationResult = await runConsolidation(
+        root, pendingUserMessages, pendingAssistantMessages,
+        todayString(), sessionCwd, pi, consolidationModel.model,
+      );
+      if (consolidationResult.status === "failed") {
+        const modelLabel = consolidationModel.model ? `${consolidationModel.model} (${consolidationModel.source})` : "Pi CLI default";
+        const reason = consolidationResult.failure_reason ?? "unknown failure";
+        appendRuntimeEvent(root, { type: "warn", severity: "medium", component: "consolidation", message: `session consolidation failed using ${modelLabel}: ${reason}` });
+        appendDailyLog(
+          root, todayString(),
+          `<!-- ${nowIso()} -->\n## Consolidation skipped\n- Persistent Intelligence could not run session consolidation using ${modelLabel}: ${reason}`,
         );
-      } catch { /* best-effort */ }
+      }
     }
 
     // ── Tiered auto-curation ──────────────────────────────────────────
@@ -555,6 +584,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
     pendingUserMessages.length = 0;
     pendingAssistantMessages.length = 0;
+    lastObservedModel = null;
 
     await updateQmd();
       syncFtsIndex(root, ftsIndex);
@@ -711,7 +741,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         `Session index: ${sessionStore.size()} sessions (file-watch + 5min sync active)`,
         `Auto-curation: ${cfg.curator.autoCurate} (threshold: ${cfg.curator.autoCurateHighThreshold})`,
         `Injection mode: ${cfg.retrieval.injectionMode}`,
-        `Consolidation model: ${process.env.PI_MEMORY_CONSOLIDATION_MODEL ?? "claude-haiku-4-5-20251001 (default)"}`,
+        `Consolidation model: ${(() => { const resolved = resolveConsolidationModel(lastObservedModel); return resolved.model ? `${resolved.model} (${resolved.source})` : "Pi CLI default (no --model override)"; })()}`,
         `Vault: ${process.env.PI_VAULT_PATH ?? cfg.vault.path ?? "not configured (set PI_VAULT_PATH)"}`,
         `Inbox: ${listCandidates(root).filter((c) => c.status === "new").length} pending candidate(s)`,
         "",
@@ -941,6 +971,36 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("memory-recall-effectiveness", {
+    description: "Browse report-only analytics for recalled, excluded, never-recalled, and correction-adjacent memories. Usage: /memory-recall-effectiveness [--plain|--json]",
+    handler: async (args, ctx) => {
+      try {
+        const report = analyzeRecallEffectiveness(root, { now: nowIso() });
+        const text = renderRecallEffectivenessReport(report);
+        rememberCommand("memory-recall-effectiveness", text, `recall effectiveness: avg ${report.summary.average_effectiveness}/100, ${report.recommendations.length} recommendations`);
+        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.summary.never_recalled_count || report.summary.corrected_after_recall_count ? "warning" : "success");
+        else await openBrowser(ctx, recallEffectivenessBrowserOptions(report), text);
+      } catch (err) {
+        ctx.ui.notify(`Recall effectiveness analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-store-quality", {
+    description: "Browse report-only aggregate store quality across memory, relationships, governance, inbox, and runtime. Usage: /memory-store-quality [--plain|--json]",
+    handler: async (args, ctx) => {
+      try {
+        const report = analyzeStoreQuality(root, { now: nowIso() });
+        const text = renderStoreQualityReport(report);
+        rememberCommand("memory-store-quality", text, `store quality: ${report.overall_score}/100, ${report.recommendations.length} recommendations`);
+        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.overall_score < 85 ? "warning" : "success");
+        else await openBrowser(ctx, storeQualityBrowserOptions(report), text);
+      } catch (err) {
+        ctx.ui.notify(`Store quality analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("memory-quality", {
     description: "Browse report-only per-memory quality and lifecycle analysis. Usage: /memory-quality [--plain|--json]",
     handler: async (args, ctx) => {
@@ -952,6 +1012,21 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         else await openBrowser(ctx, memoryQualityBrowserOptions(report), text);
       } catch (err) {
         ctx.ui.notify(`Memory quality analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-relationship-quality", {
+    description: "Browse report-only quality analysis for memory graph relationships. Usage: /memory-relationship-quality [--plain|--json]",
+    handler: async (args, ctx) => {
+      try {
+        const report = analyzeRelationshipQuality(root, { now: nowIso() });
+        const text = renderRelationshipQualityReport(report);
+        rememberCommand("memory-relationship-quality", text, `relationship quality: avg ${report.summary.average_relationship_quality}/100, ${report.recommendations.length} recommendations`);
+        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.summary.weak_edge_count || report.summary.orphan_memory_count ? "warning" : "success");
+        else await openBrowser(ctx, relationshipQualityBrowserOptions(report), text);
+      } catch (err) {
+        ctx.ui.notify(`Relationship quality analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
       }
     },
   });
@@ -1215,6 +1290,24 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("memory-simulate-patch", {
+    description: "Preview patch effects on quality scores without applying mutation. Usage: /memory-simulate-patch <patch-id> [--plain|--json]",
+    handler: async (args, ctx) => {
+      const parsed = parseCommandArgs(args);
+      const patchId = parsed.positional[0];
+      if (!patchId) { ctx.ui.notify("Usage: /memory-simulate-patch <patch-id> [--plain|--json]", "warning"); return; }
+      try {
+        const patch = readPatchFile(root, patchId);
+        const report = simulatePatchImpact(root, patch, { now: nowIso() });
+        const text = renderGovernanceSimulationReport(report);
+        rememberCommand("memory-simulate-patch", text, `simulate patch ${patch.patch_id}: store delta ${report.deltas.store_quality_delta}`);
+        notifyStructured(ctx, args, report, text, report.deltas.store_quality_delta < 0 ? "warning" : "info");
+      } catch (err) {
+        ctx.ui.notify(`Patch simulation failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("memory-patches", {
     description: "List pending patch files",
     handler: async (_args, ctx) => {
@@ -1314,19 +1407,20 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         ctx.ui.notify("Not enough conversation to consolidate (need at least 2 user messages).", "warning");
         return;
       }
-      const model = process.env.PI_MEMORY_CONSOLIDATION_MODEL ?? "claude-haiku-4-5-20251001";
-      ctx.ui.notify("Running consolidation…", "info");
-      try {
-        const result = await runConsolidation(root, pendingUserMessages, pendingAssistantMessages, todayString(), sessionCwd, pi, model);
-        await updateQmd();
+      const resolved = resolveConsolidationModel(lastObservedModel);
+      const modelLabel = resolved.model ? `${resolved.model} (${resolved.source})` : "Pi CLI default";
+      ctx.ui.notify(`Running consolidation using ${modelLabel}…`, "info");
+      const result = await runConsolidation(root, pendingUserMessages, pendingAssistantMessages, todayString(), sessionCwd, pi, resolved.model);
+      await updateQmd();
       syncFtsIndex(root, ftsIndex);
-        if (result.candidates_added > 0) {
-          ctx.ui.notify(`Added ${result.candidates_added} candidate(s) to inbox (${result.candidates_skipped_dedup} deduped). Run /curate-memory to review.`, "success");
-        } else {
-          ctx.ui.notify(`No new patterns extracted (${result.candidates_skipped_dedup} deduped as already known).`, "info");
-        }
-      } catch (err) {
-        ctx.ui.notify(`Consolidation failed: ${(err as Error).message}`, "error");
+      if (result.status === "failed") {
+        const reason = result.failure_reason ?? "unknown failure";
+        appendRuntimeEvent(root, { type: "warn", severity: "medium", component: "consolidation", message: `manual consolidation failed using ${modelLabel}: ${reason}` });
+        ctx.ui.notify(`Consolidation failed using ${modelLabel}: ${reason}`, "error");
+      } else if (result.candidates_added > 0) {
+        ctx.ui.notify(`Added ${result.candidates_added} candidate(s) to inbox (${result.candidates_skipped_dedup} deduped). Run /curate-memory to review.`, "success");
+      } else {
+        ctx.ui.notify(`No new patterns extracted (${result.candidates_skipped_dedup} deduped as already known).`, "info");
       }
     },
   });

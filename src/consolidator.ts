@@ -56,6 +56,9 @@ export interface ConsolidationResult {
   candidates_rejected_worth?: number;
   candidates_daily_only?: number;
   inquiries_created?: number;
+  status?: "ok" | "failed";
+  failure_reason?: string;
+  model_used?: string;
 }
 
 export interface RawCandidate {
@@ -178,7 +181,24 @@ export function applyConsolidation(
 // ─── Runner ───────────────────────────────────────────────────────────
 
 export interface ConsolidationRunner {
-  exec(command: string, args: string[], options?: { timeout?: number; cwd?: string }): Promise<{ stdout: string; code: number }>;
+  exec(command: string, args: string[], options?: { timeout?: number; cwd?: string }): Promise<{ stdout: string; stderr?: string; code: number }>;
+}
+
+export function buildConsolidationCommandArgs(prompt: string, model?: string | null): string[] {
+  const args = ["-p", prompt, "--print", "--no-extensions"];
+  if (model?.trim()) args.push("--model", model.trim());
+  return args;
+}
+
+function failedConsolidation(reason: string, model?: string | null): ConsolidationResult {
+  return {
+    candidates_extracted: 0,
+    candidates_added: 0,
+    candidates_skipped_dedup: 0,
+    status: "failed",
+    failure_reason: reason.slice(0, 500),
+    model_used: model?.trim() || undefined,
+  };
 }
 
 export async function runConsolidation(
@@ -188,24 +208,32 @@ export async function runConsolidation(
   today: string,
   sessionRef: string,
   runner: ConsolidationRunner,
-  model = "claude-haiku-4-5-20251001",
+  model?: string | null,
 ): Promise<ConsolidationResult> {
   const prompt = buildConsolidationPrompt(userMessages, assistantMessages);
 
-  const result = await Promise.race([
-    runner.exec("pi", ["-p", prompt, "--print", "--no-extensions", "--model", model], {
-      timeout: 45_000,
-      cwd: sessionRef,
-    }),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("consolidation timeout")), 60_000)
-    ),
-  ]);
+  let result: { stdout: string; stderr?: string; code: number };
+  try {
+    result = await Promise.race([
+      runner.exec("pi", buildConsolidationCommandArgs(prompt, model), {
+        timeout: 45_000,
+        cwd: sessionRef,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("consolidation timeout")), 60_000)
+      ),
+    ]);
+  } catch (err) {
+    return failedConsolidation(err instanceof Error ? err.message : String(err), model);
+  }
 
-  if (result.code !== 0 || !result.stdout) {
-    return { candidates_extracted: 0, candidates_added: 0, candidates_skipped_dedup: 0 };
+  if (result.code !== 0) {
+    return failedConsolidation((result.stderr || result.stdout || `pi exited with code ${result.code}`).trim(), model);
+  }
+  if (!result.stdout.trim()) {
+    return failedConsolidation("pi consolidation returned empty stdout", model);
   }
 
   const parsed = parseConsolidationResponse(result.stdout);
-  return applyConsolidation(root, parsed, today, sessionRef);
+  return { ...applyConsolidation(root, parsed, today, sessionRef), status: "ok", model_used: model?.trim() || undefined };
 }

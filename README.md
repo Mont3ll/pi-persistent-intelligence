@@ -31,7 +31,10 @@ PI stores data locally under `~/.pi/agent/pi-memory/` by default. Project-local 
 /curate-memory
 /memory-doctor
 /memory-health-audit
+/memory-store-quality
+/memory-recall-effectiveness
 /memory-quality
+/memory-relationship-quality
 /memory-diagnostics
 ```
 
@@ -67,7 +70,7 @@ The public model is **Retain, Recall, Reflect**:
 
 - **Retain** useful candidates with evidence.
 - **Recall** scoped memory with policy, search, and diagnostics.
-- **Reflect** through reviewable maintenance, abstraction, and procedure artifacts.
+- **Reflect** through reviewable health, quality, recall, relationship, maintenance, abstraction, and procedure reports.
 
 See [Retain, Recall, Reflect](docs/retain-recall-reflect.md) for the longer model.
 
@@ -93,7 +96,7 @@ observation or correction
   -> diagnostics and maintenance recommendations
 ```
 
-Durable memory changes are patch-governed. No record is silently mutated. Low-trust sources, generated content, repository text, contested records, and L1 identity proposals require review.
+Durable memory changes are patch-governed. No record is silently mutated. Low-trust sources, generated content, repository text, contested records, and L1 identity proposals require review. Quality dashboards, relationship analysis, recall effectiveness, patch simulation, and governance reports are review-only unless you explicitly apply a patch.
 
 ## Relationship to pi-governance-rs
 
@@ -174,6 +177,8 @@ Disabled standalone mode is valid.
 | Redacted export | Best-effort, user-reviewed redaction metadata included |
 | Contested records | Warned separately; never injected as hard rules |
 | Vault integration | Optional; promotion reports do not mutate vault files automatically |
+| Quality and recall reports | Health, quality, relationship, store, recall, and patch-simulation reports are review-only |
+| Session consolidation | Uses the configured/current Pi model when available; failures are surfaced in runtime events and daily logs |
 | pi-governance-rs bridge | Optional diagnostics only; no MCP server in this package |
 
 ## Documentation
