@@ -135,7 +135,7 @@ Environment variables override config file values.
 | Variable | Default | Description |
 |---|---|---|
 | `PI_MEMORY_ROOT` | `~/.pi/agent/pi-memory/` | Override the memory root directory |
-| `PI_MEMORY_CONSOLIDATION_MODEL` | `claude-haiku-4-5-20251001` | LLM model for session-end consolidation |
+| `PI_MEMORY_CONSOLIDATION_MODEL` | current Pi session model, then Pi CLI default | Optional preferred LLM model for session-end consolidation. If unset, PI uses the model observed in the active Pi session; if no model has been observed, the consolidation subprocess omits `--model` and lets the Pi CLI choose its configured default. |
 | `PI_VAULT_PATH` | `config.vault.path` | Path to Obsidian vault; enables `vault_ref` auto-suggestions during curation |
 
 ---

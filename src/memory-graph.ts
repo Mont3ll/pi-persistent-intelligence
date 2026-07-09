@@ -8,6 +8,7 @@ import { ensureMemoryDirs } from "./paths";
 import { readDeletionTombstones } from "./tombstones";
 import { loadAllRecords } from "./store";
 import { redactSecretsInObject } from "./secret-scanner";
+import type { CaptureCandidate, DeletionTombstone, EvidenceRecord, InquiryRecord, MemoryRecord, ReinforcementEvent } from "./types";
 
 export type MemoryGraphNodeType = "memory_record" | "evidence_record" | "inquiry" | "reinforcement_event" | "tombstone" | "candidate" | "patch" | "meta_candidate";
 export type MemoryGraphEdgeType = "supported_by" | "created_by" | "contradicted_by" | "qualifies" | "supersedes" | "superseded_by" | "tombstoned_by" | "blocked_by" | "related_to" | "reinforced_by" | "corrected_by" | "proposed_by" | "answered_by" | "matched_to";
@@ -41,18 +42,28 @@ function cleanPayload(value: Record<string, unknown>): Record<string, unknown> {
   return redactSecretsInObject(value) as Record<string, unknown>;
 }
 
-export function exportMemoryGraph(root: string, now = new Date().toISOString()): MemoryGraphExport {
+export interface MemoryGraphContext {
+  generated_at: string;
+  memories: MemoryRecord[];
+  evidence: EvidenceRecord[];
+  tombstones?: DeletionTombstone[];
+  inquiries?: InquiryRecord[];
+  reinforcements?: ReinforcementEvent[];
+  candidates?: CaptureCandidate[];
+}
+
+export function exportMemoryGraphFromContext(ctx: MemoryGraphContext): MemoryGraphExport {
   const nodes: MemoryGraphNode[] = [];
   const edges: MemoryGraphEdge[] = [];
   const addNode = (type: MemoryGraphNodeType, id: string, label: string, payload?: Record<string, unknown>) => nodes.push({ id: nodeId(type, id), type, label, payload: payload ? cleanPayload(payload) : undefined });
   const addEdge = (type: MemoryGraphEdgeType, from: string, to: string, label?: string) => edges.push({ id: `${type}:${from}->${to}`, type, from, to, label });
 
-  const memories = loadAllRecords(root);
-  const evidence = readEvidenceRecords(root);
-  const tombstones = readDeletionTombstones(root);
-  const inquiries = readInquiryRecords(root);
-  const reinforcements = readReinforcementEvents(root);
-  const candidates = listCandidates(root);
+  const memories = ctx.memories;
+  const evidence = ctx.evidence;
+  const tombstones = ctx.tombstones ?? [];
+  const inquiries = ctx.inquiries ?? [];
+  const reinforcements = ctx.reinforcements ?? [];
+  const candidates = ctx.candidates ?? [];
 
   for (const memory of memories) {
     addNode("memory_record", memory.id, memory.statement.slice(0, 80), { ...memory });
@@ -90,7 +101,19 @@ export function exportMemoryGraph(root: string, now = new Date().toISOString()):
 
   nodes.sort((a, b) => a.id.localeCompare(b.id));
   edges.sort((a, b) => a.id.localeCompare(b.id));
-  return redactSecretsInObject({ generated_at: now, nodes, edges }) as MemoryGraphExport;
+  return redactSecretsInObject({ generated_at: ctx.generated_at, nodes, edges }) as MemoryGraphExport;
+}
+
+export function exportMemoryGraph(root: string, now = new Date().toISOString()): MemoryGraphExport {
+  return exportMemoryGraphFromContext({
+    generated_at: now,
+    memories: loadAllRecords(root),
+    evidence: readEvidenceRecords(root),
+    tombstones: readDeletionTombstones(root),
+    inquiries: readInquiryRecords(root),
+    reinforcements: readReinforcementEvents(root),
+    candidates: listCandidates(root),
+  });
 }
 
 export function renderMemoryGraphSummary(graph: MemoryGraphExport): string {

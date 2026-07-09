@@ -52,6 +52,12 @@ src/
   verifier.ts                    deterministic candidate verifier
   matching.ts                    normalized key candidate matching
   memory-key.ts                  normalized memory key utilities
+  memory-quality.ts              per-memory lifecycle quality analysis
+  relationship-quality.ts        memory graph relationship quality analysis
+  store-quality.ts               aggregate store quality dashboard
+  recall-effectiveness.ts        recall telemetry quality analysis
+  recall-events.ts               runtime recall telemetry records
+  governance-simulation.ts       report-only patch impact simulation
   maintenance.ts                 reinforcement-based maintenance recommendations
   reinforcement.ts               reinforcement event helpers
   inquiries.ts                   inquiry record helpers

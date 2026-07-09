@@ -97,7 +97,7 @@ Decisions are `reject`, `daily_only`, `candidate`, and `inquiry`.
 
 ### `/memory-background enqueue <kind>|run|list`
 
-Queues and runs inspectable local background analysis jobs. Supported report-producing kinds include `diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`, `meta_consolidation`, and `vault_promotion_candidates`.
+Queues and runs inspectable local background analysis jobs. Supported report-producing kinds include `diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`, `memory_health_audit`, `memory_relationship_quality`, `memory_recall_effectiveness`, `memory_store_quality`, `meta_consolidation`, and `vault_promotion_candidates`.
 
 ```
 /memory-background enqueue diagnostics
@@ -105,7 +105,7 @@ Queues and runs inspectable local background analysis jobs. Supported report-pro
 /memory-background list
 ```
 
-Background jobs do not directly mutate durable memory. Meta-consolidation and vault-promotion background jobs are review/report-only; they do not mutate L1 or vault files.
+Background jobs do not directly mutate durable memory. Health, quality, relationship, recall, store, meta-consolidation, and vault-promotion background jobs are review/report-only; they do not mutate L1, L2, or vault files.
 
 ---
 
@@ -276,6 +276,49 @@ Regenerates the rendered Markdown projection from canonical JSONL.
 
 ---
 
+### `/memory-store-quality`
+
+Shows aggregate store health across memory quality, relationship quality, recall effectiveness, governance, inbox, and runtime signals. This is report-only.
+
+```bash
+/memory-store-quality
+/memory-store-quality --json
+```
+
+---
+
+### `/memory-recall-effectiveness`
+
+Reviews recall telemetry: selected memories, excluded memories, never-recalled memories, and memories that were corrected after recall. This is operational analytics and does not mutate durable memory.
+
+```bash
+/memory-recall-effectiveness
+/memory-recall-effectiveness --plain
+```
+
+---
+
+### `/memory-relationship-quality`
+
+Analyzes memory graph relationship health, including orphan/dead-end memories, weak evidence links, hub concentration, and useful relationship density. This is report-only.
+
+```bash
+/memory-relationship-quality
+```
+
+---
+
+### `/memory-simulate-patch <patch-id>`
+
+Previews how applying a patch would affect memory quality, relationship quality, and store quality scores. It never calls patch application and reports `mutation_performed: false`.
+
+```bash
+/memory-simulate-patch patch_123 --plain
+/memory-simulate-patch patch_123 --json
+```
+
+---
+
 ### `/consolidate-memory`
 
 Manually triggers LLM session extraction from buffered messages. Results go to the inbox.
@@ -284,7 +327,7 @@ Manually triggers LLM session extraction from buffered messages. Results go to t
 /consolidate-memory
 ```
 
-Requires at least two buffered user messages in the current session.
+Requires at least two buffered user messages in the current session. By default, consolidation uses the current Pi session model; if no model has been observed it lets the Pi CLI use its configured default. Set `PI_MEMORY_CONSOLIDATION_MODEL` to force a preferred consolidation model.
 
 ---
 

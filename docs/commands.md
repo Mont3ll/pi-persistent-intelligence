@@ -39,13 +39,17 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 
 | Command | Description |
 |---|---|
+| `/memory-store-quality [--plain\|--json]` | Browse report-only aggregate store quality across memory, relationships, recall effectiveness, governance, inbox, and runtime; never mutates memory. |
+| `/memory-recall-effectiveness [--plain\|--json]` | Browse report-only analytics for recalled, excluded, never-recalled, and correction-adjacent memories; never mutates memory. |
 | `/memory-quality [--plain\|--json]` | Browse report-only per-memory quality and lifecycle analysis with review recommendations; never mutates memory. |
+| `/memory-relationship-quality [--plain\|--json]` | Browse report-only relationship-quality analysis across memory graph edges, orphan/dead-end memories, hubs, and weak links; never mutates memory. |
 | `/memory-worth <observation>` | Score whether an observation should be rejected, kept daily-only, captured as a candidate, or turned into an inquiry. |
+| `/memory-simulate-patch <patch-id> [--plain\|--json]` | Preview patch effects on memory, relationship, and store-quality scores without applying mutation. |
 | `/memory-patches` | List pending patch files. |
 | `/apply-memory-patch <id>` | Apply default-selected operations from a patch file. |
 | `/maintain-memory [--mode=propose\|auto] [--report]` | Generate confidence-decay patches and reinforcement-based stability recommendations. |
 | `/render-memory` | Regenerate Markdown projection from canonical JSONL. |
-| `/consolidate-memory` | Manually trigger session-end LLM extraction. |
+| `/consolidate-memory` | Manually trigger session-end LLM extraction using the current Pi model by default; set `PI_MEMORY_CONSOLIDATION_MODEL` to prefer a specific model. |
 | `/meta-consolidation [--handoff]` | Propose L1 patterns from stable L2 clusters; review-only and never auto-applied. |
 | `/memory-handoff [--goal <goal>]` | Generate a handoff snapshot of current active memory state. |
 
@@ -53,7 +57,7 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 
 | Command | Description |
 |---|---|
-| `/memory-background enqueue <kind>` | Queue an inspectable local background analysis job. Supported kinds include `diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`, `memory_health_audit`, `meta_consolidation`, and `vault_promotion_candidates`. |
+| `/memory-background enqueue <kind>` | Queue an inspectable local background analysis job. Supported kinds include `diagnostics`, `provenance_liveness`, `reverification`, `memory_graph`, `memory_timeline`, `procedure_candidates`, `memory_worth_review`, `memory_health_audit`, `memory_relationship_quality`, `memory_recall_effectiveness`, `memory_store_quality`, `meta_consolidation`, and `vault_promotion_candidates`. |
 | `/memory-background run` | Run queued background jobs and write report artifacts. |
 | `/memory-background list [--plain\|--json]` | Browse queued, running, succeeded, and failed background analysis jobs. |
 | `/memory-evidence [list] [--plain\|--json]` | Browse evidence and provenance records. |
@@ -95,11 +99,15 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 /curate-memory
 /memory-diagnostics --save
 /memory-health-audit --save
+/memory-store-quality
+/memory-recall-effectiveness
 /memory-quality
+/memory-relationship-quality
 /memory-recall-xray "release workflow" --profile
 /memory-export --format pi-governance --redacted --output bundle.json
 /memory-import --format pi-governance bundle.json
 /memory-import --format pi-governance bundle.json --apply --backup --redacted-aware
+/memory-simulate-patch patch_123 --plain
 /memory-governance doctor
 ```
 

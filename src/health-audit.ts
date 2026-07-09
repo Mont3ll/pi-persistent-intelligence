@@ -3,13 +3,17 @@ import { join } from "node:path";
 import { readEvidenceRecords } from "./evidence";
 import { listCandidates } from "./inbox";
 import { analyzeMemoryQuality } from "./memory-quality";
+import { exportMemoryGraphFromContext } from "./memory-graph";
+import { analyzeRelationshipQualityFromGraph } from "./relationship-quality";
 import { ensureMemoryDirs } from "./paths";
+import { analyzeRecallEffectiveness } from "./recall-effectiveness";
 import { readRecentRuntimeEvents } from "./runtime-events";
 import { redactSecrets, redactSecretsInObject } from "./secret-scanner";
 import { loadAllRecords } from "./store";
+import { buildStoreQualityReport, type StoreQualityReport } from "./store-quality";
 import type { CaptureCandidate, MemoryRecord } from "./types";
 
-export type HealthCategoryId = "integrity" | "governance" | "memory_quality" | "inbox" | "runtime";
+export type HealthCategoryId = "integrity" | "governance" | "memory_quality" | "relationship_quality" | "inbox" | "runtime";
 export type HealthSeverity = "info" | "warning" | "error";
 
 export interface HealthAuditFinding {
@@ -72,6 +76,7 @@ export interface MemoryHealthAuditReport {
   recommendations: HealthAuditRecommendation[];
   snapshot: HealthAuditSnapshot;
   trend?: HealthAuditTrend;
+  store_quality?: Pick<StoreQualityReport, "overall_score" | "status" | "metrics" | "recommendations" | "mutation_performed">;
   mutation_performed: false;
 }
 
@@ -161,6 +166,26 @@ const qualityModule: MemoryHealthAuditModule = {
   },
 };
 
+const relationshipQualityModule: MemoryHealthAuditModule = {
+  id: "relationship_quality",
+  label: "Relationship Quality",
+  run(ctx) {
+    const quality = analyzeRelationshipQualityFromGraph({
+      generated_at: ctx.now,
+      graph: exportMemoryGraphFromContext({ generated_at: ctx.now, memories: ctx.records, evidence: ctx.evidence }),
+      records: ctx.records,
+      evidence: ctx.evidence,
+    });
+    const findings: HealthAuditFinding[] = [];
+    const weak = quality.relationships.filter((edge) => edge.quality_band === "weak" || edge.quality_band === "broken");
+    if (weak.length) findings.push(finding({ code: "weak_memory_relationship", category: "relationship_quality", severity: "warning", reason: `${weak.length} relationship edge(s) are weak or broken and should be reviewed.`, affected_ids: weak.map((edge) => edge.edge_id), evidence_ids: [] }));
+    const orphans = quality.memory_nodes.filter((node) => node.signals.includes("orphan_memory"));
+    if (orphans.length) findings.push(finding({ code: "orphan_memory_relationship", category: "relationship_quality", severity: "warning", reason: `${orphans.length} memory record(s) have no live evidence or useful relationship context.`, affected_ids: orphans.map((node) => node.memory_id), evidence_ids: [] }));
+    if (quality.summary.cyclic_memory_pair_count > 0) findings.push(finding({ code: "cyclic_memory_relationship", category: "relationship_quality", severity: "warning", reason: `${quality.summary.cyclic_memory_pair_count} reciprocal memory relationship pair(s) may need lifecycle review.`, affected_ids: [], evidence_ids: [] }));
+    return findings;
+  },
+};
+
 const inboxModule: MemoryHealthAuditModule = {
   id: "inbox",
   label: "Inbox",
@@ -174,12 +199,12 @@ const runtimeModule: MemoryHealthAuditModule = {
   id: "runtime",
   label: "Runtime",
   run(ctx) {
-    const warnings = readRecentRuntimeEvents(ctx.root, { hours: 48, minSeverity: "medium" }).filter((event) => event.type === "warn" || event.type === "error");
+    const warnings = readRecentRuntimeEvents(ctx.root, { hours: 48, minSeverity: "medium", now: ctx.now }).filter((event) => event.type === "warn" || event.type === "error");
     return warnings.length ? [finding({ code: "recent_runtime_warnings", category: "runtime", severity: warnings.some((event) => event.type === "error") ? "error" : "warning", reason: `${warnings.length} medium/high runtime warning or error event(s) occurred in the last 48 hours.`, affected_ids: warnings.map((event) => `${event.component}:${event.timestamp}`), evidence_ids: [] })] : [];
   },
 };
 
-export const DEFAULT_HEALTH_AUDIT_MODULES: MemoryHealthAuditModule[] = [integrityModule, governanceModule, qualityModule, inboxModule, runtimeModule];
+export const DEFAULT_HEALTH_AUDIT_MODULES: MemoryHealthAuditModule[] = [integrityModule, governanceModule, qualityModule, relationshipQualityModule, inboxModule, runtimeModule];
 
 function categoryScore(module: MemoryHealthAuditModule, findings: HealthAuditFinding[]): HealthCategoryScore {
   const own = findings.filter((f) => f.category === module.id);
@@ -246,6 +271,9 @@ export function runMemoryHealthAudit(root: string, options: RunMemoryHealthAudit
     overall_score: overall,
     runtime_warnings: runtimeWarnings,
   };
+  const memoryQuality = analyzeMemoryQuality(root, { now });
+  const relationshipQuality = analyzeRelationshipQualityFromGraph({ generated_at: now, graph: exportMemoryGraphFromContext({ generated_at: now, memories: records, evidence }), records, evidence });
+  const storeQuality = buildStoreQualityReport({ generated_at: now, memory: memoryQuality, relationships: relationshipQuality, recall: analyzeRecallEffectiveness(root, { now }), activeMemories: snapshot.active_memories, pendingCandidates: snapshot.candidate_count, runtimeWarnings, governanceSignals: findings.filter((finding) => finding.category === "governance").map((finding) => finding.code) });
   return {
     generated_at: now,
     root,
@@ -255,6 +283,7 @@ export function runMemoryHealthAudit(root: string, options: RunMemoryHealthAudit
     recommendations: findings.filter((f) => f.severity !== "info").map(recommendation),
     snapshot,
     trend: trendFor(root, snapshot),
+    store_quality: { overall_score: storeQuality.overall_score, status: storeQuality.status, metrics: storeQuality.metrics, recommendations: storeQuality.recommendations, mutation_performed: false },
     mutation_performed: false,
   };
 }
@@ -266,6 +295,7 @@ export function renderHealthAuditReport(report: MemoryHealthAuditReport): string
     "",
     `Generated: ${report.generated_at}`,
     `Health: ${report.health_score.overall} / 100`,
+    report.store_quality ? `Store quality: ${report.store_quality.overall_score} / 100 [${report.store_quality.status}]` : "Store quality: not computed",
     report.health_score.explanation,
     trend,
     "",

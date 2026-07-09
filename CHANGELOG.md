@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-09
+
+### Added
+
+- Added `/memory-relationship-quality` for report-only analysis of memory graph edges, orphan/dead-end memories, hubs, and weak relationship links.
+- Added `/memory-store-quality` for aggregate report-only store health across memory quality, relationship quality, recall effectiveness, governance, inbox, and runtime signals.
+- Added recall effectiveness telemetry and `/memory-recall-effectiveness` for reviewing selected, excluded, never-recalled, and correction-adjacent memories.
+- Added `/memory-simulate-patch` to preview patch effects on memory, relationship, and store-quality scores without applying mutations.
+- Added relationship-quality and store-quality background analysis job kinds.
+
+### Changed
+
+- Reused preloaded memory graph/context data in health and relationship-quality analysis to reduce repeated store reads.
+- Improved session consolidation model selection: consolidation now prefers `PI_MEMORY_CONSOLIDATION_MODEL`, then the current Pi session model, then the Pi CLI default without forcing a hard-coded model.
+- Updated public command and configuration docs for the new quality, recall, simulation, and consolidation behavior.
+
+### Fixed
+
+- Fixed silent session-consolidation failures by returning failure metadata, writing runtime events, and adding daily-log `Consolidation skipped` entries when consolidation cannot run.
+
+### Governance
+
+- Quality, relationship, recall, store, and patch-simulation reports remain review-only and do not mutate durable memory.
+- Governance simulation does not apply patches or write canonical memory stores.
+- Recall telemetry is operational runtime data and does not bypass patch-governed durable memory flows.
+- No automatic L1 promotion, skill writing, vault mutation, or durable mutation bypass was added.
+
+### Quality checks
+
+- `bun run typecheck`
+- `bun test`
+- `bun run eval`
+- `bun run test:stress`
+- `npm pack --dry-run`
+
 ## [0.12.0] - 2026-06-30
 
 ### Added

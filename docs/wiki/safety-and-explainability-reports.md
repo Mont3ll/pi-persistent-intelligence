@@ -1,6 +1,6 @@
 # Safety and Explainability Reports
 
-PI includes read-only reporting tools that explain why memory exists, whether its support is still alive, and what needs review. These tools do not mutate canonical memory.
+PI includes read-only reporting tools that explain why memory exists, whether its support is still alive, how well memory is recalled, and what needs review. These tools do not mutate canonical memory.
 
 ## Secret scanning
 
@@ -57,6 +57,32 @@ Existing records do not need migration. If `valid_from` is missing, PI treats `c
 When supporting evidence is redacted or deleted, PI recommends re-verification for dependent memories. If all structured evidence is invalidated, the recommendation is high priority. If some support remains, the recommendation is medium priority.
 
 PI does not silently lower trust class, delete the memory, or rewrite the statement. Review happens through diagnostics, maintenance, and patch governance.
+
+## Quality and recall dashboards
+
+Use:
+
+```bash
+/memory-health-audit
+/memory-store-quality
+/memory-quality
+/memory-relationship-quality
+/memory-recall-effectiveness
+```
+
+These dashboards are report-only. They summarize store-wide health, per-memory lifecycle quality, graph relationship quality, and recall effectiveness without writing canonical memory or applying patches. Recommendations are review inputs; durable changes still go through patch governance.
+
+`/memory-store-quality` combines memory quality, relationship quality, recall effectiveness, governance, inbox, and runtime signals into one aggregate report. `/memory-recall-effectiveness` uses runtime recall telemetry to surface never-recalled memories and correction-adjacent recall patterns.
+
+## Patch simulation
+
+Use:
+
+```bash
+/memory-simulate-patch patch_123 --plain
+```
+
+Patch simulation previews the likely effects of a patch on quality scores and governance risk. It does not call the patch applier, does not update candidate status, and reports `mutation_performed: false`.
 
 ## Injection modes
 

@@ -48,7 +48,9 @@ describe("memory health audit", () => {
     expect(report.generated_at).toBe("2026-07-07T00:00:00Z");
     expect(report.health_score.overall).toBeGreaterThan(0);
     expect(report.categories.map((c) => c.id)).toContain("governance");
+    expect(report.categories.map((c) => c.id)).toContain("relationship_quality");
     expect(report.snapshot.active_memories).toBe(1);
+    expect(report.store_quality?.overall_score).toBeGreaterThan(0);
     expect(report.findings.every((finding) => finding.mutation_performed === false)).toBe(true);
     expect(JSON.stringify(loadAllRecords(r))).toBe(before);
     rmSync(r, { recursive: true, force: true });
@@ -71,6 +73,7 @@ describe("memory health audit", () => {
     expect(codes).toContain("stale_inbox_candidate");
     expect(codes).toContain("recent_runtime_warnings");
     expect(codes).toContain("low_quality_memory");
+    expect(codes).toContain("weak_memory_relationship");
     expect(report.recommendations.length).toBeGreaterThanOrEqual(5);
     expect(report.recommendations.every((rec) => rec.review_required && rec.mutation_performed === false)).toBe(true);
     rmSync(r, { recursive: true, force: true });
@@ -90,7 +93,9 @@ describe("memory health audit", () => {
 
     expect(existsSync(firstPaths.markdownPath)).toBe(true);
     expect(existsSync(secondPaths.jsonPath)).toBe(true);
-    expect(readFileSync(secondPaths.markdownPath, "utf-8")).toContain("No automatic mutation performed");
+    const savedMarkdown = readFileSync(secondPaths.markdownPath, "utf-8");
+    expect(savedMarkdown).toContain("Store quality:");
+    expect(savedMarkdown).toContain("No automatic mutation performed");
     expect(snapshots).toHaveLength(2);
     expect(second.trend?.previous_timestamp).toBe("2026-07-07T00:00:00Z");
     expect(second.trend?.duplicates_delta).toBeGreaterThan(0);

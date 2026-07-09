@@ -3,11 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
-import { appendEvidenceRecord } from "../../src/evidence";
+import { appendEvidenceRecord, readEvidenceRecords } from "../../src/evidence";
+import { listCandidates } from "../../src/inbox";
 import { unsafeAddMemoryRecord, loadAllRecords } from "../../src/store";
-import { appendDeletionTombstone, createDeletionTombstone } from "../../src/tombstones";
-import { appendInquiryRecord, createInquiryRecord } from "../../src/inquiries";
-import { exportMemoryGraph } from "../../src/memory-graph";
+import { appendDeletionTombstone, createDeletionTombstone, readDeletionTombstones } from "../../src/tombstones";
+import { appendInquiryRecord, createInquiryRecord, readInquiryRecords } from "../../src/inquiries";
+import { readReinforcementEvents } from "../../src/reinforcement";
+import { exportMemoryGraph, exportMemoryGraphFromContext } from "../../src/memory-graph";
 import type { MemoryRecord } from "../../src/types";
 
 function root(): string { const r = mkdtempSync(join(tmpdir(), "pi-graph-")); ensureMemoryDirs(r); return r; }
@@ -37,6 +39,26 @@ describe("memory graph", () => {
     const graph = exportMemoryGraph(r);
     expect(graph.edges.some((e) => e.type === "supersedes" && e.from === "memory_record:new" && e.to === "memory_record:old")).toBe(true);
     expect(graph.edges.some((e) => e.type === "tombstoned_by" && e.from === "memory_record:old")).toBe(true);
+    rmSync(r, { recursive: true, force: true });
+  });
+
+  test("context export matches root export when supplied preloaded stores", () => {
+    const r = root();
+    appendEvidenceRecord(r, { id: "ev1", resource_id: "r", profile_id: "p", created_at: "2026-05-01", source_kind: "conversation", source_summary: "summary", trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: ["mem1"], redaction_status: "none" });
+    unsafeAddMemoryRecord(r, rec("mem1"));
+
+    const fromRoot = exportMemoryGraph(r, "2026-07-09T00:00:00Z");
+    const fromContext = exportMemoryGraphFromContext({
+      generated_at: "2026-07-09T00:00:00Z",
+      memories: loadAllRecords(r),
+      evidence: readEvidenceRecords(r),
+      tombstones: readDeletionTombstones(r),
+      inquiries: readInquiryRecords(r),
+      reinforcements: readReinforcementEvents(r),
+      candidates: listCandidates(r),
+    });
+
+    expect(fromContext).toEqual(fromRoot);
     rmSync(r, { recursive: true, force: true });
   });
 
