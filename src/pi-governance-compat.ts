@@ -1,11 +1,11 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { appendDailyLog } from "./daily";
 import { appendCandidate, listCandidates } from "./inbox";
 import { appendDeletionTombstone, readDeletionTombstones } from "./tombstones";
-import { readEvidenceRecords } from "./evidence";
-import { readInquiryRecords } from "./inquiries";
-import { readReinforcementEvents } from "./reinforcement";
+import { appendEvidenceRecord, readEvidenceRecords } from "./evidence";
+import { appendInquiryRecord, readInquiryRecords } from "./inquiries";
+import { appendReinforcementEvent, readReinforcementEvents } from "./reinforcement";
 import { loadAllRecords, unsafeAddMemoryRecord } from "./store";
 import { ensureMemoryDirs } from "./paths";
 import { loadConfig } from "./config";
@@ -52,7 +52,11 @@ export interface PiGovernancePatch {
   rule_type?: MemoryRuleType;
   tags?: string[];
   candidate_id?: string;
-  target_id?: string;
+  target_id?: string | null;
+  proposed_record?: PiGovernanceRecord | null;
+  reason?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface PiGovernanceSessionEntry {
@@ -105,8 +109,9 @@ export interface PiGovernanceImportOptions { dryRun?: boolean; backup?: boolean;
 
 export interface PiGovernanceImportResult {
   dry_run: boolean;
-  planned: { records_to_add: number; records_skipped_existing: number; candidates_to_add: number; tombstones_to_add: number; sessions_to_add: number };
-  applied: { records_added: number; records_skipped_existing: number; candidates_added: number; tombstones_added: number; sessions_added: number };
+  planned: { records_to_add: number; records_skipped_existing: number; candidates_to_add: number; evidence_to_add: number; inquiries_to_add: number; reinforcement_to_add: number; tombstones_to_add: number; sessions_to_add: number };
+  applied: { records_added: number; records_skipped_existing: number; candidates_added: number; evidence_added: number; inquiries_added: number; reinforcement_added: number; tombstones_added: number; sessions_added: number };
+  backup_path?: string;
   warnings: string[];
 }
 
@@ -117,7 +122,15 @@ export interface PiGovernanceDoctorReport {
   checks: Array<{ name: string; ok: boolean; message: string }>;
 }
 
-const PRODUCER_VERSION = "0.12.0";
+const PRODUCER_VERSION = "0.13.0";
+
+function normalizeTimestamp(value?: string): string {
+  if (!value) return new Date().toISOString();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${value}T00:00:00Z`;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) throw new Error(`Invalid portable timestamp: ${value}`);
+  return parsed.toISOString();
+}
 
 function mapLayer(layer: MemoryRecord["layer"]): PiGovernanceLayer {
   if (layer === "L1") return "l1_identity";
@@ -231,8 +244,8 @@ export function exportToPiGovernanceBundle(root: string, options: PiGovernanceEx
     evidence: record.evidence.map((e) => ({ schema_version: 1 as const, kind: evidenceKindForRust(e.type), uri: e.ref, note: e.note || null, trust_class: "unknown", durability: "unknown", source_kind: "unknown" })),
     scope: record.scope.type === "project" ? { level: "project", key: record.scope.project ?? null } : record.scope.type === "domain" ? { level: "domain", key: record.scope.domains?.[0] ?? null } : { level: "global", key: null },
     tags: record.tags,
-    created_at: record.created_at,
-    updated_at: record.updated_at,
+    created_at: normalizeTimestamp(record.created_at),
+    updated_at: normalizeTimestamp(record.updated_at),
     supersedes: record.supersedes,
     superseded_by: record.superseded_by,
     verification: { review: record.review, stability: record.stability },
@@ -295,8 +308,8 @@ function recordFromPi(record: PiGovernanceRecord, fallback: PiGovernanceImportOp
     evidence: (record.evidence_ids?.length ? record.evidence_ids : record.evidence?.map((e) => e.uri).filter(Boolean) ?? [`pi-governance:${record.id}`]).map((id) => ({ type: "manual", ref: id, note: "Imported from pi-governance bundle." })),
     confidence: record.confidence ?? 0.7,
     stability: "low",
-    created_at: record.created_at ?? new Date().toISOString(),
-    updated_at: record.updated_at ?? new Date().toISOString(),
+    created_at: normalizeTimestamp(record.created_at),
+    updated_at: normalizeTimestamp(record.updated_at),
     review: { cadence_days: 30, next_review: new Date(Date.now() + 30 * 86400_000).toISOString().slice(0, 10), change_condition: "Imported memory should be reviewed before relying on it." },
     status: record.status === "deleted" ? "deleted" : record.status === "tombstoned" ? "deleted" : record.status,
     supersedes: record.supersedes ?? [],
@@ -308,58 +321,78 @@ function recordFromPi(record: PiGovernanceRecord, fallback: PiGovernanceImportOp
 }
 
 function candidateFromPatch(patch: PiGovernancePatch, fallback: PiGovernanceImportOptions): CaptureCandidate | null {
-  if (patch.status !== "proposed" && patch.status !== "deferred") return null;
+  const proposed = patch.proposed_record ?? undefined;
   return {
     id: patch.candidate_id ?? patch.id,
-    profile_id: fallback.profile_id,
-    created_at: new Date().toISOString(),
+    profile_id: proposed?.profile_id ?? fallback.profile_id,
+    created_at: normalizeTimestamp(patch.created_at),
     source: { type: "pi-governance", ref: patch.id },
-    text: patch.claim ?? `Imported pi-governance patch ${patch.id}`,
-    tags: patch.tags ?? [],
-    evidence_refs: [],
-    confidence: 0.7,
-    status: "new",
-    ruleType: patch.rule_type,
-    memory_kind: patch.memory_kind,
+    text: patch.claim ?? proposed?.claim ?? `Imported pi-governance patch ${patch.id}`,
+    tags: patch.tags ?? proposed?.tags ?? [],
+    evidence_refs: proposed?.evidence_ids ?? proposed?.evidence?.map((item) => item.uri) ?? [],
+    confidence: proposed?.confidence ?? 0.7,
+    status: patch.status === "applied" ? "patched" : patch.status === "rejected" ? "rejected" : "new",
+    ruleType: patch.rule_type ?? proposed?.rule_type,
+    memory_kind: patch.memory_kind ?? proposed?.memory_kind,
     primary_trust_class: "agent_inference",
     durability_signal: "project",
     verification_status: "review_required",
   };
 }
 
+function createImportBackup(root: string): string {
+  const paths = ensureMemoryDirs(root);
+  const backup = join(root, "backups", `pi-governance-import-${Date.now()}`);
+  mkdirSync(backup, { recursive: true });
+  for (const [name, source] of [["memory", paths.memory.dir], ["inbox", paths.inbox.dir], ["daily", paths.daily]] as const) {
+    if (existsSync(source)) cpSync(source, join(backup, name), { recursive: true });
+  }
+  return backup;
+}
+
 export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceBundle, options: PiGovernanceImportOptions = {}): PiGovernanceImportResult {
   const dryRun = options.dryRun ?? true;
+  const paths = ensureMemoryDirs(root);
   const existingIds = new Set(loadAllRecords(root).map((record) => record.id));
   const existingCandidateIds = new Set(listCandidates(root).map((candidate) => candidate.id));
   const sourceRecords = bundle.records ?? [];
   const sourcePatches = bundle.patches ?? [];
+  const sourceEvidence = (bundle.evidence ?? []).filter((item) => typeof item.id === "string").map((item) => item as unknown as EvidenceRecord);
+  const sourceInquiries = bundle.inquiries ?? [];
+  const sourceReinforcement = bundle.reinforcement ?? [];
   const sourceTombstones = bundle.tombstones ?? [];
   const recordsToAdd = sourceRecords.map((record) => recordFromPi(record, options)).filter((record): record is MemoryRecord => !!record && !existingIds.has(record.id) && record.status !== "deleted");
   const recordsSkipped = sourceRecords.filter((record) => existingIds.has(record.id)).length;
   const candidatesToAdd = sourcePatches.map((patch) => candidateFromPatch(patch, options)).filter((candidate): candidate is CaptureCandidate => !!candidate && !existingCandidateIds.has(candidate.id));
+  const existingEvidenceIds = new Set(readEvidenceRecords(root).map((record) => record.id));
+  const evidenceToAdd = sourceEvidence.filter((record) => !existingEvidenceIds.has(record.id));
+  const existingInquiryIds = new Set(readInquiryRecords(root).map((record) => record.id));
+  const inquiriesToAdd = sourceInquiries.filter((record) => !existingInquiryIds.has(record.id));
+  const existingReinforcementIds = new Set(readReinforcementEvents(root).map((event) => event.id));
+  const reinforcementToAdd = sourceReinforcement.filter((event) => !existingReinforcementIds.has(event.id));
   const existingTombstones = new Set(readDeletionTombstones(root).map((tombstone) => tombstone.deleted_record_id));
   const tombstonesToAdd = sourceTombstones.filter((tombstone) => !existingTombstones.has(tombstone.deleted_record_id));
-  const sessionsToAdd = bundle.sessions ?? [];
+  const existingSessions = new Set(readdirSync(paths.daily).filter((name) => name.endsWith(".md")).flatMap((name) => readFileSync(join(paths.daily, name), "utf-8").split(/\n{2,}/).map((text) => `${basename(name, ".md")}:${text.trim()}`).filter((key) => !key.endsWith(":"))));
+  const sessionsToAdd = (bundle.sessions ?? []).filter((session) => !existingSessions.has(`${normalizeTimestamp(session.created_at).slice(0, 10)}:${session.text.trim()}`));
 
   const result: PiGovernanceImportResult = {
     dry_run: dryRun,
-    planned: {
-      records_to_add: recordsToAdd.length,
-      records_skipped_existing: recordsSkipped,
-      candidates_to_add: candidatesToAdd.length,
-      tombstones_to_add: tombstonesToAdd.length,
-      sessions_to_add: sessionsToAdd.length,
-    },
-    applied: { records_added: 0, records_skipped_existing: recordsSkipped, candidates_added: 0, tombstones_added: 0, sessions_added: 0 },
+    planned: { records_to_add: recordsToAdd.length, records_skipped_existing: recordsSkipped, candidates_to_add: candidatesToAdd.length, evidence_to_add: evidenceToAdd.length, inquiries_to_add: inquiriesToAdd.length, reinforcement_to_add: reinforcementToAdd.length, tombstones_to_add: tombstonesToAdd.length, sessions_to_add: sessionsToAdd.length },
+    applied: { records_added: 0, records_skipped_existing: recordsSkipped, candidates_added: 0, evidence_added: 0, inquiries_added: 0, reinforcement_added: 0, tombstones_added: 0, sessions_added: 0 },
     warnings: [],
   };
   if (bundle.redaction?.enabled && !options.redactedAware) result.warnings.push("Bundle is redacted; import remains review-only unless redactedAware is set.");
   if (dryRun) return result;
+  const changed = Object.entries(result.planned).some(([key, value]) => key !== "records_skipped_existing" && value > 0);
+  if (changed && options.backup) result.backup_path = createImportBackup(root);
 
   for (const record of recordsToAdd) { unsafeAddMemoryRecord(root, record); result.applied.records_added++; }
   for (const candidate of candidatesToAdd) { appendCandidate(root, candidate); result.applied.candidates_added++; }
+  for (const evidence of evidenceToAdd) { appendEvidenceRecord(root, evidence); result.applied.evidence_added++; }
+  for (const inquiry of inquiriesToAdd) { appendInquiryRecord(root, inquiry); result.applied.inquiries_added++; }
+  for (const event of reinforcementToAdd) { appendReinforcementEvent(root, event); result.applied.reinforcement_added++; }
   for (const tombstone of tombstonesToAdd) { appendDeletionTombstone(root, tombstone); result.applied.tombstones_added++; }
-  for (const session of sessionsToAdd) { appendDailyLog(root, (session.created_at ?? new Date().toISOString()).slice(0, 10), session.text); result.applied.sessions_added++; }
+  for (const session of sessionsToAdd) { appendDailyLog(root, normalizeTimestamp(session.created_at).slice(0, 10), session.text); result.applied.sessions_added++; }
   return result;
 }
 

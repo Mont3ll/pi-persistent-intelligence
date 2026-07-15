@@ -50,12 +50,14 @@ By default, import shows what would change before it writes anything. Use `--app
 
 - Exports preserve L1/L2 records and L3 daily/session entries.
 - `ruleType` maps to `rule_type`.
-- `memory_kind`, evidence IDs, tombstones, inquiries, and reinforcement are preserved where possible.
+- `memory_kind`, evidence, patch history, tombstones, inquiries, reinforcement, and sessions are preserved across round trips.
 - Private session excerpts are omitted in redacted exports.
 - Imports are dry-run by default.
 - Imports are merge-only and skip duplicate IDs.
-- Proposed Rust patches import as reviewable inbox candidates.
+- Proposed and deferred Rust patches import as reviewable inbox candidates; applied and rejected patch history retains its corresponding candidate state.
 - L3/session entries import into daily/session context rather than authoritative L1/L2 memory.
+- Date-only timestamps are normalized to RFC 3339 at the compatibility boundary.
+- Rust stores portable auxiliary artifacts as categorized canonical events and reconstructs their bundle sections on export.
 
 ## User review expectations
 
