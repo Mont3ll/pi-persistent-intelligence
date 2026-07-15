@@ -64,7 +64,7 @@ API:
 importFromPiGovernanceBundle(root, bundle, { dryRun: true })
 ```
 
-By default, import shows what would change before it writes anything. Applied imports are merge-oriented, skip duplicate IDs, and route proposed patches through the normal inbox/candidate flow.
+By default, import shows what would change before it writes anything. Applied imports are merge-oriented, skip duplicate IDs, preserve records, patch history, evidence, inquiries, sessions, reinforcement, and tombstones, and route pending patches through the normal inbox/candidate flow. Date-only timestamps are normalized to RFC 3339.
 
 ## Optional bridge diagnostics
 

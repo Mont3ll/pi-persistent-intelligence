@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
-import { appendCandidate } from "../../src/inbox";
+import { appendCandidate, listCandidates } from "../../src/inbox";
 import { appendDailyLog } from "../../src/daily";
-import { appendEvidenceRecord } from "../../src/evidence";
-import { appendInquiryRecord, createInquiryRecord } from "../../src/inquiries";
+import { appendEvidenceRecord, readEvidenceRecords } from "../../src/evidence";
+import { appendInquiryRecord, createInquiryRecord, readInquiryRecords } from "../../src/inquiries";
 import { appendDeletionTombstone, createDeletionTombstone } from "../../src/tombstones";
-import { appendReinforcementEvent, createReinforcementEvent } from "../../src/reinforcement";
+import { appendReinforcementEvent, createReinforcementEvent, readReinforcementEvents } from "../../src/reinforcement";
 import { unsafeAddMemoryRecord } from "../../src/store";
 import { loadConfig } from "../../src/config";
 import {
@@ -100,7 +100,7 @@ describe("pi-governance-rs compatibility bundle", () => {
 
       expect(bundle.schema_version).toBe(1);
       expect(bundle.format).toBe("pi-governance");
-      expect(bundle.producer).toEqual({ name: "pi-persistent-intelligence", version: "0.12.0" });
+      expect(bundle.producer).toEqual({ name: "pi-persistent-intelligence", version: "0.13.0" });
       expect(bundle.records.map((r) => [r.id, r.layer])).toContainEqual(["mem_l1", "l1_identity"]);
       expect(bundle.records.map((r) => [r.id, r.layer])).toContainEqual(["mem_l2", "l2_playbook"]);
       expect(bundle.sessions.map((s) => [s.layer, s.text])).toContainEqual(["l3_session", "#decision keep release namespace stable"]);
@@ -109,12 +109,21 @@ describe("pi-governance-rs compatibility bundle", () => {
       expect(bundle.records.find((r) => r.id === "mem_l2")?.trust_class).toBe("direct_user_instruction");
       expect(bundle.records.find((r) => r.id === "mem_l2")?.durability).toBe("project");
       expect(bundle.records.find((r) => r.id === "mem_l2")?.source_kind).toBe("manual_cli");
+      expect(bundle.records.every((r) => !!r.created_at && !Number.isNaN(Date.parse(r.created_at)) && r.created_at.includes("T"))).toBe(true);
       expect(bundle.patches.find((p) => p.id === "cap_pending")?.status).toBe("proposed");
       expect(bundle.patches.find((p) => p.id === "cap_rejected")?.status).toBe("rejected");
       expect(bundle.evidence).toHaveLength(1);
       expect(bundle.inquiries).toHaveLength(1);
       expect(bundle.reinforcement).toHaveLength(1);
       expect(bundle.tombstones[0]).toMatchObject({ deleted_record_id: "mem_deleted", deletion_mode: "privacy_purge" });
+    } finally { cleanup(dir); }
+  });
+
+  test("rejects invalid portable timestamps instead of emitting malformed bundles", () => {
+    const dir = root();
+    try {
+      unsafeAddMemoryRecord(dir, record({ id:"mem_bad_date", created_at:"not-a-date" }));
+      expect(() => exportToPiGovernanceBundle(dir)).toThrow("Invalid portable timestamp");
     } finally { cleanup(dir); }
   });
 
@@ -164,6 +173,60 @@ describe("pi-governance-rs compatibility bundle", () => {
       expect(applied.applied.records_skipped_existing).toBe(1);
       expect(applied.applied.candidates_added).toBe(1);
       expect(applied.applied.tombstones_added).toBe(1);
+    } finally { cleanup(dir); }
+  });
+
+  test("imports all auxiliary sections, deduplicates them, and creates a backup", () => {
+    const dir = root();
+    try {
+      const inquiry = createInquiryRecord({ question: "Should this be retained?", context: "interop", now: "2026-06-30T00:00:00Z" });
+      const reinforcement = createReinforcementEvent({ memory_id: "mem_new", outcome: "explicit_reinforcement", now: "2026-06-30T00:00:00Z" });
+      const bundle: PiGovernanceBundle = {
+        schema_version: 1, format: "pi-governance", producer: { name: "pi-governance-rs", version: "1.1.0" },
+        records: [{ id: "mem_new", namespace: "default", layer: "l2_playbook", claim: "Retain full portable metadata.", status: "active", memory_kind: "instruction", rule_type: "workflow", confidence: 0.9, evidence_ids: ["ev_import"], tags: ["interop"], created_at: "2026-06-30", updated_at: "2026-06-30" }],
+        patches: [],
+        evidence: [{ id: "ev_import", resource_id: "res_demo", profile_id: "profile_demo", created_at: "2026-06-30T00:00:00Z", source_kind: "conversation", source_summary: "Imported evidence", trust_class: "direct_user_instruction", polarity: "supports", durability_signal: "project", related_memory_ids: ["mem_new"], tags: ["interop"] }],
+        inquiries: [inquiry], sessions: [{ id: "session_import", namespace: "default", layer: "l3_session", text: "#decision preserve auxiliary artifacts", created_at: "2026-06-30T00:00:00Z", source_kind: "session_entry" }],
+        reinforcement: [reinforcement], tombstones: [],
+        redaction: { enabled: false, fields_checked: [], fields_redacted: [], notes: [] },
+      };
+
+      const first = importFromPiGovernanceBundle(dir, bundle, { dryRun: false, backup: true });
+      expect(first.applied.evidence_added).toBe(1);
+      expect(first.applied.inquiries_added).toBe(1);
+      expect(first.applied.reinforcement_added).toBe(1);
+      expect(first.applied.sessions_added).toBe(1);
+      expect(readEvidenceRecords(dir)).toHaveLength(1);
+      expect(readInquiryRecords(dir)).toHaveLength(1);
+      expect(readReinforcementEvents(dir)).toHaveLength(1);
+      expect(existsSync(join(dir, "backups"))).toBe(true);
+      expect(readdirSync(join(dir, "backups")).length).toBe(1);
+
+      const second = importFromPiGovernanceBundle(dir, bundle, { dryRun: false, backup: true });
+      expect(second.applied.evidence_added).toBe(0);
+      expect(second.applied.inquiries_added).toBe(0);
+      expect(second.applied.reinforcement_added).toBe(0);
+      expect(second.applied.sessions_added).toBe(0);
+    } finally { cleanup(dir); }
+  });
+
+  test("imports native Rust proposed records as reviewable candidates", () => {
+    const dir = root();
+    try {
+      const bundle = {
+        schema_version: 1, format: "pi-governance", producer: { name: "pi-governance-rs", version: "1.1.0" }, records: [], evidence: [], inquiries: [], sessions: [], reinforcement: [], tombstones: [], events: [],
+        patches: [
+          { schema_version:1, namespace:"default", id:"patch_rust", operation:"propose_record", status:"proposed", target_id:null, contest_resolution:null, evidence:[], reason:"Review imported candidate", created_at:"2026-07-15T00:00:00Z", updated_at:"2026-07-15T00:00:00Z", proposed_record:{ id:"rec_rust", namespace:"default", class:"workflow", claim:"Use the native Rust patch payload.", evidence:[], confidence:0.8, status:"active", layer:"l2_playbook", memory_kind:"instruction", rule_type:"workflow", scope:{level:"project",key:"demo"}, tags:["interop"], supersedes:[], created_at:"2026-07-15T00:00:00Z", updated_at:"2026-07-15T00:00:00Z" } },
+          { schema_version:1, namespace:"default", id:"patch_applied", operation:"propose_record", status:"applied", target_id:null, contest_resolution:null, evidence:[], reason:"Historical applied patch", created_at:"2026-07-14T00:00:00Z", updated_at:"2026-07-14T00:00:00Z", proposed_record:{ id:"rec_applied", namespace:"default", class:"workflow", claim:"Preserve applied patch history.", evidence:[], confidence:0.8, status:"active", layer:"l2_playbook", memory_kind:"instruction", rule_type:"workflow", scope:{level:"project",key:"demo"}, tags:["interop"], supersedes:[], created_at:"2026-07-14T00:00:00Z", updated_at:"2026-07-14T00:00:00Z" } }
+        ],
+        redaction: { enabled:false, fields_checked:[], fields_redacted:[], notes:[] }
+      } as unknown as PiGovernanceBundle;
+      const result = importFromPiGovernanceBundle(dir, bundle, { dryRun:false });
+      expect(result.applied.candidates_added).toBe(2);
+      expect(listCandidates(dir)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id:"patch_rust", text:"Use the native Rust patch payload.", status:"new" }),
+        expect.objectContaining({ id:"patch_applied", text:"Preserve applied patch history.", status:"patched" })
+      ]));
     } finally { cleanup(dir); }
   });
 

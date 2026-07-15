@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Restored full `pi-governance` bundle interoperability with Rust v1.1.0: RFC 3339 timestamp normalization, native Rust patch import, auxiliary artifact preservation, ID-based deduplication, and import backups.
+
 ## [0.13.0] - 2026-07-09
 
 ### Added
