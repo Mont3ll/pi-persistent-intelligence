@@ -11,6 +11,7 @@ import {
   readReinforcementEventsForMemory,
   summarizeReinforcement,
   recordExplicitReinforcement,
+  decideReinforcementLink,
 } from "../../src/reinforcement";
 import { loadAllRecords, unsafeAddMemoryRecord } from "../../src/store";
 import type { MemoryRecord } from "../../src/types";
@@ -85,6 +86,22 @@ describe("reinforcement records", () => {
     expect(readReinforcementEvents(dir)).toHaveLength(1);
     expect(JSON.stringify(loadAllRecords(dir))).toBe(before);
     expect(() => recordExplicitReinforcement(dir, { memory_id: "missing", note: "confirmed", session_id: "session-a" })).toThrow("active memory");
+  });
+
+  test("implicit success requires one active selected memory and an observable successful outcome", () => {
+    const one = [record("mem_one", "Run focused tests.")];
+    const two = [...one, record("mem_two", "Run typecheck.")];
+    expect(decideReinforcementLink({ selected_memory: one, session_id: "s", neutral_exposure_enabled: false })).toMatchObject({ outcome: "none" });
+    expect(decideReinforcementLink({ selected_memory: one, session_id: "s", observable_outcome: { kind: "test", success: false }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "none" });
+    expect(decideReinforcementLink({ selected_memory: two, session_id: "s", observable_outcome: { kind: "test", success: true }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "none" });
+    expect(decideReinforcementLink({ selected_memory: one, session_id: "s", observable_outcome: { kind: "test", success: true }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "implicit_success", memory_id: "mem_one" });
+  });
+
+  test("neutral exposure is disabled by default and capped once per memory/session", () => {
+    const one = [record("mem_neutral", "Use deterministic retrieval.")];
+    expect(decideReinforcementLink({ selected_memory: one, session_id: "s", neutral_exposure_enabled: false })).toMatchObject({ outcome: "none" });
+    expect(decideReinforcementLink({ selected_memory: one, session_id: "s", neutral_exposure_enabled: true })).toMatchObject({ outcome: "neutral_exposure", memory_id: "mem_neutral" });
+    expect(decideReinforcementLink({ selected_memory: one, session_id: "s", neutral_exposure_enabled: true, existing_events: [createReinforcementEvent({ memory_id: "mem_neutral", outcome: "neutral_exposure", thread_id: "s", now: "2026-07-18T00:00:00Z" })] })).toMatchObject({ outcome: "none" });
   });
 
   test("summary treats neutral exposure as no-op", () => {

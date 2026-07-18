@@ -32,6 +32,7 @@ export interface PiMemoryConfig {
   piGovernance: { enabled: boolean; mode: "external"; command: string | null; store: string | null; namespace: string };
   retrieval: { injectionMode: "scoped" | "policy_only" | "wakeup"; maxRecords?: number; maxL1Records?: number; maxL2Records?: number };
   inquiries: { reviewWindowDays: number };
+  reinforcement: { neutralExposureEnabled: boolean };
   metaConsolidation: {
     enabled: boolean;
     cadence: "manual" | "weekly" | "monthly";
@@ -60,6 +61,7 @@ export const defaultConfig: PiMemoryConfig = {
   piGovernance: { enabled: false, mode: "external" as const, command: null, store: null, namespace: "default" },
   retrieval: { injectionMode: "scoped" as const },
   inquiries: { reviewWindowDays: 30 },
+  reinforcement: { neutralExposureEnabled: false },
   metaConsolidation: {
     enabled: false,
     cadence: "manual" as const,
@@ -84,6 +86,7 @@ function mergeConfig(base: PiMemoryConfig, override: DeepPartial<PiMemoryConfig>
     piGovernance: { ...base.piGovernance, ...(override.piGovernance ?? {}) },
     retrieval: { ...base.retrieval, ...(override.retrieval ?? {}) },
     inquiries: { ...base.inquiries, ...(override.inquiries ?? {}) },
+    reinforcement: { ...base.reinforcement, ...(override.reinforcement ?? {}) },
     metaConsolidation: { ...base.metaConsolidation, ...(override.metaConsolidation ?? {}) },
   };
 }
