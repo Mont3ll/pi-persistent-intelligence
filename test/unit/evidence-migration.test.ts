@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEvidenceId } from "../../src/evidence";
-import { planLegacyEvidenceMigration } from "../../src/evidence-migration";
+import { applyLegacyEvidenceMigration, planLegacyEvidenceMigration, scanLegacyEvidenceMigration } from "../../src/evidence-migration";
+import { ensureMemoryDirs } from "../../src/paths";
+import { readEvidenceRecords } from "../../src/evidence";
+import { loadAllRecords } from "../../src/store";
 import type { EvidenceRecord, MemoryRecord } from "../../src/types";
 
 const roots: string[] = [];
@@ -62,5 +65,45 @@ describe("legacy evidence migration planner", () => {
     expect(plan.proposals.every((item) => item.evidence.notes === "legacy_evidence_backfill_v1")).toBe(true);
     expect(plan.proposals.every((item) => item.evidence.source_excerpt === undefined)).toBe(true);
     expect(plan.proposals.every((item) => item.evidence.trust_class === "unknown" && item.evidence.durability_signal === "unknown")).toBe(true);
+  });
+
+  test("applies only a reviewed unchanged plan with backup, audit, and idempotency", () => {
+    const dir = root();
+    const paths = ensureMemoryDirs(dir);
+    writeFileSync(join(dir, "daily", "2026-07-03.md"), "User confirmed a durable workflow.\n", "utf-8");
+    writeFileSync(paths.memory.L2, `${JSON.stringify(record("mem_apply", ["daily/2026-07-03.md"]))}\n`, "utf-8");
+    const beforeRecord = loadAllRecords(dir)[0];
+    const beforeEvidence = readFileSync(paths.memory.evidence, "utf-8");
+
+    const preview = scanLegacyEvidenceMigration(dir);
+    expect(preview).toMatchObject({ dry_run: true, mutation_performed: false, evidence_to_create: 1 });
+    expect(readFileSync(paths.memory.evidence, "utf-8")).toBe(beforeEvidence);
+
+    const applied = applyLegacyEvidenceMigration(dir, preview.fingerprint, "2026-07-18T12:00:00.000Z");
+    expect(applied).toMatchObject({ dry_run: false, mutation_performed: true, evidence_created: 1, records_updated: 1 });
+    expect(existsSync(applied.backup_path!)).toBe(true);
+    expect(existsSync(applied.report_path!)).toBe(true);
+    expect(readFileSync(join(applied.backup_path!, "memory", "evidence.jsonl"), "utf-8")).toBe(beforeEvidence);
+    const afterRecord = loadAllRecords(dir)[0];
+    expect(afterRecord.confidence).toBe(beforeRecord.confidence);
+    expect(afterRecord.evidence.map((item) => item.ref)).toContain("daily/2026-07-03.md");
+    expect(afterRecord.evidence.map((item) => item.ref)).toContain(readEvidenceRecords(dir)[0].id);
+    expect(scanLegacyEvidenceMigration(dir).evidence_to_create).toBe(0);
+  });
+
+  test("rejects drift and blocks secret-bearing sources", () => {
+    const dir = root();
+    const paths = ensureMemoryDirs(dir);
+    const source = join(dir, "daily", "2026-07-04.md");
+    writeFileSync(source, "Normal source.\n", "utf-8");
+    writeFileSync(paths.memory.L2, `${JSON.stringify(record("mem_drift", ["daily/2026-07-04.md"]))}\n`, "utf-8");
+    const preview = scanLegacyEvidenceMigration(dir);
+    writeFileSync(source, "Changed source.\n", "utf-8");
+    expect(() => applyLegacyEvidenceMigration(dir, preview.fingerprint)).toThrow("stale");
+    expect(readEvidenceRecords(dir)).toEqual([]);
+
+    writeFileSync(source, "API_KEY=abcdefghijklmnop123456\n", "utf-8");
+    const blocked = scanLegacyEvidenceMigration(dir);
+    expect(blocked).toMatchObject({ evidence_to_create: 0, blocked_secret_references: 1 });
   });
 });

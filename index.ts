@@ -81,6 +81,7 @@ import { renderGovernanceSimulationReport, simulatePatchImpact } from "./src/gov
 import { resolveMemoryProfile } from "./src/profile";
 import { exportToPiGovernanceBundle, importFromPiGovernanceBundle, runPiGovernanceDoctor } from "./src/pi-governance-compat";
 import { reconcilePiGovernanceBundles } from "./src/pi-governance-reconciliation";
+import { applyLegacyEvidenceMigration, scanLegacyEvidenceMigration } from "./src/evidence-migration";
 import type { CaptureCandidate, CodebaseAnalysisKind, CodebaseAnalysisTool, MemoryKind } from "./src/types";
 
 function nowIso(): string { return new Date().toISOString(); }
@@ -914,7 +915,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("memory-evidence", {
-    description: "Manage structured evidence. Usage: /memory-evidence add-codebase-analysis ... | /memory-evidence link <evidence-id> --statement \"...\" [--kind fact|event|instruction|task] [--tags testing,tooling] [--confidence 0.75]",
+    description: "Manage structured evidence. Usage: /memory-evidence migrate-legacy [--apply --fingerprint <sha256>] [--json] | add-codebase-analysis ... | link <evidence-id> --statement \"...\"", 
     handler: async (args, ctx) => {
       const parsed = parseCommandArgs(args);
       const action = parsed.positional[0];
@@ -924,6 +925,25 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         rememberCommand("memory-evidence", plain, `evidence: ${evidence.length} records`);
         if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, evidence, plain, "info");
         else await openBrowser(ctx, evidenceBrowserOptions(evidence), plain);
+        return;
+      }
+      if (action === "migrate-legacy") {
+        try {
+          if (parsed.flags.apply !== true) {
+            const plan = scanLegacyEvidenceMigration(root);
+            notifyStructured(ctx, args, plan, `Legacy evidence migration preview: ${plan.evidence_to_create} evidence record(s), ${plan.unresolved_references} unresolved reference(s).`, plan.evidence_to_create > 0 ? "warning" : "info");
+            return;
+          }
+          const fingerprint = typeof parsed.flags.fingerprint === "string" ? parsed.flags.fingerprint : "";
+          if (!fingerprint) {
+            ctx.ui.notify("Apply requires the reviewed preview fingerprint. Run /memory-evidence migrate-legacy --json first.", "warning");
+            return;
+          }
+          const result = applyLegacyEvidenceMigration(root, fingerprint, nowIso());
+          notifyStructured(ctx, args, result, result.mutation_performed ? `Legacy evidence migration applied. Backup: ${result.backup_path}; report: ${result.report_path}.` : "No legacy evidence migration changes were needed.", result.mutation_performed ? "success" : "info");
+        } catch (error) {
+          ctx.ui.notify(`Legacy evidence migration failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+        }
         return;
       }
       if (action === "link") {

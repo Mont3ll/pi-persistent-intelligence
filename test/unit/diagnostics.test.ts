@@ -86,6 +86,21 @@ describe("memory diagnostics", () => {
     expect(report.findings.some((f) => f.code === "legacy_missing_fields" && f.severity === "info")).toBe(true);
   });
 
+  test("classifies unresolved legacy references without fabricating missing evidence IDs", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record("mem_unstructured", {
+      evidence: [{ type: "manual", ref: "daily/missing-legacy.md", note: "legacy reference" }],
+    }));
+
+    const report = runMemoryDiagnostics(dir);
+
+    expect(report.findings.find((finding) => finding.code === "legacy_evidence_unstructured")).toMatchObject({
+      severity: "warning",
+      affected_ids: ["mem_unstructured"],
+    });
+    expect(report.findings.find((finding) => finding.code === "orphan_evidence")?.affected_ids ?? []).not.toContain("daily/missing-legacy.md");
+  });
+
   test("detects duplicate stable ids and reports row versus unique counts", () => {
     const dir = root();
     unsafeAddMemoryRecord(dir, record("mem_duplicate", { status: "superseded" }));
