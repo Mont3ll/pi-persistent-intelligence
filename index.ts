@@ -49,7 +49,7 @@ import { loadConfig } from "./src/config";
 import { SessionStore, buildSessionSearchTools, buildSessionContextBlock, SESSION_SYNC_INTERVAL_MS } from "./src/session-search";
 import { isChildProcess } from "./src/sessions/store";
 import { createInboxReviewComponent, buildInboxNotification, type InboxOverlayAction } from "./src/tui/InboxReviewOverlay";
-import { maybeCorrectionSignal, extractCorrectionCandidate } from "./src/corrections";
+import { classifyCorrectionCapture, maybeCorrectionSignal } from "./src/corrections";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
 import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, memoryQualityBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallEffectivenessBrowserOptions, recallXrayBrowserOptions, relationshipQualityBrowserOptions, storeQualityBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
@@ -58,7 +58,7 @@ import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-chec
 import { loadActiveRecords } from "./src/store";
 import { buildCandidateTrustMetadata } from "./src/trust";
 import { linkExplicitCorrectionToMemory } from "./src/reinforcement";
-import { selectRelevantInquiries, renderInquiryInjectionBlock } from "./src/inquiries";
+import { appendInquiryRecord, createInquiryRecord, selectRelevantInquiries, renderInquiryInjectionBlock } from "./src/inquiries";
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
 import { appendEvidenceRecord, readEvidenceRecords } from "./src/evidence";
 import { linkEvidenceToCandidate } from "./src/evidence-link";
@@ -480,9 +480,22 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
               const selected = JSON.parse((await import("node:fs")).readFileSync(ensureMemoryDirs(root).runtime.selected, "utf-8")) as import("./src/types").MemoryRecord[];
               linkExplicitCorrectionToMemory(root, text, selected, { thread_id: "current-session", now: nowIso() });
             } catch { /* best-effort reinforcement linking */ }
-            const candidate = extractCorrectionCandidate(text, todayString(), sessionCwd);
-            if (candidate) {
-              appendCandidate(root, candidate);
+            const decision = classifyCorrectionCapture(text, todayString(), sessionCwd);
+            if (decision.action === "candidate") {
+              appendCandidate(root, decision.candidate);
+            } else if (decision.action === "daily_only") {
+              appendDailyLog(root, todayString(), `Correction kept daily-only: ${decision.text}`);
+            } else if (decision.action === "inquiry") {
+              const profile = resolveMemoryProfile(root, sessionCwd);
+              appendInquiryRecord(root, createInquiryRecord({
+                question: decision.question,
+                context: "Automatic correction capture required clarification before durable persistence.",
+                profile_id: profile.profile_id,
+                resource_id: profile.resource_id,
+                tags: ["correction", "capture-review"],
+                session_id: "current-session",
+                now: nowIso(),
+              }));
             }
           }
         }

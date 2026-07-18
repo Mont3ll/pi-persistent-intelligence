@@ -52,7 +52,7 @@ export function scoreMemoryWorth(input: MemoryWorthInput): MemoryWorthScore {
   const duplicate = (input.existingStatements ?? []).some((s) => similarity(observation, s) >= 0.82);
   const secretScan = scanSecrets(observation);
   const sensitivity = secretScan.hasHighConfidenceSecret ? 1 : secretScan.findings.length ? 0.6 : 0;
-  const temporary = input.durability === "temporary" || /\b(today|right now|temporary|for now|waiting for|this session)\b/.test(lower);
+  const temporary = input.durability === "temporary" || input.durability === "task" || /\b(today|right now|temporary|for now|waiting for|this session|this task|for this task)\b/.test(lower);
   const ambiguousLanguage = /\b(unclear|something|stuff|maybe|probably|unspecified|not sure)\b/.test(lower);
   const vague = (tokens.length < 5 && !explicit) || ambiguousLanguage;
 

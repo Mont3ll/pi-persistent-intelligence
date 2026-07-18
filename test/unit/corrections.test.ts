@@ -1,5 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import { maybeCorrectionSignal, correctionConfidence, extractCorrectionCandidate } from "../../src/corrections";
+import { classifyCorrectionCapture, maybeCorrectionSignal, correctionConfidence, extractCorrectionCandidate } from "../../src/corrections";
+
+describe("classified correction capture", () => {
+  for (const text of [
+    "Task: implement the migration; never modify unrelated files.",
+    "You are a delegated subagent. Always run the focused tests.",
+    "You are acting as a constrained local implementation agent for the Rust port.",
+    "For this task, do not use the production store.",
+  ]) {
+    test(`rejects task wrapper: ${text.slice(0, 28)}`, () => {
+      expect(classifyCorrectionCapture(text, "2026-07-18", "/tmp/project")).toMatchObject({ action: "reject" });
+    });
+  }
+
+  for (const text of [
+    "Going forward, never mutate canonical stores without a reviewed patch.",
+    "This repository always uses Bun for tests and package scripts.",
+  ]) {
+    test(`keeps durable correction: ${text.slice(0, 28)}`, () => {
+      expect(classifyCorrectionCapture(text, "2026-07-18", "/tmp/project")).toMatchObject({ action: "candidate" });
+    });
+  }
+});
 
 describe("maybeCorrectionSignal", () => {
   test("detects 'don't use X' pattern", () => {
