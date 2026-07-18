@@ -1,7 +1,16 @@
 import { createHash } from "node:crypto";
 import { readJsonl, writeJsonl, appendJsonl } from "./jsonl";
 import { ensureMemoryDirs } from "./paths";
+import { loadAllRecords } from "./store";
 import type { CaptureCandidate, CandidateMatchKind, InquiryPriority, InquiryRecord, InquiryStatus } from "./types";
+
+export interface InquiryTransitionResult {
+  inquiry_id: string;
+  previous_status: InquiryStatus;
+  status: InquiryStatus;
+  answer_memory_id?: string;
+  updated_at: string;
+}
 
 const MAX_INJECTED_INQUIRIES = 3;
 
@@ -89,6 +98,39 @@ export function markInquiryWithdrawn(root: string, id: string, now = new Date().
 
 export function markInquiryStale(root: string, id: string, now = new Date().toISOString()): boolean {
   return replaceInquiryRecord(root, id, (record) => ({ ...record, status: "stale" as InquiryStatus, last_seen: now }));
+}
+
+export function transitionInquiry(
+  root: string,
+  input: { inquiry_id: string; status: "answered" | "withdrawn" | "stale"; answer_memory_id?: string; now?: string },
+): InquiryTransitionResult {
+  const now = input.now ?? new Date().toISOString();
+  const paths = ensureMemoryDirs(root);
+  const records = readInquiryRecords(root);
+  const index = records.findIndex((record) => record.id === input.inquiry_id);
+  if (index < 0) throw new Error(`Inquiry ${input.inquiry_id} not found.`);
+  const inquiry = records[index];
+  if (inquiry.status !== "open") throw new Error(`Inquiry ${input.inquiry_id} cannot transition from ${inquiry.status} to ${input.status}.`);
+  if (input.status === "answered") {
+    if (!input.answer_memory_id) throw new Error("Answering an inquiry requires --memory <memory-id>.");
+    const memory = loadAllRecords(root).find((record) => record.id === input.answer_memory_id && record.status !== "deleted");
+    if (!memory) throw new Error(`Answer memory ${input.answer_memory_id} does not exist or is deleted.`);
+  }
+  const updated: InquiryRecord = {
+    ...inquiry,
+    status: input.status,
+    last_seen: now,
+    ...(input.status === "answered" ? { answer_memory_id: input.answer_memory_id } : {}),
+  };
+  records[index] = updated;
+  writeJsonl(paths.memory.inquiries, records);
+  return {
+    inquiry_id: inquiry.id,
+    previous_status: inquiry.status,
+    status: updated.status,
+    ...(updated.answer_memory_id ? { answer_memory_id: updated.answer_memory_id } : {}),
+    updated_at: now,
+  };
 }
 
 export function upsertInquiryRecord(

@@ -52,13 +52,13 @@ import { createInboxReviewComponent, buildInboxNotification, type InboxOverlayAc
 import { classifyCorrectionCapture, maybeCorrectionSignal } from "./src/corrections";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
-import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, memoryQualityBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallEffectivenessBrowserOptions, recallXrayBrowserOptions, relationshipQualityBrowserOptions, storeQualityBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
+import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, inquiryBrowserOptions, memoryQualityBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallEffectivenessBrowserOptions, recallXrayBrowserOptions, relationshipQualityBrowserOptions, storeQualityBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
 import { buildCandidateTrustMetadata } from "./src/trust";
 import { linkExplicitCorrectionToMemory } from "./src/reinforcement";
-import { appendInquiryRecord, createInquiryRecord, selectRelevantInquiries, renderInquiryInjectionBlock } from "./src/inquiries";
+import { appendInquiryRecord, createInquiryRecord, readInquiryRecords, selectRelevantInquiries, renderInquiryInjectionBlock, transitionInquiry } from "./src/inquiries";
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
 import { appendEvidenceRecord, readEvidenceRecords } from "./src/evidence";
 import { linkEvidenceToCandidate } from "./src/evidence-link";
@@ -923,6 +923,37 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         else await openBrowser(ctx, recallXrayBrowserOptions(report), text);
       } catch (err) {
         ctx.ui.notify(`Recall x-ray failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-inquiries", {
+    description: "Review inquiry lifecycle. Usage: /memory-inquiries list [--status open|answered|withdrawn|stale] [--json] | answer <id> --memory <memory-id> | withdraw <id> | stale <id>",
+    handler: async (args, ctx) => {
+      const parsed = parseCommandArgs(args);
+      const action = parsed.positional[0] ?? "list";
+      try {
+        if (action === "list") {
+          const status = typeof parsed.flags.status === "string" ? parsed.flags.status : undefined;
+          const allowed = new Set(["open", "answered", "withdrawn", "stale"]);
+          if (status && !allowed.has(status)) throw new Error(`Invalid inquiry status ${status}.`);
+          const inquiries = readInquiryRecords(root).filter((inquiry) => !status || inquiry.status === status);
+          const plain = inquiries.map((inquiry) => `${inquiry.id} [${inquiry.status}] ${inquiry.question}`).join("\n") || "No inquiries.";
+          if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, inquiries, plain, "info");
+          else await openBrowser(ctx, inquiryBrowserOptions(inquiries), plain);
+          return;
+        }
+        const inquiryId = parsed.positional[1];
+        if (!inquiryId || !["answer", "withdraw", "stale"].includes(action)) throw new Error("Usage: /memory-inquiries answer <id> --memory <memory-id> | withdraw <id> | stale <id>");
+        const result = transitionInquiry(root, {
+          inquiry_id: inquiryId,
+          status: action === "answer" ? "answered" : action === "withdraw" ? "withdrawn" : "stale",
+          answer_memory_id: typeof parsed.flags.memory === "string" ? parsed.flags.memory : undefined,
+          now: nowIso(),
+        });
+        notifyStructured(ctx, args, result, `Inquiry ${result.inquiry_id}: ${result.previous_status} → ${result.status}.`, "success");
+      } catch (error) {
+        ctx.ui.notify(`Inquiry command failed: ${error instanceof Error ? error.message : String(error)}`, "error");
       }
     },
   });
