@@ -49,6 +49,12 @@ All settings are optional. Missing keys fall back to defaults.
   "retrieval": {
     "injectionMode": "scoped"
   },
+  "inquiries": {
+    "reviewWindowDays": 30
+  },
+  "reinforcement": {
+    "neutralExposureEnabled": false
+  },
   "metaConsolidation": {
     "enabled": false,
     "cadence": "manual",
@@ -105,6 +111,18 @@ Optional external `pi-governance-rs` bridge diagnostics. Disabled standalone mod
 | Key | Default | Description |
 |---|---|---|
 | `injectionMode` | `"scoped"` | `"scoped"`, `"policy_only"`, or `"wakeup"`. `policy_only` and `wakeup` avoid raw selected-memory injection. |
+
+### `inquiries`
+
+| Key | Default | Description |
+|---|---|---|
+| `reviewWindowDays` | `30` | Open inquiry age before it appears in `stale-scan`; integer 1–3650 |
+
+### `reinforcement`
+
+| Key | Default | Description |
+|---|---|---|
+| `neutralExposureEnabled` | `false` | Record zero-weight neutral exposure, capped once per memory/session |
 
 ### `metaConsolidation`
 

@@ -98,6 +98,8 @@ observation or correction
 
 Durable memory changes are patch-governed. No record is silently mutated. Low-trust sources, generated content, repository text, contested records, and L1 identity proposals require review. Quality dashboards, relationship analysis, recall effectiveness, patch simulation, and governance reports are review-only unless you explicitly apply a patch.
 
+Legacy provenance backfill and inquiry staleness are preview-first migrations: review their fingerprint before apply, which creates backups and audit reports. Explicit reinforcement records user confirmation without directly changing confidence or stability; implicit success requires observable successful execution rather than mere exposure.
+
 ## Relationship to pi-governance-rs
 
 The ecosystem model is:

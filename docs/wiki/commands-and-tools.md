@@ -130,6 +130,24 @@ Background jobs do not directly mutate durable memory. Health, quality, relation
 
 ---
 
+### `/memory-evidence migrate-legacy [--apply --fingerprint <sha256>] [--json]`
+
+Previews deterministic provenance backfill for resolvable legacy evidence references. Apply requires the reviewed preview fingerprint, backs up evidence and affected canonical records, and writes an audit report. Missing or secret-bearing sources are never fabricated into evidence.
+
+---
+
+### `/memory-inquiries ...`
+
+Lists inquiries by lifecycle status and explicitly answers, withdraws, or marks open inquiries stale. `stale-scan` is preview-first and requires its reviewed fingerprint for apply.
+
+---
+
+### `/memory-reinforce <memory-id> --note "..."`
+
+Records explicit, deduplicated positive reinforcement for an active memory without changing the memory record.
+
+---
+
 ### `/memory-evidence add-codebase-analysis ...`
 
 Adds deterministic codebase-analysis evidence. Evidence is support, not automatic durable truth.

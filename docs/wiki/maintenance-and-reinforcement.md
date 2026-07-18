@@ -20,7 +20,7 @@ Stored in `memory/reinforcement.jsonl`. Each event includes:
 | Outcome | Meaning | Weight |
 |---|---|---|
 | `explicit_reinforcement` | User directly confirmed or approved the belief | +1.0 |
-| `implicit_success` | Agent acted on the belief and no correction followed | +0.2 |
+| `implicit_success` | Exactly one active selected memory is linked to a recorded successful test/tool outcome | +0.2 |
 | `neutral_exposure` | Memory was injected but not exercised | 0 |
 | `explicit_correction` | User directly contradicted or rejected the belief | -1.0 |
 
@@ -28,7 +28,9 @@ Stored in `memory/reinforcement.jsonl`. Each event includes:
 
 One explicit correction outweighs many implicit successes. This is intentional: absence of correction is weak evidence; explicit contradiction is strong evidence.
 
-Neutral exposure does not increase stability. A memory being injected many times without correction is not sufficient evidence that it is correct.
+Neutral exposure does not increase stability. It is disabled by default and, when enabled, is capped at one event per memory per session. A memory being injected many times without correction is not sufficient evidence that it is correct.
+
+Use `/memory-reinforce <memory-id> --note "..."` only for direct user confirmation. The command records an event but never changes confidence or stability; maintenance may later propose a governed patch.
 
 ---
 
