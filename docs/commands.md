@@ -30,6 +30,7 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 | `/memory-doctor [--profile] [--plain\|--json]` | Open a collapsible dashboard for runtime, memory, governance, privacy, and diagnostics health; `--profile` adds stage timings. |
 | `/memory-health-audit [--save] [--plain\|--json]` | Run a report-only health audit with category scores, trends, and review recommendations; never mutates memory. |
 | `/memory-diagnostics [--profile] [--save] [--plain\|--json]` | Run integrity, secret, provenance, and re-verification checks in a dashboard; `--profile` adds stage timings and `--save` writes a diagnostics report. |
+| `/memory-store-integrity [--apply --fingerprint <sha256>] [--json]` | Preview duplicate-ID/self-supersession repair. Applying requires the reviewed preview fingerprint and always creates a backup and audit report. |
 | `/memory-recall-xray <query> [--profile] [--plain\|--json]` | Browse included/excluded memories, scores, evidence, and selection reasons; `--profile` adds stage timings. Read-only and redacted. |
 | `/memory-export --format pi-governance [--redacted] [--output bundle.json]` | Export a pi-governance-compatible PI memory contract bundle. |
 | `/memory-import --format pi-governance <bundle.json> [--apply] [--backup] [--redacted-aware]` | Preview or apply a pi-governance-compatible bundle import. By default this is a dry-run import. |
@@ -98,6 +99,8 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 /memory-inbox
 /curate-memory
 /memory-diagnostics --save
+/memory-store-integrity --json
+/memory-store-integrity --apply --fingerprint <fingerprint-from-preview> --json
 /memory-health-audit --save
 /memory-store-quality
 /memory-recall-effectiveness

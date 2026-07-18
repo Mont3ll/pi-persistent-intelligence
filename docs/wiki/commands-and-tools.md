@@ -18,6 +18,15 @@ Shows: memory root path, session index size, FTS status, governance mode, consol
 
 ---
 
+### `/memory-store-integrity [--apply --fingerprint <sha256>] [--json]`
+
+Previews canonical duplicate-ID and self-supersession repair without writing. Review the fingerprint in the preview before applying. Apply creates a mandatory backup and JSON audit report and refuses stale fingerprints.
+
+```bash
+/memory-store-integrity --json
+/memory-store-integrity --apply --fingerprint <fingerprint-from-preview> --json
+```
+
 ### `/memory-diagnostics [--save]`
 
 Runs integrity checks on your memory store and reports findings with severity levels: `ok`, `info`, `warning`, `error`.

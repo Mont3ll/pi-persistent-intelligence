@@ -699,7 +699,7 @@ function evalConflictAtPatchApply(): EvalResult {
   const patch = { patch_id: "patch_conflict", created_at: "2026-06-01", generated_by: "manual", mode: "auto", summary: "conflict", ops: [{ op_id: "op_add", op: "add", record: record("mem_conflict", "Duplicate."), risk: "low", default_selected: true }], status: "proposed", applied_at: null, applied_ops: [], skipped_ops: [] };
   const applied = applyPatch(dir, patch, { now: "2026-06-01T00:00:00Z" });
   const dupes = loadAllRecords(dir).filter((r: any) => r.id === "mem_conflict").length;
-  const pass = applied.applied_ops.length === 0 && applied.skipped_ops.includes("op_add") && dupes === 1;
+  const pass = applied.applied_ops.length === 0 && applied.status === "rejected_at_apply" && applied.skipped_ops.some((skip) => skip.op_id === "op_add" && skip.reason === "duplicate_id") && dupes === 1;
   return { category: "conflict_at_patch_apply", description: "Stale/conflicting patch ops are blocked at apply time.", pass, metrics: { duplicate_records: dupes, skipped_ops: applied.skipped_ops.length }, failures: pass ? [] : ["Conflicting add was not blocked at apply time."], hard_invariant: true };
 }
 
