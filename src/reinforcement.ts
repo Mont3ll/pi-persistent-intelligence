@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendJsonl, readJsonl } from "./jsonl";
 import { ensureMemoryDirs } from "./paths";
+import { loadAllRecords } from "./store";
 import type { MemoryRecord, ReinforcementEvent, ReinforcementOutcome, ReinforcementSummary, Stability } from "./types";
 
 const OUTCOME_WEIGHTS: Record<ReinforcementOutcome, number> = {
@@ -53,6 +54,34 @@ export function readReinforcementEvents(root: string): ReinforcementEvent[] {
 
 export function readReinforcementEventsForMemory(root: string, memoryId: string): ReinforcementEvent[] {
   return readReinforcementEvents(root).filter((event) => event.memory_id === memoryId);
+}
+
+export function recordExplicitReinforcement(
+  root: string,
+  input: { memory_id: string; note: string; session_id: string; now?: string },
+): { event: ReinforcementEvent; created: boolean } {
+  const memory = loadAllRecords(root).find((record) => record.id === input.memory_id && record.status === "active");
+  if (!memory) throw new Error(`Explicit reinforcement requires an active memory: ${input.memory_id}.`);
+  const note = input.note.trim().replace(/\s+/g, " ").slice(0, 300);
+  if (!note) throw new Error("Explicit reinforcement requires a non-empty --note.");
+  const existing = readReinforcementEvents(root).find((event) =>
+    event.memory_id === input.memory_id
+    && event.outcome === "explicit_reinforcement"
+    && event.thread_id === input.session_id
+    && event.notes === note,
+  );
+  if (existing) return { event: existing, created: false };
+  const event = createReinforcementEvent({
+    resource_id: memory.resource_id,
+    profile_id: memory.profile_id,
+    thread_id: input.session_id,
+    memory_id: memory.id,
+    outcome: "explicit_reinforcement",
+    notes: note,
+    now: input.now,
+  });
+  appendReinforcementEvent(root, event);
+  return { event, created: true };
 }
 
 function emptyCounts(): Record<ReinforcementOutcome, number> {

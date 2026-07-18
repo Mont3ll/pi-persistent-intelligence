@@ -36,7 +36,7 @@ import { appendCandidate, listCandidates, shouldPersistWorthDecision, withMemory
 import { curateInbox } from "./src/curator";
 import { maintainMemory } from "./src/maintainer";
 import { generateMaintenanceRecommendations, buildStabilityPatchFromRecommendations, generateMaintenanceReport } from "./src/maintenance";
-import { readReinforcementEventsForMemory, summarizeReinforcement } from "./src/reinforcement";
+import { readReinforcementEventsForMemory, recordExplicitReinforcement, summarizeReinforcement } from "./src/reinforcement";
 import { runMetaConsolidation, generateHandoffSnapshot, generateGoalHandoffSnapshot, DEFAULT_META_CONSOLIDATION_CONFIG } from "./src/meta-consolidation";
 import { runMemoryDiagnostics, renderDiagnosticsReport, saveDiagnosticsReport } from "./src/diagnostics";
 import { applyStoreIntegrityPlan, scanStoreIntegrity } from "./src/store-integrity";
@@ -923,6 +923,22 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         else await openBrowser(ctx, recallXrayBrowserOptions(report), text);
       } catch (err) {
         ctx.ui.notify(`Recall x-ray failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-reinforce", {
+    description: "Record explicit positive reinforcement without mutating memory. Usage: /memory-reinforce <memory-id> --note \"User confirmed this remains correct.\" [--json]",
+    handler: async (args, ctx) => {
+      const parsed = parseCommandArgs(args);
+      const memoryId = parsed.positional[0];
+      const note = typeof parsed.flags.note === "string" ? parsed.flags.note : "";
+      try {
+        if (!memoryId || !note) throw new Error("Usage: /memory-reinforce <memory-id> --note \"confirmation\"");
+        const result = recordExplicitReinforcement(root, { memory_id: memoryId, note, session_id: "current-session", now: nowIso() });
+        notifyStructured(ctx, args, result, result.created ? `Recorded explicit reinforcement for ${memoryId}.` : `Identical reinforcement already exists for ${memoryId} in this session.`, result.created ? "success" : "info");
+      } catch (error) {
+        ctx.ui.notify(`Memory reinforcement failed: ${error instanceof Error ? error.message : String(error)}`, "error");
       }
     },
   });
