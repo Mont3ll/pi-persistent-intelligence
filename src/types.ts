@@ -211,6 +211,11 @@ export interface MaintenanceRecommendation {
   reinforcement_summary?: ReinforcementSummary;
 }
 
+export interface PortablePeerEvent {
+  id: string;
+  [key: string]: unknown;
+}
+
 export interface DeletionTombstone {
   id: string;
   resource_id?: string;

@@ -10,7 +10,8 @@ import { loadAllRecords, unsafeAddMemoryRecord } from "./store";
 import { ensureMemoryDirs } from "./paths";
 import { loadConfig } from "./config";
 import { redactSecretsInObject } from "./secret-scanner";
-import type { CaptureCandidate, DeletionTombstone, DurabilitySignal, EvidenceRecord, EvidenceTrustClass, InquiryRecord, MemoryKind, MemoryPatch, MemoryRecord, MemoryRuleType, ReinforcementEvent } from "./types";
+import { appendPortableEvent, readPortableEvents } from "./portable-events";
+import type { CaptureCandidate, DeletionTombstone, DurabilitySignal, EvidenceRecord, EvidenceTrustClass, InquiryRecord, MemoryKind, MemoryPatch, MemoryRecord, MemoryRuleType, PortablePeerEvent, ReinforcementEvent } from "./types";
 
 export type PiGovernanceLayer = "l1_identity" | "l2_playbook" | "l3_session";
 export type PiGovernanceRecordStatus = "active" | "contested" | "superseded" | "tombstoned" | "deleted";
@@ -92,7 +93,7 @@ export interface PiGovernanceBundle {
   inquiries: InquiryRecord[];
   sessions: PiGovernanceSessionEntry[];
   reinforcement: ReinforcementEvent[];
-  events?: Array<Record<string, unknown>>;
+  events?: PortablePeerEvent[];
   tombstones: DeletionTombstone[];
   redaction: PiGovernanceRedactionMetadata;
   warnings?: string[];
@@ -114,6 +115,7 @@ export interface PortableSelection {
   sessions: PiGovernanceSessionEntry[];
   reinforcement: ReinforcementEvent[];
   tombstones: DeletionTombstone[];
+  events: PortablePeerEvent[];
   warnings: string[];
 }
 
@@ -121,8 +123,8 @@ export interface PiGovernanceImportOptions { dryRun?: boolean; backup?: boolean;
 
 export interface PiGovernanceImportResult {
   dry_run: boolean;
-  planned: { records_to_add: number; records_skipped_existing: number; candidates_to_add: number; evidence_to_add: number; inquiries_to_add: number; reinforcement_to_add: number; tombstones_to_add: number; sessions_to_add: number };
-  applied: { records_added: number; records_skipped_existing: number; candidates_added: number; evidence_added: number; inquiries_added: number; reinforcement_added: number; tombstones_added: number; sessions_added: number };
+  planned: { records_to_add: number; records_skipped_existing: number; candidates_to_add: number; evidence_to_add: number; inquiries_to_add: number; reinforcement_to_add: number; tombstones_to_add: number; sessions_to_add: number; events_to_add: number };
+  applied: { records_added: number; records_skipped_existing: number; candidates_added: number; evidence_added: number; inquiries_added: number; reinforcement_added: number; tombstones_added: number; sessions_added: number; events_added: number };
   backup_path?: string;
   warnings: string[];
 }
@@ -285,6 +287,9 @@ function selectPortableArtifacts(root: string, options: PiGovernanceExportOption
     tombstones: readDeletionTombstones(root).filter((item) => !filtered
       || selectedIds.has(item.deleted_record_id)
       || explicitlyMatchesFilters(item, options)),
+    events: readPortableEvents(root).filter((item) => !filtered
+      || (typeof item.object_id === "string" && selectedIds.has(item.object_id))
+      || explicitlyMatchesFilters(item as { profile_id?: string; project?: string; scope_level?: string; scope_ref?: string }, options)),
     warnings,
   };
 }
@@ -339,7 +344,17 @@ export function exportToPiGovernanceBundle(root: string, options: PiGovernanceEx
   }));
 
   const evidence = selection.evidence.map((record) => options.redacted ? redactEvidence(record, redaction) : { ...record });
-  if (options.redacted) redaction.notes.push("Redacted export is best-effort and should be user-reviewed before sharing.");
+  const events = options.redacted ? [] : selection.events;
+  const warnings = [...selection.warnings];
+  if (options.redacted) {
+    redaction.notes.push("Redacted export is best-effort and should be user-reviewed before sharing.");
+    redaction.fields_checked.push("events");
+    if (selection.events.length > 0) {
+      redaction.fields_redacted.push("events.omitted");
+      redaction.notes.push(`${selection.events.length} opaque peer event(s) omitted because their payload schema is not governed by this runtime.`);
+      warnings.push("Opaque peer events omitted from redacted export.");
+    }
+  }
 
   return {
     schema_version: 1,
@@ -356,10 +371,10 @@ export function exportToPiGovernanceBundle(root: string, options: PiGovernanceEx
     inquiries: selection.inquiries,
     sessions: selection.sessions,
     reinforcement: selection.reinforcement,
-    events: [],
+    events,
     tombstones: selection.tombstones,
     redaction,
-    warnings: selection.warnings,
+    warnings,
   };
 }
 
@@ -438,6 +453,7 @@ export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceB
   const sourceInquiries = bundle.inquiries ?? [];
   const sourceReinforcement = bundle.reinforcement ?? [];
   const sourceTombstones = bundle.tombstones ?? [];
+  const sourceEvents = bundle.events ?? [];
   const recordsToAdd = sourceRecords.map((record) => recordFromPi(record, options)).filter((record): record is MemoryRecord => !!record && !existingIds.has(record.id) && record.status !== "deleted");
   const recordsSkipped = sourceRecords.filter((record) => existingIds.has(record.id)).length;
   const candidatesToAdd = sourcePatches.map((patch) => candidateFromPatch(patch, options)).filter((candidate): candidate is CaptureCandidate => !!candidate && !existingCandidateIds.has(candidate.id));
@@ -451,11 +467,14 @@ export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceB
   const tombstonesToAdd = sourceTombstones.filter((tombstone) => !existingTombstones.has(tombstone.deleted_record_id));
   const existingSessions = new Set(readdirSync(paths.daily).filter((name) => name.endsWith(".md")).flatMap((name) => readFileSync(join(paths.daily, name), "utf-8").split(/\n{2,}/).map((text) => `${basename(name, ".md")}:${text.trim()}`).filter((key) => !key.endsWith(":"))));
   const sessionsToAdd = (bundle.sessions ?? []).filter((session) => !existingSessions.has(`${normalizeTimestamp(session.created_at).slice(0, 10)}:${session.text.trim()}`));
+  const existingEventIds = new Set(readPortableEvents(root).map((event) => event.id));
+  const incomingEventIds = new Set<string>();
+  const eventsToAdd = sourceEvents.filter((event) => !existingEventIds.has(event.id) && !incomingEventIds.has(event.id) && !!incomingEventIds.add(event.id));
 
   const result: PiGovernanceImportResult = {
     dry_run: dryRun,
-    planned: { records_to_add: recordsToAdd.length, records_skipped_existing: recordsSkipped, candidates_to_add: candidatesToAdd.length, evidence_to_add: evidenceToAdd.length, inquiries_to_add: inquiriesToAdd.length, reinforcement_to_add: reinforcementToAdd.length, tombstones_to_add: tombstonesToAdd.length, sessions_to_add: sessionsToAdd.length },
-    applied: { records_added: 0, records_skipped_existing: recordsSkipped, candidates_added: 0, evidence_added: 0, inquiries_added: 0, reinforcement_added: 0, tombstones_added: 0, sessions_added: 0 },
+    planned: { records_to_add: recordsToAdd.length, records_skipped_existing: recordsSkipped, candidates_to_add: candidatesToAdd.length, evidence_to_add: evidenceToAdd.length, inquiries_to_add: inquiriesToAdd.length, reinforcement_to_add: reinforcementToAdd.length, tombstones_to_add: tombstonesToAdd.length, sessions_to_add: sessionsToAdd.length, events_to_add: eventsToAdd.length },
+    applied: { records_added: 0, records_skipped_existing: recordsSkipped, candidates_added: 0, evidence_added: 0, inquiries_added: 0, reinforcement_added: 0, tombstones_added: 0, sessions_added: 0, events_added: 0 },
     warnings: [],
   };
   if (bundle.redaction?.enabled && !options.redactedAware) result.warnings.push("Bundle is redacted; import remains review-only unless redactedAware is set.");
@@ -470,6 +489,7 @@ export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceB
   for (const event of reinforcementToAdd) { appendReinforcementEvent(root, event); result.applied.reinforcement_added++; }
   for (const tombstone of tombstonesToAdd) { appendDeletionTombstone(root, tombstone); result.applied.tombstones_added++; }
   for (const session of sessionsToAdd) { appendDailyLog(root, normalizeTimestamp(session.created_at).slice(0, 10), session.text); result.applied.sessions_added++; }
+  for (const event of eventsToAdd) { appendPortableEvent(root, event); result.applied.events_added++; }
   return result;
 }
 

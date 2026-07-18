@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
@@ -11,6 +11,7 @@ import { appendDeletionTombstone, createDeletionTombstone } from "../../src/tomb
 import { appendReinforcementEvent, createReinforcementEvent, readReinforcementEvents } from "../../src/reinforcement";
 import { loadAllRecords, unsafeAddMemoryRecord } from "../../src/store";
 import { loadConfig } from "../../src/config";
+import { readPortableEvents } from "../../src/portable-events";
 import {
   exportToPiGovernanceBundle,
   importFromPiGovernanceBundle,
@@ -282,6 +283,37 @@ describe("pi-governance-rs compatibility bundle", () => {
       expect(second.applied.inquiries_added).toBe(0);
       expect(second.applied.reinforcement_added).toBe(0);
       expect(second.applied.sessions_added).toBe(0);
+    } finally { cleanup(dir); }
+  });
+
+  test("preserves generic peer events with deduplication, backup, and redacted omission metadata", () => {
+    const dir = root();
+    try {
+      const base: PiGovernanceBundle = {
+        schema_version: 1, format: "pi-governance", producer: { name: "pi-governance-rs", version: "1.1.0" },
+        records: [], patches: [], evidence: [], inquiries: [], sessions: [], reinforcement: [], tombstones: [],
+        events: [{ id: "event_one", category: "peer", message: "opaque payload", nested: { value: 1 } }],
+        redaction: { enabled: false, fields_checked: [], fields_redacted: [], notes: [] },
+      };
+      const first = importFromPiGovernanceBundle(dir, base, { dryRun: false });
+      expect(first.applied.events_added).toBe(1);
+      expect(readPortableEvents(dir)).toEqual(base.events);
+
+      const secondBundle: PiGovernanceBundle = {
+        ...base,
+        events: [base.events![0], base.events![0], { id: "event_two", category: "peer", message: "second" }],
+      };
+      const second = importFromPiGovernanceBundle(dir, secondBundle, { dryRun: false, backup: true });
+      expect(second.applied.events_added).toBe(1);
+      expect(readPortableEvents(dir).map((event) => event.id)).toEqual(["event_one", "event_two"]);
+      expect(readFileSync(join(second.backup_path!, "memory", "portable-events.jsonl"), "utf-8")).toContain("event_one");
+
+      const exported = exportToPiGovernanceBundle(dir);
+      expect(exported.events).toEqual(readPortableEvents(dir));
+      const redacted = exportToPiGovernanceBundle(dir, { redacted: true });
+      expect(redacted.events).toEqual([]);
+      expect(redacted.redaction.notes.join(" ")).toContain("2 opaque peer event(s) omitted");
+      expect(redacted.warnings?.join(" ").toLowerCase()).toContain("opaque peer events omitted");
     } finally { cleanup(dir); }
   });
 
