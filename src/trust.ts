@@ -21,6 +21,7 @@ const TRUST_WEIGHTS: Record<EvidenceTrustClass, number> = {
   repository_text: 0.25,
   generated_content: 0.2,
   third_party_documentation: 0.2,
+  unknown: 0.1,
 };
 
 const NON_DURABLE = new Set<DurabilitySignal>(["temporary", "session", "task"]);
@@ -30,6 +31,7 @@ const LOW_TRUST_REVIEW = new Set<EvidenceTrustClass>([
   "repository_text",
   "generated_content",
   "third_party_documentation",
+  "unknown",
 ]);
 const HIGH_POISONING_RISK = new Set<EvidenceTrustClass>(["repository_text", "generated_content", "third_party_documentation"]);
 const MEDIUM_POISONING_RISK = new Set<EvidenceTrustClass>(["agent_inference", "single_session_observation"]);

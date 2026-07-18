@@ -15,7 +15,8 @@ export type EvidenceTrustClass =
   | "single_session_observation"
   | "repository_text"
   | "generated_content"
-  | "third_party_documentation";
+  | "third_party_documentation"
+  | "unknown";
 
 export type EvidencePolarity = "supports" | "contradicts" | "qualifies";
 

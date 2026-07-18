@@ -33,9 +33,10 @@ const TRUST_BASE: Record<EvidenceTrustClass, number> = {
   repository_text: 0.55,
   generated_content: 0.45,
   third_party_documentation: 0.62,
+  unknown: 0.2,
 };
 
-const LOW_TRUST = new Set<EvidenceTrustClass>(["agent_inference", "single_session_observation", "repository_text", "generated_content", "third_party_documentation"]);
+const LOW_TRUST = new Set<EvidenceTrustClass>(["agent_inference", "single_session_observation", "repository_text", "generated_content", "third_party_documentation", "unknown"]);
 
 function clamp01(value: number): number { return Math.max(0, Math.min(1, value)); }
 
