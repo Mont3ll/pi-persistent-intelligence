@@ -36,6 +36,7 @@ By default, import shows what would change before it writes anything. Use `--app
   "inquiries": [],
   "sessions": [],
   "reinforcement": [],
+  "events": [],
   "tombstones": [],
   "redaction": {
     "enabled": false,
@@ -48,7 +49,8 @@ By default, import shows what would change before it writes anything. Use `--app
 
 ## Conservative defaults
 
-- Exports preserve L1/L2 records and L3 daily/session entries.
+- Unfiltered exports preserve L1/L2 records and L3 daily/session entries.
+- Project/profile exports select related artifacts without assigning filter values to missing source provenance. Global records remain global, domain records remain domain-scoped, and unrelated records/artifacts are omitted.
 - `ruleType` maps to `rule_type`.
 - `memory_kind`, evidence, patch history, tombstones, inquiries, reinforcement, and sessions are preserved across round trips.
 - Private session excerpts are omitted in redacted exports.
@@ -58,6 +60,17 @@ By default, import shows what would change before it writes anything. Use `--app
 - L3/session entries import into daily/session context rather than authoritative L1/L2 memory.
 - Date-only timestamps are normalized to RFC 3339 at the compatibility boundary.
 - Rust stores portable auxiliary artifacts as categorized canonical events and reconstructs their bundle sections on export.
+- Generic Rust events are preserved opaquely in `memory/portable-events.jsonl`; they never feed memory injection or JS runtime telemetry.
+- Redacted JS exports omit opaque peer events and report the omission because their payload schema is not governed by the JS runtime.
+
+## Snapshot reconciliation
+
+```bash
+/memory-reconcile peer-bundle.json --json
+/memory-reconcile peer-bundle.json --project my-project --profile my-profile --json
+```
+
+Reconciliation compares all eight portable sections (`records`, `patches`, `evidence`, `inquiries`, `sessions`, `reinforcement`, `events`, and `tombstones`). It reports directional, matching, divergent, duplicate, and conflicting IDs. Set-like arrays are normalized, while substantive status, scope, timestamp, and claim changes remain divergent. Reconciliation never imports, applies, or chooses an authoritative peer.
 
 ## User review expectations
 

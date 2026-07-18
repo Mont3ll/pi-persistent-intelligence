@@ -34,6 +34,7 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 | `/memory-recall-xray <query> [--profile] [--plain\|--json]` | Browse included/excluded memories, scores, evidence, and selection reasons; `--profile` adds stage timings. Read-only and redacted. |
 | `/memory-export --format pi-governance [--redacted] [--output bundle.json]` | Export a pi-governance-compatible PI memory contract bundle. |
 | `/memory-import --format pi-governance <bundle.json> [--apply] [--backup] [--redacted-aware]` | Preview or apply a pi-governance-compatible bundle import. By default this is a dry-run import. |
+| `/memory-reconcile <peer-bundle.json> [--project <name>] [--profile <id>] [--json]` | Compare the local snapshot with an independent peer bundle. Report-only; there is no apply mode. |
 | `/memory-governance doctor` | Check optional pi-governance-rs bridge configuration; disabled standalone mode is valid. |
 
 ## Memory lifecycle commands
