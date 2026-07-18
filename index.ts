@@ -80,6 +80,7 @@ import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-a
 import { renderGovernanceSimulationReport, simulatePatchImpact } from "./src/governance-simulation";
 import { resolveMemoryProfile } from "./src/profile";
 import { exportToPiGovernanceBundle, importFromPiGovernanceBundle, runPiGovernanceDoctor } from "./src/pi-governance-compat";
+import { reconcilePiGovernanceBundles } from "./src/pi-governance-reconciliation";
 import type { CaptureCandidate, CodebaseAnalysisKind, CodebaseAnalysisTool, MemoryKind } from "./src/types";
 
 function nowIso(): string { return new Date().toISOString(); }
@@ -858,6 +859,32 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("memory-reconcile", {
+    description: "Compare local memory with an independent peer bundle without mutation. Usage: /memory-reconcile <peer-bundle.json> [--project <name>] [--profile <id>] [--json]",
+    handler: async (args, ctx) => {
+      try {
+        const parsed = parseCommandArgs(args);
+        const peerPath = parsed.positional[0];
+        if (!peerPath) {
+          ctx.ui.notify("Usage: /memory-reconcile <peer-bundle.json> [--project <name>] [--profile <id>] [--json]", "warning");
+          return;
+        }
+        const cfg = loadConfig(root);
+        const source = exportToPiGovernanceBundle(root, {
+          namespace: cfg.piGovernance.namespace,
+          project: typeof parsed.flags.project === "string" ? parsed.flags.project : undefined,
+          profile_id: typeof parsed.flags.profile === "string" ? parsed.flags.profile : undefined,
+        });
+        const destination = JSON.parse(readFileSync(peerPath, "utf-8"));
+        const report = reconcilePiGovernanceBundles(source, destination);
+        const text = `Reconciliation is report-only: ${report.artifact_counts.records.source} local record(s), ${report.artifact_counts.records.destination} peer record(s), ${report.sections.records.divergent_ids.length} divergent ID(s).`;
+        notifyStructured(ctx, args, report, text, report.sections.records.divergent_ids.length > 0 ? "warning" : "info");
+      } catch (error) {
+        ctx.ui.notify(`Memory reconciliation failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("memory-governance", {
     description: "Check optional pi-governance-rs bridge status. Usage: /memory-governance doctor",
     handler: async (args, ctx) => {
@@ -1509,3 +1536,5 @@ export function applyPatchAndSync(
 
 export { exportToPiGovernanceBundle, importFromPiGovernanceBundle, runPiGovernanceDoctor } from "./src/pi-governance-compat";
 export type { PiGovernanceBundle, PiGovernanceExportOptions, PiGovernanceImportOptions, PiGovernanceImportResult, PiGovernanceDoctorReport } from "./src/pi-governance-compat";
+export { reconcilePiGovernanceBundles } from "./src/pi-governance-reconciliation";
+export type { ReconciliationReport, ReconciliationSection } from "./src/pi-governance-reconciliation";
