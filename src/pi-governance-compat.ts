@@ -297,12 +297,20 @@ export function exportToPiGovernanceBundle(root: string, options: PiGovernanceEx
 function recordFromPi(record: PiGovernanceRecord, fallback: PiGovernanceImportOptions): MemoryRecord | null {
   const layer = unmapLayer(record.layer);
   if (layer === "L3") return null;
-  const project = record.project ?? record.scope?.key ?? fallback.project;
+  const scope: MemoryRecord["scope"] = record.scope?.level === "domain"
+    ? { type: "domain", domains: record.scope.key ? [record.scope.key] : [] }
+    : record.scope?.level === "global"
+      ? { type: "global" }
+      : record.scope?.level === "project"
+        ? { type: "project", project: record.scope.key ?? record.project ?? fallback.project }
+        : record.project ?? fallback.project
+          ? { type: "project", project: record.project ?? fallback.project }
+          : { type: "global" };
   return {
     id: record.id,
     profile_id: record.profile_id ?? fallback.profile_id,
     layer,
-    scope: project ? { type: "project", project } : { type: "global" },
+    scope,
     tags: record.tags ?? [],
     statement: record.claim,
     evidence: (record.evidence_ids?.length ? record.evidence_ids : record.evidence?.map((e) => e.uri).filter(Boolean) ?? [`pi-governance:${record.id}`]).map((id) => ({ type: "manual", ref: id, note: "Imported from pi-governance bundle." })),
