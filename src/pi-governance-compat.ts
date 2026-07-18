@@ -95,6 +95,7 @@ export interface PiGovernanceBundle {
   events?: Array<Record<string, unknown>>;
   tombstones: DeletionTombstone[];
   redaction: PiGovernanceRedactionMetadata;
+  warnings?: string[];
 }
 
 export interface PiGovernanceExportOptions {
@@ -103,6 +104,17 @@ export interface PiGovernanceExportOptions {
   profile_id?: string;
   redacted?: boolean;
   includePrivateSessions?: boolean;
+}
+
+export interface PortableSelection {
+  records: MemoryRecord[];
+  candidates: CaptureCandidate[];
+  evidence: EvidenceRecord[];
+  inquiries: InquiryRecord[];
+  sessions: PiGovernanceSessionEntry[];
+  reinforcement: ReinforcementEvent[];
+  tombstones: DeletionTombstone[];
+  warnings: string[];
 }
 
 export interface PiGovernanceImportOptions { dryRun?: boolean; backup?: boolean; redactedAware?: boolean; namespace?: string; project?: string; profile_id?: string }
@@ -212,8 +224,6 @@ function readDailySessions(root: string, options: PiGovernanceExportOptions): Pi
       return text.split(/\n{2,}/).map((entry, index) => ({
         id: `daily_${date}_${index + 1}`,
         namespace: options.namespace ?? "default",
-        profile_id: options.profile_id,
-        project: options.project,
         layer: "l3_session" as const,
         text: entry.trim(),
         created_at: `${date}T00:00:00Z`,
@@ -222,14 +232,72 @@ function readDailySessions(root: string, options: PiGovernanceExportOptions): Pi
     });
 }
 
+function recordMatchesFilters(record: MemoryRecord, options: PiGovernanceExportOptions): boolean {
+  if (options.profile_id && record.profile_id !== options.profile_id) return false;
+  if (!options.project) return true;
+  if (record.scope.type === "global") return true;
+  return record.scope.type === "project" && record.scope.project === options.project;
+}
+
+function relatedToSelection(ids: string[] | undefined, selectedIds: Set<string>): boolean {
+  return (ids ?? []).some((id) => selectedIds.has(id));
+}
+
+function explicitlyMatchesFilters(
+  value: { profile_id?: string; project?: string; scope_level?: string; scope_ref?: string },
+  options: PiGovernanceExportOptions,
+): boolean {
+  if (options.profile_id && value.profile_id !== options.profile_id) return false;
+  if (options.project) {
+    if (value.project !== options.project && !(value.scope_level === "project" && value.scope_ref === options.project)) return false;
+  }
+  return !!(options.profile_id || options.project);
+}
+
+function selectPortableArtifacts(root: string, options: PiGovernanceExportOptions): PortableSelection {
+  const records = loadAllRecords(root).filter((record) => recordMatchesFilters(record, options));
+  const selectedIds = new Set(records.map((record) => record.id));
+  const filtered = !!(options.profile_id || options.project);
+  const allSessions = readDailySessions(root, options);
+  const sessions = filtered
+    ? allSessions.filter((session) => explicitlyMatchesFilters(session, options))
+    : allSessions;
+  const omittedSessions = allSessions.length - sessions.length;
+  const warnings = omittedSessions > 0
+    ? [`Omitted ${omittedSessions} unscoped daily session entr${omittedSessions === 1 ? "y" : "ies"} because project/profile filters were requested.`]
+    : [];
+
+  return {
+    records,
+    candidates: listCandidates(root).filter((candidate) => !filtered
+      || relatedToSelection(candidate.matched_memory_ids, selectedIds)
+      || explicitlyMatchesFilters(candidate, options)),
+    evidence: readEvidenceRecords(root).filter((item) => !filtered
+      || relatedToSelection(item.related_memory_ids, selectedIds)
+      || explicitlyMatchesFilters(item, options)),
+    inquiries: readInquiryRecords(root).filter((item) => !filtered
+      || relatedToSelection(item.related_memory_ids, selectedIds)
+      || explicitlyMatchesFilters(item, options)),
+    sessions,
+    reinforcement: readReinforcementEvents(root).filter((item) => !filtered
+      || selectedIds.has(item.memory_id)
+      || explicitlyMatchesFilters(item, options)),
+    tombstones: readDeletionTombstones(root).filter((item) => !filtered
+      || selectedIds.has(item.deleted_record_id)
+      || explicitlyMatchesFilters(item, options)),
+    warnings,
+  };
+}
+
 export function exportToPiGovernanceBundle(root: string, options: PiGovernanceExportOptions = {}): PiGovernanceBundle {
   const namespace = options.namespace ?? "default";
+  const selection = selectPortableArtifacts(root, options);
   const redaction: PiGovernanceRedactionMetadata = { enabled: !!options.redacted, fields_checked: [], fields_redacted: [], notes: [] };
-  const records = loadAllRecords(root).map((record): PiGovernanceRecord => ({
+  const records = selection.records.map((record): PiGovernanceRecord => ({
     id: record.id,
     namespace,
-    profile_id: record.profile_id ?? options.profile_id,
-    project: projectFromRecord(record, options.project),
+    profile_id: record.profile_id,
+    project: projectFromRecord(record),
     class: classFromRecord(record),
     layer: mapLayer(record.layer),
     claim: record.statement,
@@ -257,7 +325,7 @@ export function exportToPiGovernanceBundle(root: string, options: PiGovernanceEx
     record.durability = relatedEvidence[0]?.durability_signal ?? "unknown";
   }
 
-  const patches = listCandidates(root).map((candidate): PiGovernancePatch => ({
+  const patches = selection.candidates.map((candidate): PiGovernancePatch => ({
     id: candidate.id,
     status: mapCandidateStatus(candidate.status),
     operation: "propose_record",
@@ -270,7 +338,7 @@ export function exportToPiGovernanceBundle(root: string, options: PiGovernanceEx
     target_id: candidate.matched_memory_ids?.[0],
   }));
 
-  const evidence = readEvidenceRecords(root).map((record) => options.redacted ? redactEvidence(record, redaction) : { ...record });
+  const evidence = selection.evidence.map((record) => options.redacted ? redactEvidence(record, redaction) : { ...record });
   if (options.redacted) redaction.notes.push("Redacted export is best-effort and should be user-reviewed before sharing.");
 
   return {
@@ -285,12 +353,13 @@ export function exportToPiGovernanceBundle(root: string, options: PiGovernanceEx
     records,
     patches,
     evidence,
-    inquiries: readInquiryRecords(root),
-    sessions: readDailySessions(root, options),
-    reinforcement: readReinforcementEvents(root),
+    inquiries: selection.inquiries,
+    sessions: selection.sessions,
+    reinforcement: selection.reinforcement,
     events: [],
-    tombstones: readDeletionTombstones(root),
+    tombstones: selection.tombstones,
     redaction,
+    warnings: selection.warnings,
   };
 }
 

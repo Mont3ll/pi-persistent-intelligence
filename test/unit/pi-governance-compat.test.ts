@@ -32,7 +32,7 @@ function record(overrides: Partial<MemoryRecord> = {}): MemoryRecord {
   return {
     id: overrides.id ?? `mem_${layer}`,
     resource_id: "res_demo",
-    profile_id: "profile_demo",
+    profile_id: overrides.profile_id ?? "profile_demo",
     layer,
     scope: overrides.scope ?? { type: "project", project: "demo-project" },
     tags: overrides.tags ?? ["release"],
@@ -96,7 +96,7 @@ describe("pi-governance-rs compatibility bundle", () => {
       appendReinforcementEvent(dir, createReinforcementEvent({ memory_id: "mem_l2", outcome: "explicit_reinforcement", now: "2026-06-30T00:00:00Z" }));
       appendDeletionTombstone(dir, createDeletionTombstone({ deleted_record_id: "mem_deleted", deletion_mode: "privacy_purge", deletion_reason: "privacy_sensitive", content: "secret text", now: "2026-06-30T00:00:00Z" }));
 
-      const bundle = exportToPiGovernanceBundle(dir, { namespace: "interop-test", project: "demo-project", profile_id: "profile_demo" });
+      const bundle = exportToPiGovernanceBundle(dir, { namespace: "interop-test" });
 
       expect(bundle.schema_version).toBe(1);
       expect(bundle.format).toBe("pi-governance");
@@ -116,6 +116,49 @@ describe("pi-governance-rs compatibility bundle", () => {
       expect(bundle.inquiries).toHaveLength(1);
       expect(bundle.reinforcement).toHaveLength(1);
       expect(bundle.tombstones[0]).toMatchObject({ deleted_record_id: "mem_deleted", deletion_mode: "privacy_purge" });
+    } finally { cleanup(dir); }
+  });
+
+  test("filters project/profile exports without relabeling records or unscoped sessions", () => {
+    const dir = root();
+    try {
+      unsafeAddMemoryRecord(dir, record({ id: "mem_global", profile_id: "profile-a", scope: { type: "global" } }));
+      unsafeAddMemoryRecord(dir, record({ id: "mem_alpha", profile_id: "profile-a", scope: { type: "project", project: "alpha" } }));
+      unsafeAddMemoryRecord(dir, record({ id: "mem_beta", profile_id: "profile-a", scope: { type: "project", project: "beta" } }));
+      unsafeAddMemoryRecord(dir, record({ id: "mem_domain", profile_id: "profile-a", scope: { type: "domain", domains: ["healthcare"] } }));
+      unsafeAddMemoryRecord(dir, record({ id: "mem_other_profile", profile_id: "profile-b", scope: { type: "project", project: "alpha" } }));
+      appendCandidate(dir, candidate({ id: "cap_alpha", profile_id: "profile-a", matched_memory_ids: ["mem_alpha"] }));
+      appendCandidate(dir, candidate({ id: "cap_beta", profile_id: "profile-a", matched_memory_ids: ["mem_beta"] }));
+      appendEvidenceRecord(dir, {
+        id: "ev_alpha", resource_id: "res_demo", profile_id: "profile-a", created_at: "2026-06-30T00:00:00Z",
+        source_kind: "conversation", source_summary: "alpha", trust_class: "direct_user_instruction", polarity: "supports",
+        related_memory_ids: ["mem_alpha"], scope_level: "project", scope_ref: "alpha",
+      });
+      appendEvidenceRecord(dir, {
+        id: "ev_beta", resource_id: "res_demo", profile_id: "profile-a", created_at: "2026-06-30T00:00:00Z",
+        source_kind: "conversation", source_summary: "beta", trust_class: "direct_user_instruction", polarity: "supports",
+        related_memory_ids: ["mem_beta"], scope_level: "project", scope_ref: "beta",
+      });
+      appendInquiryRecord(dir, createInquiryRecord({ question: "Alpha?", context: "alpha", profile_id: "profile-a", related_memory_ids: ["mem_alpha"], now: "2026-06-30T00:00:00Z" }));
+      appendInquiryRecord(dir, createInquiryRecord({ question: "Beta?", context: "beta", profile_id: "profile-a", related_memory_ids: ["mem_beta"], now: "2026-06-30T00:00:00Z" }));
+      appendReinforcementEvent(dir, createReinforcementEvent({ memory_id: "mem_alpha", profile_id: "profile-a", outcome: "explicit_reinforcement", now: "2026-06-30T00:00:00Z" }));
+      appendReinforcementEvent(dir, createReinforcementEvent({ memory_id: "mem_beta", profile_id: "profile-a", outcome: "explicit_reinforcement", now: "2026-06-30T00:00:00Z" }));
+      appendDeletionTombstone(dir, createDeletionTombstone({ deleted_record_id: "mem_alpha", profile_id: "profile-a", deletion_mode: "audit_preserving", deletion_reason: "user_requested", now: "2026-06-30T00:00:00Z" }));
+      appendDeletionTombstone(dir, createDeletionTombstone({ deleted_record_id: "mem_beta", profile_id: "profile-a", deletion_mode: "audit_preserving", deletion_reason: "user_requested", now: "2026-06-30T00:00:00Z" }));
+      appendDailyLog(dir, "2026-06-30", "unscoped daily session");
+
+      const bundle = exportToPiGovernanceBundle(dir, { project: "alpha", profile_id: "profile-a" });
+
+      expect(bundle.records.map((item) => item.id).sort()).toEqual(["mem_alpha", "mem_global"]);
+      expect(bundle.records.find((item) => item.id === "mem_global")).toMatchObject({ scope: { level: "global", key: null }, project: undefined, profile_id: "profile-a" });
+      expect(bundle.records.find((item) => item.id === "mem_alpha")).toMatchObject({ scope: { level: "project", key: "alpha" }, project: "alpha", profile_id: "profile-a" });
+      expect(bundle.patches.map((item) => item.id)).toEqual(["cap_alpha"]);
+      expect(bundle.evidence.map((item) => item.id)).toEqual(["ev_alpha"]);
+      expect(bundle.inquiries).toHaveLength(1);
+      expect(bundle.reinforcement).toHaveLength(1);
+      expect(bundle.tombstones).toHaveLength(1);
+      expect(bundle.sessions).toEqual([]);
+      expect(bundle.warnings).toContain("Omitted 1 unscoped daily session entry because project/profile filters were requested.");
     } finally { cleanup(dir); }
   });
 
