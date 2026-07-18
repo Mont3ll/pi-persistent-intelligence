@@ -34,7 +34,7 @@ Use both when you want:
 - pi-agent-native capture, review, and recall from `pi-persistent-intelligence`; and
 - a separate `pi-governance-rs` runtime for MCP-capable clients or cross-tool workflows.
 
-Interoperability is through the shared PI memory contract, compatible import/export, and optional bridge diagnostics.
+Interoperability is through the shared PI memory contract, compatible import/export, report-only snapshot reconciliation, and optional bridge diagnostics. The runtimes remain independent canonical peers; neither silently synchronizes or becomes authoritative for the other.
 
 ## Export
 
@@ -64,7 +64,15 @@ API:
 importFromPiGovernanceBundle(root, bundle, { dryRun: true })
 ```
 
-By default, import shows what would change before it writes anything. Applied imports are merge-oriented, skip duplicate IDs, preserve records, patch history, evidence, inquiries, sessions, reinforcement, and tombstones, and route pending patches through the normal inbox/candidate flow. Date-only timestamps are normalized to RFC 3339.
+By default, import shows what would change before it writes anything. Applied imports are merge-oriented, skip duplicate IDs, preserve records, patch history, evidence, inquiries, sessions, reinforcement, tombstones, domain scope, and generic peer events, and route pending patches through the normal inbox/candidate flow. Date-only timestamps are normalized to RFC 3339.
+
+## Reconcile snapshots without syncing
+
+```bash
+/memory-reconcile peer-bundle.json --json
+```
+
+The command compares all portable sections in both directions and reports matching, divergent, source-only, destination-only, and duplicate IDs. It has no apply option and does not mutate either peer.
 
 ## Optional bridge diagnostics
 

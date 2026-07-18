@@ -80,6 +80,18 @@ Imports skip duplicate record IDs, route proposed patches to the inbox, and keep
 
 ---
 
+### `/memory-reconcile <peer-bundle.json> [--project <name>] [--profile <id>] [--json]`
+
+Compares the local snapshot with an independent peer bundle across records, patches, evidence, inquiries, sessions, reinforcement, generic events, and tombstones.
+
+```
+/memory-reconcile /tmp/peer-bundle.json --json
+```
+
+The command is report-only: it has no apply mode, does not mutate either peer, and does not silently select an authority.
+
+---
+
 ### `/memory-governance doctor`
 
 Checks optional `pi-governance-rs` bridge configuration.

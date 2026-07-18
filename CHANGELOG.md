@@ -8,14 +8,18 @@ All notable changes to this project will be documented in this file.
 
 - Added dry-run-first `/memory-store-integrity` repair with reviewed fingerprints, mandatory backups, and audit reports.
 - Added duplicate stable-ID and self-supersession diagnostics.
+- Added report-only `/memory-reconcile` with deterministic eight-section peer comparison.
+- Added opaque generic peer-event persistence for lossless non-redacted round trips.
 
 ### Changed
 
 - Patch skips now include structured reasons and details; zero-applied patches use `rejected_at_apply`.
+- Project/profile exports now filter related artifacts without relabeling global/domain records or unscoped sessions.
 
 ### Fixed
 
 - Prevented exact duplicate stable IDs from entering canonical memory.
+- Preserved domain scope across JS/Rust imports and exports.
 - Restored full `pi-governance` bundle interoperability with Rust v1.1.0: RFC 3339 timestamp normalization, native Rust patch import, auxiliary artifact preservation, ID-based deduplication, and import backups.
 
 ## [0.13.0] - 2026-07-09
