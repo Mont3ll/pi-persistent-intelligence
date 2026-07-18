@@ -1,0 +1,306 @@
+{
+  "all_namespaces": false,
+  "events": [
+    {
+      "category": "fixture",
+      "created_at": "2026-07-18T00:00:00Z",
+      "id": "event_match",
+      "message": "fixture event",
+      "namespace": "persistent-intelligence",
+      "object_id": "rec_match",
+      "schema_version": 1,
+      "severity": "info"
+    },
+    {
+      "category": "fixture",
+      "created_at": "2026-07-18T00:00:00Z",
+      "id": "event_source_only",
+      "message": "fixture event",
+      "namespace": "persistent-intelligence",
+      "object_id": "rec_source_only",
+      "schema_version": 1,
+      "severity": "info"
+    }
+  ],
+  "evidence": [
+    {
+      "created_at": "2026-07-18T00:00:00Z",
+      "id": "evidence_match",
+      "record_id": "rec_match",
+      "source_summary": "matching"
+    },
+    {
+      "created_at": "2026-07-18T00:00:00Z",
+      "id": "evidence_source_only",
+      "record_id": "rec_source_only",
+      "source_summary": "source"
+    }
+  ],
+  "exported_at": "2026-07-18T00:00:00Z",
+  "format": "pi-governance",
+  "inquiries": [
+    {
+      "created_at": "2026-07-18T00:00:00Z",
+      "id": "inquiry_match",
+      "question": "Match?",
+      "record_ids": [
+        "rec_match"
+      ],
+      "status": "open"
+    },
+    {
+      "created_at": "2026-07-18T00:00:00Z",
+      "id": "inquiry_source_only",
+      "question": "Source?",
+      "record_ids": [
+        "rec_source_only"
+      ],
+      "status": "open"
+    }
+  ],
+  "namespace": "persistent-intelligence",
+  "patches": [
+    {
+      "contest_resolution": null,
+      "created_at": "2026-07-18T00:00:00Z",
+      "evidence": [],
+      "id": "patch_match",
+      "namespace": "persistent-intelligence",
+      "operation": "reinforce_record",
+      "proposed_record": null,
+      "reason": "fixture patch",
+      "schema_version": 1,
+      "status": "proposed",
+      "target_id": "rec_match",
+      "updated_at": "2026-07-18T00:00:00Z"
+    },
+    {
+      "contest_resolution": null,
+      "created_at": "2026-07-18T00:00:00Z",
+      "evidence": [],
+      "id": "patch_source_only",
+      "namespace": "persistent-intelligence",
+      "operation": "reinforce_record",
+      "proposed_record": null,
+      "reason": "fixture patch",
+      "schema_version": 1,
+      "status": "proposed",
+      "target_id": "rec_source_only",
+      "updated_at": "2026-07-18T00:00:00Z"
+    }
+  ],
+  "producer": {
+    "name": "phase2-fixture",
+    "version": "1.0.0"
+  },
+  "project": null,
+  "records": [
+    {
+      "claim": "Use deterministic reconciliation.",
+      "class": "workflow",
+      "confidence": 0.9,
+      "created_at": "2026-07-18T00:00:00Z",
+      "durability": "long_term",
+      "evidence": [
+        {
+          "durability": "long_term",
+          "kind": "conversation",
+          "note": null,
+          "schema_version": 1,
+          "source_kind": "imported_bundle",
+          "trust_class": "direct_user_instruction",
+          "uri": "fixture:rec_match"
+        }
+      ],
+      "id": "rec_match",
+      "layer": "l2_playbook",
+      "memory_kind": "procedure",
+      "namespace": "persistent-intelligence",
+      "rule_type": "workflow",
+      "schema_version": 1,
+      "scope": {
+        "key": null,
+        "level": "global"
+      },
+      "source_kind": "imported_bundle",
+      "status": "active",
+      "supersedes": [],
+      "tags": [
+        "reconcile",
+        "fixture"
+      ],
+      "trust_class": "direct_user_instruction",
+      "updated_at": "2026-07-18T00:00:00Z"
+    },
+    {
+      "claim": "Source claim.",
+      "class": "workflow",
+      "confidence": 0.9,
+      "created_at": "2026-07-18T00:00:00Z",
+      "durability": "long_term",
+      "evidence": [
+        {
+          "durability": "long_term",
+          "kind": "conversation",
+          "note": null,
+          "schema_version": 1,
+          "source_kind": "imported_bundle",
+          "trust_class": "direct_user_instruction",
+          "uri": "fixture:rec_divergent"
+        }
+      ],
+      "id": "rec_divergent",
+      "layer": "l2_playbook",
+      "memory_kind": "procedure",
+      "namespace": "persistent-intelligence",
+      "rule_type": "workflow",
+      "schema_version": 1,
+      "scope": {
+        "key": "alpha",
+        "level": "project"
+      },
+      "source_kind": "imported_bundle",
+      "status": "active",
+      "supersedes": [],
+      "tags": [
+        "fixture",
+        "rec_divergent"
+      ],
+      "trust_class": "direct_user_instruction",
+      "updated_at": "2026-07-18T00:00:00Z"
+    },
+    {
+      "claim": "Healthcare domain rule.",
+      "class": "workflow",
+      "confidence": 0.9,
+      "created_at": "2026-07-18T00:00:00Z",
+      "durability": "long_term",
+      "evidence": [
+        {
+          "durability": "long_term",
+          "kind": "conversation",
+          "note": null,
+          "schema_version": 1,
+          "source_kind": "imported_bundle",
+          "trust_class": "direct_user_instruction",
+          "uri": "fixture:rec_source_only"
+        }
+      ],
+      "id": "rec_source_only",
+      "layer": "l2_playbook",
+      "memory_kind": "procedure",
+      "namespace": "persistent-intelligence",
+      "rule_type": "workflow",
+      "schema_version": 1,
+      "scope": {
+        "key": "healthcare",
+        "level": "domain"
+      },
+      "source_kind": "imported_bundle",
+      "status": "active",
+      "supersedes": [],
+      "tags": [
+        "fixture",
+        "rec_source_only"
+      ],
+      "trust_class": "direct_user_instruction",
+      "updated_at": "2026-07-18T00:00:00Z"
+    },
+    {
+      "claim": "Beta-only rule.",
+      "class": "workflow",
+      "confidence": 0.9,
+      "created_at": "2026-07-18T00:00:00Z",
+      "durability": "long_term",
+      "evidence": [
+        {
+          "durability": "long_term",
+          "kind": "conversation",
+          "note": null,
+          "schema_version": 1,
+          "source_kind": "imported_bundle",
+          "trust_class": "direct_user_instruction",
+          "uri": "fixture:rec_unrelated"
+        }
+      ],
+      "id": "rec_unrelated",
+      "layer": "l2_playbook",
+      "memory_kind": "procedure",
+      "namespace": "persistent-intelligence",
+      "rule_type": "workflow",
+      "schema_version": 1,
+      "scope": {
+        "key": "beta",
+        "level": "project"
+      },
+      "source_kind": "imported_bundle",
+      "status": "active",
+      "supersedes": [],
+      "tags": [
+        "fixture",
+        "rec_unrelated"
+      ],
+      "trust_class": "direct_user_instruction",
+      "updated_at": "2026-07-18T00:00:00Z"
+    }
+  ],
+  "redacted": false,
+  "redaction": {
+    "enabled": false,
+    "fields_checked": [
+      "evidence.uri",
+      "events.message"
+    ],
+    "fields_redacted": [],
+    "notes": []
+  },
+  "reinforcement": [
+    {
+      "created_at": "2026-07-18T00:00:00Z",
+      "id": "reinforcement_match",
+      "memory_id": "rec_match",
+      "signal": "explicit_reinforcement"
+    },
+    {
+      "created_at": "2026-07-18T00:00:00Z",
+      "id": "reinforcement_source_only",
+      "memory_id": "rec_source_only",
+      "signal": "neutral_exposure"
+    }
+  ],
+  "schema_version": 1,
+  "sessions": [
+    {
+      "created_at": "2026-07-18T00:00:00Z",
+      "id": "session_match",
+      "layer": "l3_session",
+      "namespace": "persistent-intelligence",
+      "profile_id": "profile-a",
+      "project": "alpha",
+      "source_kind": "session_entry",
+      "text": "matching session"
+    },
+    {
+      "created_at": "2026-07-18T00:00:00Z",
+      "id": "session_unscoped",
+      "layer": "l3_session",
+      "namespace": "persistent-intelligence",
+      "source_kind": "daily_log",
+      "text": "unscoped session"
+    }
+  ],
+  "tombstones": [
+    {
+      "created_at": "2026-07-18T00:00:00Z",
+      "deletion_mode": "audit_preserving",
+      "id": "tombstone_match",
+      "memory_id": "rec_match"
+    },
+    {
+      "created_at": "2026-07-18T00:00:00Z",
+      "deletion_mode": "audit_preserving",
+      "id": "tombstone_source_only",
+      "memory_id": "rec_source_only"
+    }
+  ]
+}

@@ -1,0 +1,184 @@
+{
+  "artifact_counts": {
+    "events": {
+      "delta": 0,
+      "destination": 2,
+      "source": 2
+    },
+    "evidence": {
+      "delta": 0,
+      "destination": 2,
+      "source": 2
+    },
+    "inquiries": {
+      "delta": 0,
+      "destination": 2,
+      "source": 2
+    },
+    "patches": {
+      "delta": 0,
+      "destination": 2,
+      "source": 2
+    },
+    "records": {
+      "delta": 1,
+      "destination": 3,
+      "source": 4
+    },
+    "reinforcement": {
+      "delta": 0,
+      "destination": 2,
+      "source": 2
+    },
+    "sessions": {
+      "delta": 0,
+      "destination": 2,
+      "source": 2
+    },
+    "tombstones": {
+      "delta": 0,
+      "destination": 2,
+      "source": 2
+    }
+  },
+  "destination_identity": {
+    "format": "pi-governance",
+    "namespace": "persistent-intelligence",
+    "producer": "phase2-fixture"
+  },
+  "dry_run": true,
+  "mapping_changes": [],
+  "mutation_performed": false,
+  "redaction_omissions": [],
+  "sections": {
+    "events": {
+      "conflicting_duplicate_ids": [],
+      "destination_duplicate_ids": [],
+      "destination_only_ids": [
+        "event_destination_only"
+      ],
+      "divergent_ids": [],
+      "matching_ids": [
+        "event_match"
+      ],
+      "source_duplicate_ids": [],
+      "source_only_ids": [
+        "event_source_only"
+      ]
+    },
+    "evidence": {
+      "conflicting_duplicate_ids": [],
+      "destination_duplicate_ids": [],
+      "destination_only_ids": [
+        "evidence_destination_only"
+      ],
+      "divergent_ids": [],
+      "matching_ids": [
+        "evidence_match"
+      ],
+      "source_duplicate_ids": [],
+      "source_only_ids": [
+        "evidence_source_only"
+      ]
+    },
+    "inquiries": {
+      "conflicting_duplicate_ids": [],
+      "destination_duplicate_ids": [],
+      "destination_only_ids": [
+        "inquiry_destination_only"
+      ],
+      "divergent_ids": [],
+      "matching_ids": [
+        "inquiry_match"
+      ],
+      "source_duplicate_ids": [],
+      "source_only_ids": [
+        "inquiry_source_only"
+      ]
+    },
+    "patches": {
+      "conflicting_duplicate_ids": [],
+      "destination_duplicate_ids": [],
+      "destination_only_ids": [
+        "patch_destination_only"
+      ],
+      "divergent_ids": [],
+      "matching_ids": [
+        "patch_match"
+      ],
+      "source_duplicate_ids": [],
+      "source_only_ids": [
+        "patch_source_only"
+      ]
+    },
+    "records": {
+      "conflicting_duplicate_ids": [],
+      "destination_duplicate_ids": [],
+      "destination_only_ids": [
+        "rec_destination_only"
+      ],
+      "divergent_ids": [
+        "rec_divergent"
+      ],
+      "matching_ids": [
+        "rec_match"
+      ],
+      "source_duplicate_ids": [],
+      "source_only_ids": [
+        "rec_source_only",
+        "rec_unrelated"
+      ]
+    },
+    "reinforcement": {
+      "conflicting_duplicate_ids": [],
+      "destination_duplicate_ids": [],
+      "destination_only_ids": [
+        "reinforcement_destination_only"
+      ],
+      "divergent_ids": [],
+      "matching_ids": [
+        "reinforcement_match"
+      ],
+      "source_duplicate_ids": [],
+      "source_only_ids": [
+        "reinforcement_source_only"
+      ]
+    },
+    "sessions": {
+      "conflicting_duplicate_ids": [],
+      "destination_duplicate_ids": [],
+      "destination_only_ids": [
+        "session_destination_only"
+      ],
+      "divergent_ids": [],
+      "matching_ids": [
+        "session_match"
+      ],
+      "source_duplicate_ids": [],
+      "source_only_ids": [
+        "session_unscoped"
+      ]
+    },
+    "tombstones": {
+      "conflicting_duplicate_ids": [],
+      "destination_duplicate_ids": [],
+      "destination_only_ids": [
+        "tombstone_destination_only"
+      ],
+      "divergent_ids": [],
+      "matching_ids": [
+        "tombstone_match"
+      ],
+      "source_duplicate_ids": [],
+      "source_only_ids": [
+        "tombstone_source_only"
+      ]
+    }
+  },
+  "source_identity": {
+    "format": "pi-governance",
+    "namespace": "persistent-intelligence",
+    "producer": "phase2-fixture"
+  },
+  "warnings": []
+}
