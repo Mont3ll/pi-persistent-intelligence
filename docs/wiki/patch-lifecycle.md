@@ -105,11 +105,12 @@ Applied patches remain in `patches/` permanently. They are not deleted after app
 - `mode`: `"propose"`, `"supervised"`, or `"auto"`
 - `summary`
 - `ops`: array of operations with op type, target, updates, rationale, risk, and selection state
-- `status`: `"proposed"`, `"applied"`, or `"partially_applied"`
-- `applied_at`
-- `applied_ops` and `skipped_ops`
+- `status`: `"proposed"`, `"applied"`, `"partially_applied"`, or `"rejected_at_apply"`
+- `applied_at`: timestamp when evaluated for application
+- `applied_ops`: operation IDs that were applied
+- `skipped_ops`: structured entries containing operation ID, optional candidate ID, reason, and detail. Historical bare IDs load as `legacy_unknown` rather than receiving an invented reason.
 
-This provides a complete change history for every belief in the system.
+A patch is `applied` when every operation applies, `partially_applied` when at least one applies and at least one is skipped, and `rejected_at_apply` when no operation applies. This provides a complete, explainable change history for every belief in the system.
 
 ---
 
