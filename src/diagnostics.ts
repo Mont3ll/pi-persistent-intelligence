@@ -75,6 +75,36 @@ export function runMemoryDiagnostics(root: string, options: { profile?: boolean 
   const activeIds = new Set(allRecords.filter((r) => r.status === "active").map((r) => r.id));
   const allIds = new Set(allRecords.map((r) => r.id));
 
+  const physicalRowsById = new Map<string, MemoryRecord[]>();
+  for (const record of allRecords) {
+    const rows = physicalRowsById.get(record.id) ?? [];
+    rows.push(record);
+    physicalRowsById.set(record.id, rows);
+  }
+  const duplicateStableIds = [...physicalRowsById.entries()]
+    .filter(([, rows]) => rows.length > 1)
+    .map(([id]) => id)
+    .sort();
+  if (duplicateStableIds.length > 0) {
+    findings.push(error(
+      "duplicate_stable_ids",
+      `${allRecords.length} physical row(s) contain ${allIds.size} unique stable ID(s); ${duplicateStableIds.length} ID(s) occur more than once.`,
+      duplicateStableIds,
+    ));
+  } else {
+    findings.push(ok("duplicate_stable_ids", `${allRecords.length} physical row(s) contain ${allIds.size} unique stable ID(s).`));
+  }
+
+  const selfSupersessionIds = [...physicalRowsById.entries()]
+    .filter(([id, rows]) => rows.some((record) => record.supersedes.includes(id) || record.superseded_by.includes(id)))
+    .map(([id]) => id)
+    .sort();
+  if (selfSupersessionIds.length > 0) {
+    findings.push(error("self_supersession", `${selfSupersessionIds.length} stable ID(s) contain self-referential supersession edges.`, selfSupersessionIds));
+  } else {
+    findings.push(ok("self_supersession", "No self-referential supersession edges."));
+  }
+
   // 2. Orphan evidence (references non-existent memories)
   const endOrphanEvidence = profiler?.startSpan("orphan_evidence");
   const orphanEvidence = allEvidence.filter((ev) =>

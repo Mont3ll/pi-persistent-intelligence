@@ -43,6 +43,15 @@ describe("direct store write boundary", () => {
     expect(loadActiveRecords(dir).map((item) => item.id)).toEqual(["mem_1"]);
   });
 
+  test("canonical writes reject an existing stable id", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record("mem_existing"));
+
+    expect(() => unsafeAddMemoryRecord(dir, record("mem_existing"))).toThrow(
+      "Duplicate canonical memory record id: mem_existing",
+    );
+  });
+
   test("public curation/write flow uses patch governance", () => {
     const dir = root();
     const patch: MemoryPatch = {
