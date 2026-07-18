@@ -12,6 +12,7 @@ import {
   summarizeReinforcement,
   recordExplicitReinforcement,
   decideReinforcementLink,
+  classifyRecordedToolOutcome,
 } from "../../src/reinforcement";
 import { loadAllRecords, unsafeAddMemoryRecord } from "../../src/store";
 import type { MemoryRecord } from "../../src/types";
@@ -86,6 +87,16 @@ describe("reinforcement records", () => {
     expect(readReinforcementEvents(dir)).toHaveLength(1);
     expect(JSON.stringify(loadAllRecords(dir))).toBe(before);
     expect(() => recordExplicitReinforcement(dir, { memory_id: "missing", note: "confirmed", session_id: "session-a" })).toThrow("active memory");
+  });
+
+  test("tool outcomes require explicit recorded success", () => {
+    expect(classifyRecordedToolOutcome({})).toBe("unknown");
+    expect(classifyRecordedToolOutcome({ isError: false })).toBe("unknown");
+    expect(classifyRecordedToolOutcome({ exitCode: 0 })).toBe("success");
+    expect(classifyRecordedToolOutcome({ exitCode: 0, isError: true })).toBe("failure");
+    expect(classifyRecordedToolOutcome({ success: true })).toBe("success");
+    expect(classifyRecordedToolOutcome({ exit_code: 1 })).toBe("failure");
+    expect(classifyRecordedToolOutcome({ status: "passed" })).toBe("success");
   });
 
   test("implicit success requires one active selected memory and an observable successful outcome", () => {

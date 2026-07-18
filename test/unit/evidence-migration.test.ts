@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEvidenceId } from "../../src/evidence";
-import { applyLegacyEvidenceMigration, planLegacyEvidenceMigration, scanLegacyEvidenceMigration } from "../../src/evidence-migration";
+import { applyLegacyEvidenceMigration, commitMigrationFileSet, planLegacyEvidenceMigration, recoverInterruptedLegacyEvidenceMigration, scanLegacyEvidenceMigration } from "../../src/evidence-migration";
 import { ensureMemoryDirs } from "../../src/paths";
 import { readEvidenceRecords } from "../../src/evidence";
 import { loadAllRecords } from "../../src/store";
@@ -89,6 +89,63 @@ describe("legacy evidence migration planner", () => {
     expect(afterRecord.evidence.map((item) => item.ref)).toContain("daily/2026-07-03.md");
     expect(afterRecord.evidence.map((item) => item.ref)).toContain(readEvidenceRecords(dir)[0].id);
     expect(scanLegacyEvidenceMigration(dir).evidence_to_create).toBe(0);
+  });
+
+  test("rolls back every target when a multi-file commit fails", () => {
+    const dir = root();
+    const first = join(dir, "first.jsonl");
+    const second = join(dir, "second.jsonl");
+    writeFileSync(first, "first-before\n", "utf-8");
+    writeFileSync(second, "second-before\n", "utf-8");
+    expect(() => commitMigrationFileSet([
+      { file: first, expected: Buffer.from("first-before\n"), next: Buffer.from("first-after\n") },
+      { file: second, expected: Buffer.from("second-before\n"), next: Buffer.from("second-after\n") },
+    ], (_file, index) => { if (index === 1) throw new Error("injected commit failure"); })).toThrow("injected commit failure");
+    expect(readFileSync(first, "utf-8")).toBe("first-before\n");
+    expect(readFileSync(second, "utf-8")).toBe("second-before\n");
+  });
+
+  test("revalidates each target immediately before rename", () => {
+    const dir = root();
+    const first = join(dir, "first.jsonl");
+    const second = join(dir, "second.jsonl");
+    writeFileSync(first, "first-before\n", "utf-8");
+    writeFileSync(second, "second-before\n", "utf-8");
+    expect(() => commitMigrationFileSet([
+      { file: first, expected: Buffer.from("first-before\n"), next: Buffer.from("first-after\n") },
+      { file: second, expected: Buffer.from("second-before\n"), next: Buffer.from("second-after\n") },
+    ], (file, index) => { if (index === 0) writeFileSync(file, "concurrent-change\n", "utf-8"); })).toThrow("changed after preview");
+    expect(readFileSync(first, "utf-8")).toBe("concurrent-change\n");
+    expect(readFileSync(second, "utf-8")).toBe("second-before\n");
+  });
+
+  test("recovers a prepared interrupted transaction from its backups", () => {
+    const dir = root();
+    const target = join(dir, "memory", "evidence.jsonl");
+    const backup = join(dir, "backups", "legacy-evidence-backfill-v1-test", "memory", "evidence.jsonl");
+    mkdirSync(join(dir, "memory"), { recursive: true });
+    mkdirSync(join(dir, "backups", "legacy-evidence-backfill-v1-test", "memory"), { recursive: true });
+    writeFileSync(target, "partial-after\n", "utf-8");
+    writeFileSync(backup, "before\n", "utf-8");
+    const transaction = join(dir, "backups", "legacy-evidence-backfill-v1-test", "transaction.json");
+    writeFileSync(transaction, JSON.stringify({ state: "prepared", targets: [{ file: "memory/evidence.jsonl", backup: "memory/evidence.jsonl", existed: true }] }), "utf-8");
+    expect(recoverInterruptedLegacyEvidenceMigration(dir)).toBe(1);
+    expect(readFileSync(target, "utf-8")).toBe("before\n");
+    expect(JSON.parse(readFileSync(transaction, "utf-8")).state).toBe("rolled_back");
+  });
+
+  test("rejects a target changed after planning before committing any file", () => {
+    const dir = root();
+    const first = join(dir, "first.jsonl");
+    const second = join(dir, "second.jsonl");
+    writeFileSync(first, "first-before\n", "utf-8");
+    writeFileSync(second, "second-drifted\n", "utf-8");
+    expect(() => commitMigrationFileSet([
+      { file: first, expected: Buffer.from("first-before\n"), next: Buffer.from("first-after\n") },
+      { file: second, expected: Buffer.from("second-before\n"), next: Buffer.from("second-after\n") },
+    ])).toThrow("changed after preview");
+    expect(readFileSync(first, "utf-8")).toBe("first-before\n");
+    expect(readFileSync(second, "utf-8")).toBe("second-drifted\n");
   });
 
   test("rejects drift and blocks secret-bearing sources", () => {

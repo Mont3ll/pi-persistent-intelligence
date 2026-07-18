@@ -4,6 +4,19 @@ import { ensureMemoryDirs } from "./paths";
 import { loadAllRecords } from "./store";
 import type { MemoryRecord, ReinforcementEvent, ReinforcementOutcome, ReinforcementSummary, Stability } from "./types";
 
+export type RecordedToolOutcome = "success" | "failure" | "unknown";
+
+export function classifyRecordedToolOutcome(value: Record<string, unknown>): RecordedToolOutcome {
+  if (value.success === false || value.ok === false || value.passed === false || value.isError === true) return "failure";
+  const exitCode = value.exitCode ?? value.exit_code;
+  if (typeof exitCode === "number") return exitCode === 0 ? "success" : "failure";
+  if (value.success === true || value.ok === true || value.passed === true) return "success";
+  const status = typeof value.status === "string" ? value.status.toLowerCase() : "";
+  if (["passed", "success", "succeeded", "ok", "completed"].includes(status)) return "success";
+  if (["failed", "failure", "error"].includes(status)) return "failure";
+  return "unknown";
+}
+
 export interface ReinforcementLinkDecision {
   outcome: "implicit_success" | "neutral_exposure" | "none";
   memory_id?: string;
