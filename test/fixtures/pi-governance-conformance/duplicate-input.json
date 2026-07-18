@@ -1,0 +1,179 @@
+{
+  "all_namespaces": false,
+  "events": [],
+  "evidence": [],
+  "exported_at": "2026-07-18T00:00:00Z",
+  "format": "pi-governance",
+  "inquiries": [],
+  "namespace": "persistent-intelligence",
+  "patches": [],
+  "producer": {
+    "name": "phase2-fixture",
+    "version": "1.0.0"
+  },
+  "project": null,
+  "records": [
+    {
+      "claim": "Exact duplicate.",
+      "class": "workflow",
+      "confidence": 0.9,
+      "created_at": "2026-07-18T00:00:00Z",
+      "durability": "long_term",
+      "evidence": [
+        {
+          "durability": "long_term",
+          "kind": "conversation",
+          "note": null,
+          "schema_version": 1,
+          "source_kind": "imported_bundle",
+          "trust_class": "direct_user_instruction",
+          "uri": "fixture:rec_exact_duplicate"
+        }
+      ],
+      "id": "rec_exact_duplicate",
+      "layer": "l2_playbook",
+      "memory_kind": "procedure",
+      "namespace": "persistent-intelligence",
+      "rule_type": "workflow",
+      "schema_version": 1,
+      "scope": {
+        "key": null,
+        "level": "global"
+      },
+      "source_kind": "imported_bundle",
+      "status": "active",
+      "supersedes": [],
+      "tags": [
+        "fixture",
+        "rec_exact_duplicate"
+      ],
+      "trust_class": "direct_user_instruction",
+      "updated_at": "2026-07-18T00:00:00Z"
+    },
+    {
+      "claim": "Exact duplicate.",
+      "class": "workflow",
+      "confidence": 0.9,
+      "created_at": "2026-07-18T00:00:00Z",
+      "durability": "long_term",
+      "evidence": [
+        {
+          "durability": "long_term",
+          "kind": "conversation",
+          "note": null,
+          "schema_version": 1,
+          "source_kind": "imported_bundle",
+          "trust_class": "direct_user_instruction",
+          "uri": "fixture:rec_exact_duplicate"
+        }
+      ],
+      "id": "rec_exact_duplicate",
+      "layer": "l2_playbook",
+      "memory_kind": "procedure",
+      "namespace": "persistent-intelligence",
+      "rule_type": "workflow",
+      "schema_version": 1,
+      "scope": {
+        "key": null,
+        "level": "global"
+      },
+      "source_kind": "imported_bundle",
+      "status": "active",
+      "supersedes": [],
+      "tags": [
+        "fixture",
+        "rec_exact_duplicate"
+      ],
+      "trust_class": "direct_user_instruction",
+      "updated_at": "2026-07-18T00:00:00Z"
+    },
+    {
+      "claim": "First claim.",
+      "class": "workflow",
+      "confidence": 0.9,
+      "created_at": "2026-07-18T00:00:00Z",
+      "durability": "long_term",
+      "evidence": [
+        {
+          "durability": "long_term",
+          "kind": "conversation",
+          "note": null,
+          "schema_version": 1,
+          "source_kind": "imported_bundle",
+          "trust_class": "direct_user_instruction",
+          "uri": "fixture:rec_conflicting_duplicate"
+        }
+      ],
+      "id": "rec_conflicting_duplicate",
+      "layer": "l2_playbook",
+      "memory_kind": "procedure",
+      "namespace": "persistent-intelligence",
+      "rule_type": "workflow",
+      "schema_version": 1,
+      "scope": {
+        "key": null,
+        "level": "global"
+      },
+      "source_kind": "imported_bundle",
+      "status": "active",
+      "supersedes": [],
+      "tags": [
+        "fixture",
+        "rec_conflicting_duplicate"
+      ],
+      "trust_class": "direct_user_instruction",
+      "updated_at": "2026-07-18T00:00:00Z"
+    },
+    {
+      "claim": "Second claim.",
+      "class": "workflow",
+      "confidence": 0.9,
+      "created_at": "2026-07-18T00:00:00Z",
+      "durability": "long_term",
+      "evidence": [
+        {
+          "durability": "long_term",
+          "kind": "conversation",
+          "note": null,
+          "schema_version": 1,
+          "source_kind": "imported_bundle",
+          "trust_class": "direct_user_instruction",
+          "uri": "fixture:rec_conflicting_duplicate"
+        }
+      ],
+      "id": "rec_conflicting_duplicate",
+      "layer": "l2_playbook",
+      "memory_kind": "procedure",
+      "namespace": "persistent-intelligence",
+      "rule_type": "workflow",
+      "schema_version": 1,
+      "scope": {
+        "key": null,
+        "level": "global"
+      },
+      "source_kind": "imported_bundle",
+      "status": "active",
+      "supersedes": [],
+      "tags": [
+        "fixture",
+        "rec_conflicting_duplicate"
+      ],
+      "trust_class": "direct_user_instruction",
+      "updated_at": "2026-07-18T00:00:00Z"
+    }
+  ],
+  "redacted": false,
+  "redaction": {
+    "enabled": false,
+    "fields_checked": [
+      "evidence.uri",
+      "events.message"
+    ],
+    "fields_redacted": [],
+    "notes": []
+  },
+  "reinforcement": [],
+  "schema_version": 1,
+  "sessions": [],
+  "tombstones": []
+}
