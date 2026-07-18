@@ -10,11 +10,15 @@ All notable changes to this project will be documented in this file.
 - Added duplicate stable-ID and self-supersession diagnostics.
 - Added report-only `/memory-reconcile` with deterministic eight-section peer comparison.
 - Added opaque generic peer-event persistence for lossless non-redacted round trips.
+- Added reviewed legacy evidence backfill, explicit inquiry lifecycle/staleness commands, and explicit positive reinforcement.
+- Added evidence adoption, inquiry age-band, and reinforcement distribution quality reporting.
 
 ### Changed
 
 - Patch skips now include structured reasons and details; zero-applied patches use `rejected_at_apply`.
 - Project/profile exports now filter related artifacts without relabeling global/domain records or unscoped sessions.
+- Automatic correction capture now rejects task/agent wrappers and routes through durability and memory-worth classification.
+- Implicit success now requires a uniquely selected active memory and an observable successful test/tool outcome; neutral exposure is disabled by default.
 
 ### Fixed
 

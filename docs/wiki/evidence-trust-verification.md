@@ -1,5 +1,9 @@
 # Evidence, Trust, and Verification
 
+## Legacy provenance backfill
+
+`/memory-evidence migrate-legacy --json` previews deterministic structured evidence for resolvable legacy file/daily references. Missing references remain findings and secret-bearing sources are blocked. Apply requires `--apply --fingerprint <reviewed-sha256>`, creates byte-preserving backups and an audit report, retains original inline references, adds structured IDs, and never raises memory confidence.
+
 PI treats memory candidates as claims that need to be evaluated before becoming durable beliefs. This evaluation happens through a structured evidence record and a deterministic verifier.
 
 ---

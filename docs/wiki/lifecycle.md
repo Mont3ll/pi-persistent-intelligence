@@ -61,7 +61,7 @@ Meta-consolidation reports
 
 ### Automatic correction capture
 
-Every user message is scanned at the end of each agent turn. When a correction signal is detected, PI builds an evidence record, classifies it with trust class `user_correction`, runs the verifier, and adds a candidate to the inbox. No tool call is required.
+Every user message is scanned at the end of each agent turn. Structural task, subagent, and implementation-agent wrappers are rejected before scoring. Remaining correction signals pass through memory-worth and durability classification: durable guidance may become an inbox candidate, temporary guidance stays daily-only, ambiguous guidance becomes an inquiry, and rejected guidance is not persisted. No tool call is required.
 
 Detected patterns include:
 

@@ -63,8 +63,14 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 | `/memory-background run` | Run queued background jobs and write report artifacts. |
 | `/memory-background list [--plain\|--json]` | Browse queued, running, succeeded, and failed background analysis jobs. |
 | `/memory-evidence [list] [--plain\|--json]` | Browse evidence and provenance records. |
+| `/memory-evidence migrate-legacy [--apply --fingerprint <sha256>] [--json]` | Preview or apply deterministic legacy provenance backfill. Apply requires the reviewed fingerprint and creates a backup/report. |
 | `/memory-evidence add-codebase-analysis ...` | Add deterministic codebase-analysis evidence from tools such as `tsc`, ESLint, Playwright, Vitest, Fallow-like analysis, or custom scripts. |
 | `/memory-evidence link <evidence-id> --statement "..."` | Turn existing evidence into a reviewable inbox candidate without bypassing governance. |
+| `/memory-inquiries list [--status <status>] [--json]` | Review open or closed inquiries. |
+| `/memory-inquiries answer <id> --memory <memory-id>` | Answer an open inquiry with an existing non-deleted memory. |
+| `/memory-inquiries withdraw <id>` / `stale <id>` | Explicitly close an open inquiry. |
+| `/memory-inquiries stale-scan [--apply --fingerprint <sha256>] [--json]` | Preview or apply age-based inquiry staleness with backup and drift protection. |
+| `/memory-reinforce <memory-id> --note "..." [--json]` | Record deduplicated explicit positive reinforcement without changing memory confidence or stability. |
 | `/memory-skill draft <procedure-candidate-id>` | Generate a review-only skill draft artifact from a procedure candidate; never writes `SKILL.md` automatically. |
 | `/memory-failures analyze [--save]` | Mine failed jobs or rejected candidates into review-only learning artifacts. |
 | `/memory-graph [--save]` | Export a read-only dependency graph of memory, evidence, inquiries, tombstones, candidates, and reinforcement. |

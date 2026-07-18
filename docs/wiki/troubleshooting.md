@@ -167,6 +167,20 @@ If the JSONL itself appears corrupted, check the patches directory for the last 
 
 ---
 
+## Evidence migration or inquiry stale-scan rejects apply
+
+**Cause:** The canonical inputs changed after preview, or the fingerprint was copied incorrectly.
+
+**Fix:** Run the preview again, review its findings and new fingerprint, then apply that exact fingerprint. Do not bypass drift protection. Missing legacy source paths remain unresolved findings; secret-bearing sources are intentionally blocked rather than converted into structured evidence.
+
+---
+
+## A correction was not added to the inbox
+
+Task, delegated-agent, and one-off implementation wrappers are intentionally excluded from durable correction capture. Temporary guidance may be written daily-only, and ambiguous high-impact guidance may become an inquiry. Use `/memory-inquiries list --status open` to inspect review questions; use `memory_write target=long_term` when durable capture is explicitly intended.
+
+---
+
 ## Getting help
 
 - GitHub issues: https://github.com/Mont3ll/pi-persistent-intelligence/issues
