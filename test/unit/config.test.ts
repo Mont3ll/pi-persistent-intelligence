@@ -17,6 +17,7 @@ describe("config", () => {
     expect(config.curator.minConfidence).toBe(0.75);
     expect(config.llm.enabled).toBe(false);
     expect(config.vault.enabled).toBe(false);
+    expect(config.inquiries.reviewWindowDays).toBe(30);
   });
 
   test("merges user config over defaults", () => {
@@ -28,6 +29,17 @@ describe("config", () => {
     expect(config.curator.minEvidenceCount).toBe(2);
     expect(config.llm.enabled).toBe(true);
     expect(config.llm.model).toBe("test/model");
+  });
+
+  test("validates inquiry review window range", () => {
+    const dir = root();
+    const paths = ensureMemoryDirs(dir);
+    writeFileSync(paths.config, JSON.stringify({ inquiries: { reviewWindowDays: 90 } }), "utf-8");
+    expect(loadConfig(dir).inquiries.reviewWindowDays).toBe(90);
+    writeFileSync(paths.config, JSON.stringify({ inquiries: { reviewWindowDays: 0 } }), "utf-8");
+    expect(loadConfig(dir).inquiries.reviewWindowDays).toBe(30);
+    writeFileSync(paths.config, JSON.stringify({ inquiries: { reviewWindowDays: 3.5 } }), "utf-8");
+    expect(loadConfig(dir).inquiries.reviewWindowDays).toBe(30);
   });
 
   test("writes default config file", () => {

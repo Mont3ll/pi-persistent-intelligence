@@ -11,6 +11,8 @@ import {
   markInquiryAnswered,
   markInquiryStale,
   markInquiryWithdrawn,
+  applyInquiryStaleness,
+  planInquiryStaleness,
   normalizeInquiryQuestion,
   readInquiryRecords,
   readOpenInquiries,
@@ -136,6 +138,23 @@ describe("inquiry records", () => {
 
     const relevant = selectRelevantInquiries(dir, { profile_id: "project:test", current_message: "how should memory governance work?", tags: ["memory"] });
     expect(relevant.map((item) => item.question.includes("memory"))).toEqual([true]);
+  });
+
+  test("staleness planning is read-only and apply requires an unchanged fingerprint", () => {
+    const dir = root();
+    appendInquiryRecord(dir, createInquiryRecord({ question: "Old?", context: "test", now: "2026-05-01T00:00:00Z" }));
+    appendInquiryRecord(dir, createInquiryRecord({ question: "Recent?", context: "test", now: "2026-06-25T00:00:00Z" }));
+    const closed = appendInquiryRecord(dir, createInquiryRecord({ question: "Closed?", context: "test", now: "2026-05-01T00:00:00Z" }));
+    markInquiryWithdrawn(dir, closed.id, "2026-05-02T00:00:00Z");
+
+    const preview = planInquiryStaleness(readInquiryRecords(dir), 30, "2026-07-01T00:00:00Z");
+    expect(preview).toMatchObject({ dry_run: true, mutation_performed: false, open_scanned: 2, stale_candidates: 1 });
+    expect(readOpenInquiries(dir)).toHaveLength(2);
+
+    const applied = applyInquiryStaleness(dir, preview.fingerprint, 30, "2026-07-01T00:00:00Z");
+    expect(applied).toMatchObject({ mutation_performed: true, inquiries_staled: 1 });
+    expect(findInquiryById(dir, preview.candidate_ids[0])?.status).toBe("stale");
+    expect(applied.backup_path).toBeTruthy();
   });
 
   test("answered inquiries not surfaced by selectRelevantInquiries", () => {

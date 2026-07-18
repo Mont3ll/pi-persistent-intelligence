@@ -1,8 +1,29 @@
 import { createHash } from "node:crypto";
-import { readJsonl, writeJsonl, appendJsonl } from "./jsonl";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { readJsonl, writeJsonl, appendJsonl, writeJsonlAtomic } from "./jsonl";
 import { ensureMemoryDirs } from "./paths";
 import { loadAllRecords } from "./store";
 import type { CaptureCandidate, CandidateMatchKind, InquiryPriority, InquiryRecord, InquiryStatus } from "./types";
+
+export interface InquiryStalenessPlan {
+  dry_run: true;
+  mutation_performed: false;
+  fingerprint: string;
+  review_window_days: number;
+  open_scanned: number;
+  stale_candidates: number;
+  candidate_ids: string[];
+}
+
+export interface InquiryStalenessApplyResult {
+  dry_run: false;
+  mutation_performed: boolean;
+  fingerprint: string;
+  inquiries_staled: number;
+  backup_path?: string;
+  report_path?: string;
+}
 
 export interface InquiryTransitionResult {
   inquiry_id: string;
@@ -98,6 +119,63 @@ export function markInquiryWithdrawn(root: string, id: string, now = new Date().
 
 export function markInquiryStale(root: string, id: string, now = new Date().toISOString()): boolean {
   return replaceInquiryRecord(root, id, (record) => ({ ...record, status: "stale" as InquiryStatus, last_seen: now }));
+}
+
+export function planInquiryStaleness(
+  inquiries: InquiryRecord[],
+  reviewWindowDays: number,
+  now = new Date().toISOString(),
+): InquiryStalenessPlan {
+  const nowMs = Date.parse(now);
+  const open = inquiries.filter((inquiry) => inquiry.status === "open");
+  const candidateIds = open
+    .filter((inquiry) => {
+      const seen = Date.parse(inquiry.last_seen);
+      return Number.isFinite(seen) && nowMs - seen > reviewWindowDays * 86_400_000;
+    })
+    .map((inquiry) => inquiry.id)
+    .sort();
+  const fingerprint = createHash("sha256").update(JSON.stringify({
+    reviewWindowDays,
+    inquiries: inquiries.map((inquiry) => ({ id: inquiry.id, status: inquiry.status, last_seen: inquiry.last_seen })),
+    candidateIds,
+  })).digest("hex");
+  return {
+    dry_run: true,
+    mutation_performed: false,
+    fingerprint,
+    review_window_days: reviewWindowDays,
+    open_scanned: open.length,
+    stale_candidates: candidateIds.length,
+    candidate_ids: candidateIds,
+  };
+}
+
+export function applyInquiryStaleness(
+  root: string,
+  expectedFingerprint: string,
+  reviewWindowDays: number,
+  now = new Date().toISOString(),
+): InquiryStalenessApplyResult {
+  const paths = ensureMemoryDirs(root);
+  const inquiries = readInquiryRecords(root);
+  const plan = planInquiryStaleness(inquiries, reviewWindowDays, now);
+  if (plan.fingerprint !== expectedFingerprint) throw new Error("Inquiry staleness preview is stale; run preview again.");
+  const base = { dry_run: false as const, mutation_performed: false, fingerprint: plan.fingerprint, inquiries_staled: 0 };
+  if (plan.candidate_ids.length === 0) return base;
+  const slug = now.replace(/[^0-9]/g, "").slice(0, 17);
+  const backupPath = join(root, "backups", `inquiry-staleness-v1-${slug}`);
+  const backupFile = join(backupPath, "memory", "inquiries.jsonl");
+  mkdirSync(dirname(backupFile), { recursive: true });
+  copyFileSync(paths.memory.inquiries, backupFile);
+  const candidates = new Set(plan.candidate_ids);
+  const updated = inquiries.map((inquiry) => candidates.has(inquiry.id) && inquiry.status === "open" ? { ...inquiry, status: "stale" as const, last_seen: now } : inquiry);
+  writeJsonlAtomic(paths.memory.inquiries, updated);
+  const reportPath = join(root, "reports", `inquiry-staleness-${slug}.json`);
+  mkdirSync(dirname(reportPath), { recursive: true });
+  const result: InquiryStalenessApplyResult = { ...base, mutation_performed: true, inquiries_staled: candidates.size, backup_path: backupPath, report_path: reportPath };
+  writeFileSync(reportPath, `${JSON.stringify({ ...result, plan }, null, 2)}\n`, "utf-8");
+  return result;
 }
 
 export function transitionInquiry(

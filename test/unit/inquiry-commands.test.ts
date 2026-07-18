@@ -14,7 +14,7 @@ afterEach(() => { if (oldRoot === undefined) delete process.env.PI_MEMORY_ROOT; 
 function setup() {
   oldRoot = process.env.PI_MEMORY_ROOT;
   root = mkdtempSync(join(tmpdir(), "pi-inquiry-command-")); process.env.PI_MEMORY_ROOT = root; ensureMemoryDirs(root);
-  const inquiry = appendInquiryRecord(root, createInquiryRecord({ question: "Keep this?", context: "test", now: "2026-07-01T00:00:00Z" }));
+  const inquiry = appendInquiryRecord(root, createInquiryRecord({ question: "Keep this?", context: "test", now: "2026-05-01T00:00:00Z" }));
   const memory: MemoryRecord = { id: "mem_answer", layer: "L2", scope: { type: "global" }, tags: [], statement: "Answer.", evidence: [{ type: "manual", ref: "test", note: "test" }], confidence: 0.8, stability: "low", created_at: "2026-07-01", updated_at: "2026-07-01", review: { cadence_days: 30, next_review: "2026-08-01", change_condition: "change" }, status: "active", supersedes: [], superseded_by: [], vault_ref: null };
   unsafeAddMemoryRecord(root, memory);
   const commands = new Map<string, any>(); const notifications: string[] = [];
@@ -38,6 +38,18 @@ describe("/memory-inquiries", () => {
 
     await commands.get("memory-inquiries").handler(`answer ${inquiry.id} --memory mem_answer`, ctx);
     expect(notifications.at(-1)).toContain("cannot transition");
+  });
+
+  test("stale-scan previews and applies only with its reviewed fingerprint", async () => {
+    const { inquiry, commands, notifications, ctx } = setup();
+    await commands.get("memory-inquiries").handler("stale-scan --json", ctx);
+    const preview = JSON.parse(notifications.at(-1)!);
+    expect(preview).toMatchObject({ dry_run: true, stale_candidates: 1 });
+    expect(findInquiryById(root, inquiry.id)?.status).toBe("open");
+    await commands.get("memory-inquiries").handler("stale-scan --apply --json", ctx);
+    expect(notifications.at(-1)).toContain("fingerprint");
+    await commands.get("memory-inquiries").handler(`stale-scan --apply --fingerprint ${preview.fingerprint} --json`, ctx);
+    expect(JSON.parse(notifications.at(-1)!)).toMatchObject({ mutation_performed: true, inquiries_staled: 1 });
   });
 
   test("withdraws and marks stale only from open state and reports missing inquiries", async () => {

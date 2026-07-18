@@ -58,7 +58,7 @@ import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-chec
 import { loadActiveRecords } from "./src/store";
 import { buildCandidateTrustMetadata } from "./src/trust";
 import { linkExplicitCorrectionToMemory } from "./src/reinforcement";
-import { appendInquiryRecord, createInquiryRecord, readInquiryRecords, selectRelevantInquiries, renderInquiryInjectionBlock, transitionInquiry } from "./src/inquiries";
+import { appendInquiryRecord, applyInquiryStaleness, createInquiryRecord, planInquiryStaleness, readInquiryRecords, selectRelevantInquiries, renderInquiryInjectionBlock, transitionInquiry } from "./src/inquiries";
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
 import { appendEvidenceRecord, readEvidenceRecords } from "./src/evidence";
 import { linkEvidenceToCandidate } from "./src/evidence-link";
@@ -928,11 +928,24 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("memory-inquiries", {
-    description: "Review inquiry lifecycle. Usage: /memory-inquiries list [--status open|answered|withdrawn|stale] [--json] | answer <id> --memory <memory-id> | withdraw <id> | stale <id>",
+    description: "Review inquiry lifecycle. Usage: /memory-inquiries list ... | answer <id> --memory <memory-id> | withdraw <id> | stale <id> | stale-scan [--apply --fingerprint <sha256>] [--json]", 
     handler: async (args, ctx) => {
       const parsed = parseCommandArgs(args);
       const action = parsed.positional[0] ?? "list";
       try {
+        if (action === "stale-scan") {
+          const reviewWindowDays = loadConfig(root).inquiries.reviewWindowDays;
+          if (parsed.flags.apply !== true) {
+            const plan = planInquiryStaleness(readInquiryRecords(root), reviewWindowDays, nowIso());
+            notifyStructured(ctx, args, plan, `Inquiry staleness preview: ${plan.stale_candidates} candidate(s) older than ${reviewWindowDays} days.`, plan.stale_candidates > 0 ? "warning" : "info");
+            return;
+          }
+          const fingerprint = typeof parsed.flags.fingerprint === "string" ? parsed.flags.fingerprint : "";
+          if (!fingerprint) throw new Error("Apply requires the reviewed stale-scan fingerprint.");
+          const result = applyInquiryStaleness(root, fingerprint, reviewWindowDays, nowIso());
+          notifyStructured(ctx, args, result, result.mutation_performed ? `Marked ${result.inquiries_staled} inquiry(s) stale. Backup: ${result.backup_path}.` : "No inquiries required staleness changes.", result.mutation_performed ? "success" : "info");
+          return;
+        }
         if (action === "list") {
           const status = typeof parsed.flags.status === "string" ? parsed.flags.status : undefined;
           const allowed = new Set(["open", "answered", "withdrawn", "stale"]);
