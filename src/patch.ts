@@ -8,7 +8,7 @@ import { writeVaultPromotionReport } from "./vaultPromotion";
 import { createDeletionTombstone, appendDeletionTombstone, isTombstonedRecord } from "./tombstones";
 import { readEvidenceRecords, redactEvidenceForMemory } from "./evidence";
 import { affectedRecordIdsFromPatchOps, postMutationModeFromOps, runPostMutationChecks } from "./post-mutation-checks";
-import type { MemoryPatch, PatchOp } from "./types";
+import type { MemoryPatch, PatchOp, PatchSkip, PatchSkipReason } from "./types";
 
 export interface ApplyPatchOptions {
   selectedOpIds?: string[];
@@ -30,26 +30,51 @@ function hasInvalidatedEvidence(root: string, op: PatchOp): boolean {
   return readEvidenceRecords(root).some((ev) => ids.has(ev.id) && (ev.redaction_status === "redacted" || ev.redaction_status === "deleted"));
 }
 
-function canApplyOp(root: string, op: PatchOp): boolean {
+type ApplyDecision = { ok: true } | { ok: false; reason: PatchSkipReason; detail: string };
+
+function reject(reason: PatchSkipReason, detail: string): ApplyDecision {
+  return { ok: false, reason, detail };
+}
+
+function applyDecision(root: string, op: PatchOp): ApplyDecision {
   const records = loadAllRecords(root);
   const byId = new Map(records.map((record) => [record.id, record]));
-  if (op.record && byId.has(op.record.id)) return false;
-  if ((op.record || op.to_record) && hasInvalidatedEvidence(root, op)) return false;
-  if (op.target_id && isTombstonedRecord(root, op.target_id)) return false;
-  if (op.op === "add") return op.record ? !isTombstonedRecord(root, op.record.id) : false;
-  if (["update", "update_stability", "flag_for_review", "decay", "deprecate", "contest", "uncontest", "add_exception"].includes(op.op)) {
-    const target = op.target_id ? byId.get(op.target_id) : undefined;
-    return Boolean(target && target.status !== "deleted" && target.status !== "superseded");
+
+  if (op.op === "add" && !op.record) return reject("malformed_operation", `Add operation ${op.op_id} is missing its record.`);
+  if (op.op === "supersede" && (!op.target_id || !op.to_record)) return reject("malformed_operation", `Supersede operation ${op.op_id} is missing its target or replacement record.`);
+  const updateOps = ["update", "update_stability", "flag_for_review", "decay"];
+  if (updateOps.includes(op.op) && (!op.target_id || !op.updates)) return reject("malformed_operation", `Update operation ${op.op_id} is missing its target or update fields.`);
+  const targetOnlyOps = ["deprecate", "contest", "uncontest", "add_exception", "delete"];
+  if (targetOnlyOps.includes(op.op) && !op.target_id) return reject("malformed_operation", `Operation ${op.op_id} is missing its target.`);
+  if (op.op === "add_exception" && !op.updates) return reject("malformed_operation", `Operation ${op.op_id} is missing its exception fields.`);
+
+  if ((op.record || op.to_record) && hasInvalidatedEvidence(root, op)) {
+    return reject("invalidated_evidence", `Operation ${op.op_id} references redacted or deleted evidence.`);
   }
+
+  if (op.op === "add") {
+    const id = op.record!.id;
+    if (isTombstonedRecord(root, id)) return reject("tombstoned", `Record ${id} is tombstoned.`);
+    if (byId.has(id)) return reject("duplicate_id", `Record ${id} already exists in canonical memory.`);
+    return { ok: true };
+  }
+
+  if (op.target_id && isTombstonedRecord(root, op.target_id)) return reject("tombstoned", `Target ${op.target_id} is tombstoned.`);
+
+  if ([...updateOps, ...targetOnlyOps, "supersede"].includes(op.op)) {
+    const target = op.target_id ? byId.get(op.target_id) : undefined;
+    if (!target) return reject("missing_target", `Target ${op.target_id ?? "(missing)"} does not exist.`);
+    if (target.status === "deleted" || target.status === "superseded") {
+      return reject("target_terminal", `Target ${target.id} has terminal status ${target.status}.`);
+    }
+  }
+
   if (op.op === "supersede") {
-    const target = op.target_id ? byId.get(op.target_id) : undefined;
-    return Boolean(target && target.status !== "deleted" && target.status !== "superseded" && op.to_record && !byId.has(op.to_record.id));
+    if (op.target_id === op.to_record!.id) return reject("self_supersession", `A record cannot supersede itself: ${op.target_id}.`);
+    if (byId.has(op.to_record!.id)) return reject("replacement_id_conflict", `Replacement record ${op.to_record!.id} already exists.`);
   }
-  if (op.op === "delete") {
-    const target = op.target_id ? byId.get(op.target_id) : undefined;
-    return Boolean(target && target.status !== "deleted");
-  }
-  return true;
+
+  return { ok: true };
 }
 
 function markCandidateIfNew(root: string, id: string, status: "patched" | "rejected"): void {
@@ -184,26 +209,45 @@ export function readPatchFile(root: string, patchId: string): MemoryPatch {
   const filename = patchId.endsWith(".json") ? patchId : `${patchId}.json`;
   const file = join(paths.patches, filename);
   if (!existsSync(file)) throw new Error(`Patch not found: ${patchId}`);
-  return JSON.parse(readFileSync(file, "utf-8")) as MemoryPatch;
+  const parsed = JSON.parse(readFileSync(file, "utf-8")) as Omit<MemoryPatch, "skipped_ops"> & { skipped_ops?: Array<PatchSkip | string> };
+  return {
+    ...parsed,
+    skipped_ops: (parsed.skipped_ops ?? []).map((entry): PatchSkip => typeof entry === "string"
+      ? { op_id: entry, reason: "legacy_unknown", detail: "Historical patch did not record why this operation was skipped." }
+      : entry),
+  };
 }
 
 export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatchOptions): MemoryPatch {
   writePatchFile(root, patch);
   const applied_ops: string[] = [];
-  const skipped_ops: string[] = [];
+  const skipped_ops: PatchSkip[] = [];
   for (const op of patch.ops) {
     const selected = isSelected(op, options.selectedOpIds);
-    if (selected && canApplyOp(root, op)) {
+    const decision = selected
+      ? applyDecision(root, op)
+      : reject("not_selected", `Operation ${op.op_id} was not selected for application.`);
+    if (decision.ok) {
       applyOp(root, patch.patch_id, op, options.now);
       applied_ops.push(op.op_id);
     } else {
       if (selected && op.candidate_id) markCandidateIfNew(root, op.candidate_id, "rejected");
-      skipped_ops.push(op.op_id);
+      skipped_ops.push({
+        op_id: op.op_id,
+        ...(op.candidate_id ? { candidate_id: op.candidate_id } : {}),
+        reason: decision.reason,
+        detail: decision.detail,
+      });
     }
   }
+  const status: MemoryPatch["status"] = applied_ops.length === 0 && skipped_ops.length > 0
+    ? "rejected_at_apply"
+    : skipped_ops.length > 0
+      ? "partially_applied"
+      : "applied";
   const appliedPatch: MemoryPatch = {
     ...patch,
-    status: skipped_ops.length ? "partially_applied" : "applied",
+    status,
     applied_at: options.now,
     applied_ops,
     skipped_ops,
