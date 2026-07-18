@@ -74,6 +74,9 @@ export function addMemoryRecordFromPatch(root: string, record: MemoryRecord): vo
 export function unsafeAddMemoryRecord(root: string, record: MemoryRecord): void {
   if (!isMemoryRecord(record)) throw new Error("Invalid memory record");
   if (isTombstonedRecord(root, record.id)) throw new Error(`Cannot add tombstoned memory record: ${record.id}`);
+  if (loadAllRecords(root).some((existing) => existing.id === record.id)) {
+    throw new Error(`Duplicate canonical memory record id: ${record.id}`);
+  }
   appendJsonl(targetFile(root, record), record);
 }
 

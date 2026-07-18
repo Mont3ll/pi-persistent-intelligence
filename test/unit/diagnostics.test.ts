@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
@@ -84,5 +84,37 @@ describe("memory diagnostics", () => {
     const report = runMemoryDiagnostics(dir);
     expect(report.findings.filter((f) => f.severity === "error")).toHaveLength(0);
     expect(report.findings.some((f) => f.code === "legacy_missing_fields" && f.severity === "info")).toBe(true);
+  });
+
+  test("detects duplicate stable ids and reports row versus unique counts", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record("mem_duplicate", { status: "superseded" }));
+    appendFileSync(
+      join(dir, "memory", "L2.playbooks.jsonl"),
+      `${JSON.stringify(record("mem_duplicate", { statement: "effective duplicate", status: "active" }))}\n`,
+      "utf-8",
+    );
+
+    const report = runMemoryDiagnostics(dir);
+    const finding = report.findings.find((item) => item.code === "duplicate_stable_ids");
+
+    expect(finding).toMatchObject({ severity: "error", affected_ids: ["mem_duplicate"] });
+    expect(finding?.message).toContain("2 physical row(s)");
+    expect(finding?.message).toContain("1 unique stable ID(s)");
+  });
+
+  test("detects self-supersession in either relationship direction", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record("mem_self", {
+      supersedes: ["mem_self"],
+      superseded_by: ["mem_self"],
+    }));
+
+    const report = runMemoryDiagnostics(dir);
+
+    expect(report.findings.find((item) => item.code === "self_supersession")).toMatchObject({
+      severity: "error",
+      affected_ids: ["mem_self"],
+    });
   });
 });
