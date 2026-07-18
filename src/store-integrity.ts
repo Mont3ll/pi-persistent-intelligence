@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { runMemoryDiagnostics } from "./diagnostics";
+import { readJsonl, writeJsonlAtomic } from "./jsonl";
+import { resolvePaths } from "./paths";
 import type { MemoryRecord } from "./types";
 
 export type IntegrityGroupStatus = "repairable" | "ambiguous_storage_route";
@@ -36,6 +41,25 @@ export interface StoreIntegrityPlan {
   groups_skipped: number;
   groups: IntegrityGroupDecision[];
   repaired_rows: IntegritySourceRow[];
+}
+
+export interface StoreIntegrityApplyResult {
+  dry_run: false;
+  mutation_performed: boolean;
+  migration_needed: boolean;
+  fingerprint: string;
+  rows_before: number;
+  unique_ids_before: number;
+  rows_after: number;
+  duplicate_groups: number;
+  rows_removed: number;
+  self_edges_removed: number;
+  groups_repaired: number;
+  groups_skipped: number;
+  groups: IntegrityGroupDecision[];
+  backup_path?: string;
+  report_path?: string;
+  post_apply_errors?: number;
 }
 
 function uniqueNonSelf(rows: IntegritySourceRow[], field: "supersedes" | "superseded_by", id: string): string[] {
@@ -155,4 +179,81 @@ export function planStoreIntegrity(rows: IntegritySourceRow[]): StoreIntegrityPl
     groups,
     repaired_rows: repairedRows,
   };
+}
+
+function canonicalFiles(root: string): string[] {
+  const paths = resolvePaths(root);
+  const projects = existsSync(paths.memory.projects)
+    ? readdirSync(paths.memory.projects)
+      .filter((name) => name.endsWith(".jsonl"))
+      .sort()
+      .map((name) => join(paths.memory.projects, name))
+    : [];
+  return [paths.memory.L1, paths.memory.L2, ...projects].filter(existsSync);
+}
+
+export function scanStoreIntegrity(root: string): StoreIntegrityPlan {
+  const rows: IntegritySourceRow[] = [];
+  for (const file of canonicalFiles(root)) {
+    const records = readJsonl<MemoryRecord>(file);
+    records.forEach((record, index) => rows.push({ file, ordinal: index + 1, record }));
+  }
+  return planStoreIntegrity(rows);
+}
+
+function timestampSlug(now: string): string {
+  return now.replace(/[^0-9]/g, "").slice(0, 17);
+}
+
+export function applyStoreIntegrityPlan(root: string, expectedFingerprint: string, now = new Date().toISOString()): StoreIntegrityApplyResult {
+  const plan = scanStoreIntegrity(root);
+  if (plan.fingerprint !== expectedFingerprint) {
+    throw new Error("Store integrity plan is stale; run preview again before applying.");
+  }
+
+  const base = {
+    dry_run: false as const,
+    mutation_performed: false,
+    migration_needed: plan.migration_needed,
+    fingerprint: plan.fingerprint,
+    rows_before: plan.rows_before,
+    unique_ids_before: plan.unique_ids_before,
+    rows_after: plan.rows_after,
+    duplicate_groups: plan.duplicate_groups,
+    rows_removed: plan.rows_removed,
+    self_edges_removed: plan.self_edges_removed,
+    groups_repaired: plan.groups_repaired,
+    groups_skipped: plan.groups_skipped,
+    groups: plan.groups,
+  };
+  if (!plan.migration_needed || plan.groups_repaired === 0) return base;
+
+  const affectedFiles = [...new Set(plan.groups
+    .filter((group) => group.status === "repairable")
+    .flatMap((group) => group.source_rows.map((source) => source.file)))].sort();
+  const slug = timestampSlug(now);
+  const backupPath = join(root, "backups", `store-integrity-v1-${slug}`);
+  for (const file of affectedFiles) {
+    const destination = join(backupPath, relative(root, file));
+    mkdirSync(dirname(destination), { recursive: true });
+    copyFileSync(file, destination);
+  }
+
+  for (const file of affectedFiles) {
+    const records = plan.repaired_rows.filter((row) => row.file === file).map((row) => row.record);
+    writeJsonlAtomic(file, records);
+  }
+
+  const reportPath = join(root, "reports", `store-integrity-${slug}.json`);
+  mkdirSync(dirname(reportPath), { recursive: true });
+  const postApplyDiagnostics = runMemoryDiagnostics(root);
+  const result: StoreIntegrityApplyResult = {
+    ...base,
+    mutation_performed: true,
+    backup_path: backupPath,
+    report_path: reportPath,
+    post_apply_errors: postApplyDiagnostics.summary.errors,
+  };
+  writeFileSync(reportPath, `${JSON.stringify(result, null, 2)}\n`, "utf-8");
+  return result;
 }

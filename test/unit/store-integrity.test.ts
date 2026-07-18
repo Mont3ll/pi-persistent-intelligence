@@ -1,6 +1,16 @@
-import { describe, expect, test } from "bun:test";
-import { planStoreIntegrity, type IntegritySourceRow } from "../../src/store-integrity";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ensureMemoryDirs } from "../../src/paths";
+import { applyStoreIntegrityPlan, planStoreIntegrity, scanStoreIntegrity, type IntegritySourceRow } from "../../src/store-integrity";
 import type { MemoryRecord } from "../../src/types";
+
+let roots: string[] = [];
+afterEach(() => {
+  for (const root of roots) rmSync(root, { recursive: true, force: true });
+  roots = [];
+});
 
 function record(id: string, overrides: Partial<MemoryRecord> = {}): MemoryRecord {
   return {
@@ -25,6 +35,26 @@ function record(id: string, overrides: Partial<MemoryRecord> = {}): MemoryRecord
 
 function row(file: string, ordinal: number, value: MemoryRecord): IntegritySourceRow {
   return { file, ordinal, record: value };
+}
+
+function fixtureRoot(records: MemoryRecord[]): string {
+  const root = mkdtempSync(join(tmpdir(), "pi-integrity-"));
+  roots.push(root);
+  const paths = ensureMemoryDirs(root);
+  writeFileSync(paths.memory.L2, `${records.map((item) => JSON.stringify(item)).join("\n")}\n`, "utf-8");
+  return root;
+}
+
+function snapshot(root: string): Array<{ path: string; bytes: string; mtimeMs: number }> {
+  const visit = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    return entry.isDirectory() ? visit(path) : [path];
+  });
+  return visit(root).sort().map((path) => ({
+    path: path.slice(root.length),
+    bytes: readFileSync(path).toString("base64"),
+    mtimeMs: statSync(path).mtimeMs,
+  }));
 }
 
 describe("store integrity planner", () => {
@@ -142,5 +172,73 @@ describe("store integrity planner", () => {
       groups_repaired: 0,
       groups_skipped: 0,
     });
+  });
+});
+
+describe("store integrity migration", () => {
+  test("preview is side-effect free", () => {
+    const root = fixtureRoot([
+      record("mem_dup", { status: "superseded", superseded_by: ["mem_dup"] }),
+      record("mem_dup", { supersedes: ["mem_dup"] }),
+    ]);
+    const before = snapshot(root);
+
+    const plan = scanStoreIntegrity(root);
+
+    expect(plan.migration_needed).toBe(true);
+    expect(snapshot(root)).toEqual(before);
+  });
+
+  test("apply creates a byte-exact backup, audit report, and idempotent repaired store", () => {
+    const original = [
+      record("mem_dup", { status: "superseded", supersedes: ["mem_predecessor"], superseded_by: ["mem_dup"] }),
+      record("mem_dup", { statement: "effective", supersedes: ["mem_dup"] }),
+      record("mem_clean"),
+    ];
+    const root = fixtureRoot(original);
+    const originalBytes = readFileSync(join(root, "memory", "L2.playbooks.jsonl"), "utf-8");
+    const plan = scanStoreIntegrity(root);
+
+    const result = applyStoreIntegrityPlan(root, plan.fingerprint, "2026-07-18T07:30:00.000Z");
+
+    expect(result).toMatchObject({
+      dry_run: false,
+      mutation_performed: true,
+      rows_before: 3,
+      rows_after: 2,
+      rows_removed: 1,
+      self_edges_removed: 2,
+      post_apply_errors: 0,
+    });
+    expect(result.backup_path).toBeTruthy();
+    expect(result.report_path).toBeTruthy();
+    expect(readFileSync(join(result.backup_path!, "memory", "L2.playbooks.jsonl"), "utf-8")).toBe(originalBytes);
+    expect(JSON.parse(readFileSync(result.report_path!, "utf-8"))).toMatchObject({ mutation_performed: true, rows_after: 2 });
+
+    const repaired = readFileSync(join(root, "memory", "L2.playbooks.jsonl"), "utf-8")
+      .trim().split("\n").map((line) => JSON.parse(line) as MemoryRecord);
+    expect(repaired).toHaveLength(2);
+    expect(repaired.find((item) => item.id === "mem_dup")).toMatchObject({
+      statement: "effective",
+      supersedes: ["mem_predecessor"],
+      superseded_by: [],
+    });
+    expect(scanStoreIntegrity(root).migration_needed).toBe(false);
+  });
+
+  test("apply refuses a stale preview fingerprint before writing", () => {
+    const root = fixtureRoot([
+      record("mem_dup", { superseded_by: ["mem_dup"] }),
+      record("mem_dup", { supersedes: ["mem_dup"] }),
+    ]);
+    const plan = scanStoreIntegrity(root);
+    const path = join(root, "memory", "L2.playbooks.jsonl");
+    writeFileSync(path, `${readFileSync(path, "utf-8")}${JSON.stringify(record("mem_new"))}\n`, "utf-8");
+    const before = snapshot(root);
+
+    expect(() => applyStoreIntegrityPlan(root, plan.fingerprint, "2026-07-18T07:30:00.000Z")).toThrow(
+      "Store integrity plan is stale; run preview again before applying.",
+    );
+    expect(snapshot(root)).toEqual(before);
   });
 });

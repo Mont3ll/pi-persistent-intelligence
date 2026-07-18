@@ -39,6 +39,7 @@ import { generateMaintenanceRecommendations, buildStabilityPatchFromRecommendati
 import { readReinforcementEventsForMemory, summarizeReinforcement } from "./src/reinforcement";
 import { runMetaConsolidation, generateHandoffSnapshot, generateGoalHandoffSnapshot, DEFAULT_META_CONSOLIDATION_CONFIG } from "./src/meta-consolidation";
 import { runMemoryDiagnostics, renderDiagnosticsReport, saveDiagnosticsReport } from "./src/diagnostics";
+import { applyStoreIntegrityPlan, scanStoreIntegrity } from "./src/store-integrity";
 import { applyPatch, readPatchFile } from "./src/patch";
 import { buildRetrievalContext, syncFtsIndex } from "./src/retriever";
 import { renderMemoryToDisk } from "./src/render";
@@ -792,6 +793,36 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         }
       } catch (err) {
         ctx.ui.notify(`Diagnostics failed: ${err}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-store-integrity", {
+    description: "Preview or apply canonical record integrity repairs. Usage: /memory-store-integrity [--apply --fingerprint <sha256>] [--json]",
+    handler: async (args, ctx) => {
+      try {
+        const parsed = parseCommandArgs(args);
+        const apply = parsed.flags.apply === true;
+        if (!apply) {
+          const plan = scanStoreIntegrity(root);
+          const text = plan.migration_needed
+            ? `Store integrity repair available: ${plan.rows_before} rows → ${plan.rows_after}; fingerprint ${plan.fingerprint}. Review this result, then apply with --apply --fingerprint ${plan.fingerprint}.`
+            : `Store integrity is clean: ${plan.rows_before} row(s), ${plan.unique_ids_before} unique ID(s).`;
+          notifyStructured(ctx, args, plan, text, plan.migration_needed ? "warning" : "success");
+          return;
+        }
+        const expectedFingerprint = typeof parsed.flags.fingerprint === "string" ? parsed.flags.fingerprint : "";
+        if (!expectedFingerprint) {
+          ctx.ui.notify("Apply requires the reviewed preview fingerprint. Run /memory-store-integrity --json, then use --apply --fingerprint <sha256>.", "warning");
+          return;
+        }
+        const result = applyStoreIntegrityPlan(root, expectedFingerprint, nowIso());
+        const text = result.mutation_performed
+          ? `Store integrity repair applied. Backup: ${result.backup_path}; report: ${result.report_path}.`
+          : "Store integrity apply made no changes.";
+        notifyStructured(ctx, args, result, text, result.mutation_performed ? "success" : "info");
+      } catch (error) {
+        ctx.ui.notify(`Store integrity failed: ${error instanceof Error ? error.message : String(error)}`, "error");
       }
     },
   });
