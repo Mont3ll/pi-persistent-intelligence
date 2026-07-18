@@ -10,7 +10,9 @@ import {
   readReinforcementEvents,
   readReinforcementEventsForMemory,
   summarizeReinforcement,
+  recordExplicitReinforcement,
 } from "../../src/reinforcement";
+import { loadAllRecords, unsafeAddMemoryRecord } from "../../src/store";
 import type { MemoryRecord } from "../../src/types";
 
 let dirs: string[] = [];
@@ -65,6 +67,24 @@ describe("reinforcement records", () => {
     expect(readReinforcementEvents(dir)).toHaveLength(1);
     expect(readReinforcementEventsForMemory(dir, "mem_1").map((item) => item.id)).toEqual([event.id]);
     expect(readReinforcementEventsForMemory(dir, "mem_2")).toEqual([]);
+  });
+
+  test("explicit reinforcement requires active memory, bounds notes, deduplicates, and does not mutate records", () => {
+    const dir = root();
+    const memory = record("mem_explicit", "Use Bun for tests.");
+    unsafeAddMemoryRecord(dir, memory);
+    const before = JSON.stringify(loadAllRecords(dir));
+    const note = "confirmed ".repeat(100);
+
+    const first = recordExplicitReinforcement(dir, { memory_id: memory.id, note, session_id: "session-a", now: "2026-07-18T00:00:00Z" });
+    const second = recordExplicitReinforcement(dir, { memory_id: memory.id, note, session_id: "session-a", now: "2026-07-18T00:01:00Z" });
+
+    expect(first.created).toBe(true);
+    expect(first.event.notes!.length).toBeLessThanOrEqual(300);
+    expect(second.created).toBe(false);
+    expect(readReinforcementEvents(dir)).toHaveLength(1);
+    expect(JSON.stringify(loadAllRecords(dir))).toBe(before);
+    expect(() => recordExplicitReinforcement(dir, { memory_id: "missing", note: "confirmed", session_id: "session-a" })).toThrow("active memory");
   });
 
   test("summary treats neutral exposure as no-op", () => {
