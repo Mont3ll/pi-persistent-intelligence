@@ -32,6 +32,7 @@ export interface MemoryQualityRecommendation {
 }
 
 export interface MemoryQualityReport {
+  heuristic_version: "memory-quality-v2";
   generated_at: string;
   summary: {
     total_records: number;
@@ -41,6 +42,8 @@ export interface MemoryQualityReport {
     contested_count: number;
     superseded_count: number;
     average_quality: number;
+    structured_evidence_adoption_ratio: number;
+    unresolved_legacy_evidence_count: number;
   };
   items: MemoryQualityItem[];
   recommendations: MemoryQualityRecommendation[];
@@ -133,8 +136,13 @@ export function analyzeMemoryQualityFromRecords(records: MemoryRecord[], evidenc
   }).sort((a, b) => a.quality_score - b.quality_score || a.memory_id.localeCompare(b.memory_id));
 
   const recommendations = items.flatMap((item) => recommendationFor(item) ? [recommendationFor(item)!] : []);
+  const activeRecords = records.filter((record) => record.status === "active");
+  const structuredAdopted = activeRecords.filter((record) => record.evidence.some((inline) => evidenceById.has(inline.ref))).length;
+  const unresolvedLegacy = activeRecords.filter((record) => record.evidence.length > 0 && record.evidence.every((inline) => !evidenceById.has(inline.ref))).length;
+  const adoptionRatio = activeRecords.length ? Number((structuredAdopted / activeRecords.length).toFixed(3)) : 1;
   const average = items.length ? Math.round(items.reduce((sum, item) => sum + item.quality_score, 0) / items.length) : 100;
   return redactSecretsInObject({
+    heuristic_version: "memory-quality-v2",
     generated_at: now,
     summary: {
       total_records: records.length,
@@ -144,6 +152,8 @@ export function analyzeMemoryQualityFromRecords(records: MemoryRecord[], evidenc
       contested_count: items.filter((item) => item.lifecycle_state === "contested").length,
       superseded_count: items.filter((item) => item.lifecycle_state === "superseded").length,
       average_quality: average,
+      structured_evidence_adoption_ratio: adoptionRatio,
+      unresolved_legacy_evidence_count: unresolvedLegacy,
     },
     items,
     recommendations,

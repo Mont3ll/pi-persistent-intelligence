@@ -1,10 +1,13 @@
 import { listCandidates } from "./inbox";
+import { readInquiryRecords } from "./inquiries";
+import { readReinforcementEvents } from "./reinforcement";
 import { analyzeMemoryQuality, type MemoryQualityReport } from "./memory-quality";
 import { analyzeRecallEffectiveness, type RecallEffectivenessReport } from "./recall-effectiveness";
 import { analyzeRelationshipQuality, type RelationshipQualityReport } from "./relationship-quality";
 import { readRecentRuntimeEvents } from "./runtime-events";
 import { redactSecrets, redactSecretsInObject } from "./secret-scanner";
 import { loadAllRecords } from "./store";
+import type { ReinforcementOutcome } from "./types";
 
 export type StoreQualityMetricId = "memory_quality" | "relationship_quality" | "recall_effectiveness" | "governance" | "inbox" | "runtime";
 export type StoreQualityStatus = "healthy" | "watch" | "attention";
@@ -29,6 +32,7 @@ export interface StoreQualityRecommendation {
 }
 
 export interface StoreQualityReport {
+  heuristic_version: "store-quality-v2";
   generated_at: string;
   overall_score: number;
   status: StoreQualityStatus;
@@ -41,6 +45,10 @@ export interface StoreQualityReport {
     active_memories: number;
     pending_candidates: number;
     runtime_warnings: number;
+    structured_evidence_adoption_ratio: number;
+    unresolved_legacy_evidence_count: number;
+    open_inquiry_age_bands: { days_0_7: number; days_8_30: number; days_31_90: number; days_over_90: number };
+    reinforcement_outcome_distribution: Record<ReinforcementOutcome, number>;
   };
   mutation_performed: false;
 }
@@ -75,8 +83,12 @@ export function buildStoreQualityReport(input: {
   pendingCandidates: number;
   runtimeWarnings: number;
   governanceSignals?: string[];
+  openInquiryAgeBands?: { days_0_7: number; days_8_30: number; days_31_90: number; days_over_90: number };
+  reinforcementOutcomeDistribution?: Record<ReinforcementOutcome, number>;
 }): StoreQualityReport {
   const governanceSignals = input.governanceSignals ?? [];
+  const openInquiryAgeBands = input.openInquiryAgeBands ?? { days_0_7: 0, days_8_30: 0, days_31_90: 0, days_over_90: 0 };
+  const reinforcementOutcomeDistribution = input.reinforcementOutcomeDistribution ?? { explicit_reinforcement: 0, implicit_success: 0, neutral_exposure: 0, explicit_correction: 0 };
   const metrics: StoreQualityMetric[] = [
     metric({
       id: "memory_quality",
@@ -139,6 +151,7 @@ export function buildStoreQualityReport(input: {
     .map((item) => recommendation(item.id, `Review ${item.label.toLowerCase()}`, item.summary));
 
   return redactSecretsInObject({
+    heuristic_version: "store-quality-v2",
     generated_at: input.generated_at,
     overall_score: overall,
     status: statusFor(overall),
@@ -151,6 +164,10 @@ export function buildStoreQualityReport(input: {
       active_memories: input.activeMemories,
       pending_candidates: input.pendingCandidates,
       runtime_warnings: input.runtimeWarnings,
+      structured_evidence_adoption_ratio: input.memory.summary.structured_evidence_adoption_ratio,
+      unresolved_legacy_evidence_count: input.memory.summary.unresolved_legacy_evidence_count,
+      open_inquiry_age_bands: openInquiryAgeBands,
+      reinforcement_outcome_distribution: reinforcementOutcomeDistribution,
     },
     mutation_performed: false,
   }) as StoreQualityReport;
@@ -161,6 +178,16 @@ export function analyzeStoreQuality(root: string, options: AnalyzeStoreQualityOp
   const records = loadAllRecords(root);
   const candidates = listCandidates(root).filter((candidate) => candidate.status === "new");
   const runtimeWarnings = readRecentRuntimeEvents(root, { hours: 48, minSeverity: "medium", now }).filter((event) => event.type === "warn" || event.type === "error").length;
+  const inquiryAgeBands = { days_0_7: 0, days_8_30: 0, days_31_90: 0, days_over_90: 0 };
+  for (const inquiry of readInquiryRecords(root).filter((item) => item.status === "open")) {
+    const days = Math.max(0, Math.floor((Date.parse(now) - Date.parse(inquiry.first_seen)) / 86_400_000));
+    if (days <= 7) inquiryAgeBands.days_0_7++;
+    else if (days <= 30) inquiryAgeBands.days_8_30++;
+    else if (days <= 90) inquiryAgeBands.days_31_90++;
+    else inquiryAgeBands.days_over_90++;
+  }
+  const reinforcementDistribution: Record<ReinforcementOutcome, number> = { explicit_reinforcement: 0, implicit_success: 0, neutral_exposure: 0, explicit_correction: 0 };
+  for (const event of readReinforcementEvents(root)) reinforcementDistribution[event.outcome]++;
   const governanceSignals = [
     ...(records.some((record) => record.status === "active" && record.evidence.length === 0) ? ["active_memory_missing_evidence"] : []),
     ...(records.some((record) => record.status === "contested") ? ["contested_memory"] : []),
@@ -174,6 +201,8 @@ export function analyzeStoreQuality(root: string, options: AnalyzeStoreQualityOp
     pendingCandidates: candidates.length,
     runtimeWarnings,
     governanceSignals,
+    openInquiryAgeBands: inquiryAgeBands,
+    reinforcementOutcomeDistribution: reinforcementDistribution,
   });
 }
 

@@ -6,7 +6,7 @@ import { ensureMemoryDirs } from "../../src/paths";
 import { appendCandidate, listCandidates } from "../../src/inbox";
 import { appendDailyLog } from "../../src/daily";
 import { appendEvidenceRecord, readEvidenceRecords } from "../../src/evidence";
-import { appendInquiryRecord, createInquiryRecord, readInquiryRecords } from "../../src/inquiries";
+import { appendInquiryRecord, createInquiryRecord, markInquiryStale, markInquiryWithdrawn, readInquiryRecords } from "../../src/inquiries";
 import { appendDeletionTombstone, createDeletionTombstone } from "../../src/tombstones";
 import { appendReinforcementEvent, createReinforcementEvent, readReinforcementEvents } from "../../src/reinforcement";
 import { loadAllRecords, unsafeAddMemoryRecord } from "../../src/store";
@@ -335,6 +335,27 @@ describe("pi-governance-rs compatibility bundle", () => {
         expect.objectContaining({ id:"patch_applied", text:"Preserve applied patch history.", status:"patched" })
       ]));
     } finally { cleanup(dir); }
+  });
+
+  test("preserves migrated evidence, inquiry lifecycle states, and every reinforcement outcome", () => {
+    const source = root();
+    const destination = root();
+    try {
+      appendEvidenceRecord(source, { id: "ev_migrated", resource_id: "res", profile_id: "profile", created_at: "2026-07-01T00:00:00Z", source_kind: "file", source_ref: "daily/legacy.md", source_summary: "migrated", trust_class: "unknown", polarity: "supports", durability_signal: "unknown", related_memory_ids: [], notes: "legacy_evidence_backfill_v1" });
+      const withdrawn = appendInquiryRecord(source, createInquiryRecord({ question: "Withdraw?", context: "test", now: "2026-07-01T00:00:00Z" }));
+      const stale = appendInquiryRecord(source, createInquiryRecord({ question: "Stale?", context: "test", now: "2026-07-01T00:00:00Z" }));
+      markInquiryWithdrawn(source, withdrawn.id, "2026-07-02T00:00:00Z");
+      markInquiryStale(source, stale.id, "2026-07-02T00:00:00Z");
+      for (const [index, outcome] of ["explicit_reinforcement", "implicit_success", "neutral_exposure", "explicit_correction"].entries()) {
+        appendReinforcementEvent(source, createReinforcementEvent({ memory_id: "mem_portable", outcome: outcome as any, now: `2026-07-0${index + 1}T00:00:00Z` }));
+      }
+      const bundle = exportToPiGovernanceBundle(source);
+      importFromPiGovernanceBundle(destination, bundle, { dryRun: false });
+
+      expect(readEvidenceRecords(destination)[0]).toMatchObject({ notes: "legacy_evidence_backfill_v1", trust_class: "unknown", durability_signal: "unknown" });
+      expect(readInquiryRecords(destination).map((item) => item.status).sort()).toEqual(["stale", "withdrawn"]);
+      expect(readReinforcementEvents(destination).map((item) => item.outcome).sort()).toEqual(["explicit_correction", "explicit_reinforcement", "implicit_success", "neutral_exposure"]);
+    } finally { cleanup(source); cleanup(destination); }
   });
 
   test("bridge defaults disabled and doctor reports standalone mode as valid", () => {
