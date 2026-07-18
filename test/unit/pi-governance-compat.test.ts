@@ -297,7 +297,7 @@ describe("pi-governance-rs compatibility bundle", () => {
       };
       const first = importFromPiGovernanceBundle(dir, base, { dryRun: false });
       expect(first.applied.events_added).toBe(1);
-      expect(readPortableEvents(dir)).toEqual(base.events);
+      expect(readPortableEvents(dir)).toEqual(base.events!);
 
       const secondBundle: PiGovernanceBundle = {
         ...base,

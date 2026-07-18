@@ -20,6 +20,23 @@ describe("pi-governance reconciliation fixtures", () => {
     expect(report).toEqual(fixture("reconciliation-expected.json"));
   });
 
+  test("normalizes set-like arrays and volatile bundle envelope fields only", () => {
+    const source = fixture<PiGovernanceBundle>("full-bundle.json");
+    const destination = structuredClone(source);
+    destination.exported_at = "2030-01-01T00:00:00Z";
+    destination.producer.version = "99.0.0";
+    destination.records[0].tags.reverse();
+    destination.records[0].evidence?.reverse();
+
+    const normalized = reconcilePiGovernanceBundles(source, destination);
+    expect(normalized.sections.records.divergent_ids).toEqual([]);
+    expect(normalized.sections.records.matching_ids).toContain("rec_match");
+
+    destination.records[0].status = "contested";
+    const substantive = reconcilePiGovernanceBundles(source, destination);
+    expect(substantive.sections.records.divergent_ids).toContain("rec_match");
+  });
+
   test("reconciliation_fixture classifies exact and conflicting duplicate IDs", () => {
     const duplicate = fixture<PiGovernanceBundle>("duplicate-input.json");
     const empty: PiGovernanceBundle = { ...duplicate, records: [] };
