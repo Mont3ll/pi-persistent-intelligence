@@ -39,7 +39,7 @@
       ],
       "id": "rec_match",
       "layer": "l2_playbook",
-      "memory_kind": "procedure",
+      "memory_kind": "instruction",
       "namespace": "persistent-intelligence",
       "rule_type": "workflow",
       "schema_version": 1,
