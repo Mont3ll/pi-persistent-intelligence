@@ -49,7 +49,7 @@ describe("curator supersede detection", () => {
     const applied = applyPatch(dir, patch, { selectedOpIds: ["op_001", "op_002"], now: "2026-05-09T00:00:00Z" });
 
     expect(applied.applied_ops).toEqual(["op_001"]);
-    expect(applied.skipped_ops).toEqual(["op_002"]);
+    expect(applied.skipped_ops).toEqual([expect.objectContaining({ op_id: "op_002", reason: "target_terminal" })]);
     expect(listCandidates(dir).find((c) => c.id === "cap_other")?.status).toBe("rejected");
   });
 });

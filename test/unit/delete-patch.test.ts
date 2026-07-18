@@ -127,7 +127,7 @@ describe("delete patch", () => {
       skipped_ops: [],
     }, { selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z" });
     expect(result.applied_ops).toEqual([]);
-    expect(result.skipped_ops).toContain("op_001");
+    expect(result.skipped_ops).toContainEqual(expect.objectContaining({ op_id: "op_001", reason: "tombstoned" }));
   });
 
   test("search index rebuild excludes deleted records", () => {

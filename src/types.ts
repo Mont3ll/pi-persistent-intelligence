@@ -488,6 +488,25 @@ export interface PatchOp {
   deletion_reason?: DeletionReason;
 }
 
+export type PatchSkipReason =
+  | "not_selected"
+  | "duplicate_id"
+  | "invalidated_evidence"
+  | "tombstoned"
+  | "missing_target"
+  | "target_terminal"
+  | "self_supersession"
+  | "replacement_id_conflict"
+  | "malformed_operation"
+  | "legacy_unknown";
+
+export interface PatchSkip {
+  op_id: string;
+  candidate_id?: string;
+  reason: PatchSkipReason;
+  detail: string;
+}
+
 export interface MemoryPatch {
   patch_id: string;
   created_at: string;
@@ -495,10 +514,10 @@ export interface MemoryPatch {
   mode: "propose" | "supervised" | "auto";
   summary: string;
   ops: PatchOp[];
-  status: "proposed" | "applied" | "partially_applied";
+  status: "proposed" | "applied" | "partially_applied" | "rejected_at_apply";
   applied_at: string | null;
   applied_ops: string[];
-  skipped_ops: string[];
+  skipped_ops: PatchSkip[];
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
@@ -41,5 +41,18 @@ describe("patch files", () => {
     writePatchFile(root, patch("patch_b"));
     expect(listPatchFiles(root)).toEqual(["patch_a", "patch_b"]);
     expect(readPatchFile(root, "patch_b").patch_id).toBe("patch_b");
+  });
+
+  test("normalizes historical bare skipped operation ids without inventing a reason", () => {
+    const root = tempRoot();
+    const paths = ensureMemoryDirs(root);
+    const legacy = { ...patch("patch_legacy"), status: "partially_applied", skipped_ops: ["op_001"] };
+    writeFileSync(join(paths.patches, "patch_legacy.json"), `${JSON.stringify(legacy)}\n`, "utf-8");
+
+    expect(readPatchFile(root, "patch_legacy").skipped_ops).toEqual([{
+      op_id: "op_001",
+      reason: "legacy_unknown",
+      detail: "Historical patch did not record why this operation was skipped.",
+    }]);
   });
 });
