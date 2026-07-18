@@ -57,7 +57,7 @@ import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
 import { buildCandidateTrustMetadata } from "./src/trust";
-import { linkExplicitCorrectionToMemory } from "./src/reinforcement";
+import { captureReinforcementLink, linkExplicitCorrectionToMemory } from "./src/reinforcement";
 import { appendInquiryRecord, applyInquiryStaleness, createInquiryRecord, planInquiryStaleness, readInquiryRecords, selectRelevantInquiries, renderInquiryInjectionBlock, transitionInquiry } from "./src/inquiries";
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
 import { appendEvidenceRecord, readEvidenceRecords } from "./src/evidence";
@@ -464,6 +464,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   });
 
   pi.on("agent_end", async (event) => {
+    let sawObservableOutcome = false;
     for (const msg of (event.messages as any[]) ?? []) {
       if (msg.role === "user" && !msg.customType) {
         const text = extractText(msg.content);
@@ -499,6 +500,25 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
             }
           }
         }
+      } else if (msg.role === "toolResult" || msg.role === "tool") {
+        const toolName = String(msg.toolName ?? msg.name ?? msg.tool_name ?? "");
+        const details = msg.details ?? {};
+        const observableLabel = `${toolName} ${String(msg.input?.command ?? details.command ?? "")}`;
+        if (/\b(test|typecheck|lint|check|build|playwright|vitest|tsc|cargo)\b/i.test(observableLabel)) {
+          sawObservableOutcome = true;
+          const exitCode = details.exitCode ?? details.exit_code;
+          const success = msg.isError !== true && details.isError !== true && (exitCode === undefined || exitCode === 0);
+          try {
+            const selected = JSON.parse((await import("node:fs")).readFileSync(ensureMemoryDirs(root).runtime.selected, "utf-8")) as import("./src/types").MemoryRecord[];
+            captureReinforcementLink(root, {
+              selected_memory: selected,
+              session_id: "current-session",
+              observable_outcome: { kind: /\b(test|playwright|vitest)\b/i.test(observableLabel) ? "test" : "tool", success, tool_name: toolName },
+              neutral_exposure_enabled: loadConfig(root).reinforcement.neutralExposureEnabled,
+              now: nowIso(),
+            });
+          } catch { /* observable reinforcement is best-effort and never mutates memory */ }
+        }
       } else if (msg.role === "assistant") {
         const observed = extractMessageModel(msg);
         if (observed) lastObservedModel = observed;
@@ -508,6 +528,17 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
           if (pendingAssistantMessages.length > 60) pendingAssistantMessages.shift();
         }
       }
+    }
+    if (!sawObservableOutcome && loadConfig(root).reinforcement.neutralExposureEnabled) {
+      try {
+        const selected = JSON.parse((await import("node:fs")).readFileSync(ensureMemoryDirs(root).runtime.selected, "utf-8")) as import("./src/types").MemoryRecord[];
+        captureReinforcementLink(root, {
+          selected_memory: selected,
+          session_id: "current-session",
+          neutral_exposure_enabled: true,
+          now: nowIso(),
+        });
+      } catch { /* neutral exposure is optional and best-effort */ }
     }
   });
 

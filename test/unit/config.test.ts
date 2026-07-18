@@ -18,6 +18,7 @@ describe("config", () => {
     expect(config.llm.enabled).toBe(false);
     expect(config.vault.enabled).toBe(false);
     expect(config.inquiries.reviewWindowDays).toBe(30);
+    expect(config.reinforcement.neutralExposureEnabled).toBe(false);
   });
 
   test("merges user config over defaults", () => {

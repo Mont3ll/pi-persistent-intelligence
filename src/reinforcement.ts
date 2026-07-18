@@ -4,6 +4,20 @@ import { ensureMemoryDirs } from "./paths";
 import { loadAllRecords } from "./store";
 import type { MemoryRecord, ReinforcementEvent, ReinforcementOutcome, ReinforcementSummary, Stability } from "./types";
 
+export interface ReinforcementLinkDecision {
+  outcome: "implicit_success" | "neutral_exposure" | "none";
+  memory_id?: string;
+  reason: string;
+}
+
+export interface ReinforcementLinkInput {
+  selected_memory: MemoryRecord[];
+  session_id: string;
+  observable_outcome?: { kind: "test" | "tool"; success: boolean; tool_name?: string };
+  neutral_exposure_enabled: boolean;
+  existing_events?: ReinforcementEvent[];
+}
+
 const OUTCOME_WEIGHTS: Record<ReinforcementOutcome, number> = {
   explicit_reinforcement: 1.0,
   implicit_success: 0.2,
@@ -54,6 +68,38 @@ export function readReinforcementEvents(root: string): ReinforcementEvent[] {
 
 export function readReinforcementEventsForMemory(root: string, memoryId: string): ReinforcementEvent[] {
   return readReinforcementEvents(root).filter((event) => event.memory_id === memoryId);
+}
+
+export function decideReinforcementLink(input: ReinforcementLinkInput): ReinforcementLinkDecision {
+  const active = input.selected_memory.filter((memory) => memory.status === "active");
+  if (input.observable_outcome) {
+    if (!input.observable_outcome.success) return { outcome: "none", reason: "observable_outcome_failed" };
+    if (active.length !== 1) return { outcome: "none", reason: active.length === 0 ? "no_active_selected_memory" : "ambiguous_selected_memory" };
+    return { outcome: "implicit_success", memory_id: active[0].id, reason: `unique_selected_memory_with_successful_${input.observable_outcome.kind}_outcome` };
+  }
+  if (!input.neutral_exposure_enabled) return { outcome: "none", reason: "neutral_exposure_disabled" };
+  if (active.length !== 1) return { outcome: "none", reason: active.length === 0 ? "no_active_selected_memory" : "ambiguous_selected_memory" };
+  const duplicate = (input.existing_events ?? []).some((event) => event.memory_id === active[0].id && event.outcome === "neutral_exposure" && event.thread_id === input.session_id);
+  if (duplicate) return { outcome: "none", reason: "neutral_exposure_already_recorded_for_session" };
+  return { outcome: "neutral_exposure", memory_id: active[0].id, reason: "bounded_selected_memory_exposure" };
+}
+
+export function captureReinforcementLink(root: string, input: ReinforcementLinkInput & { now?: string }): { decision: ReinforcementLinkDecision; event?: ReinforcementEvent } {
+  const existing = input.existing_events ?? readReinforcementEvents(root);
+  const decision = decideReinforcementLink({ ...input, existing_events: existing });
+  if (decision.outcome === "none" || !decision.memory_id) return { decision };
+  const memory = input.selected_memory.find((record) => record.id === decision.memory_id)!;
+  const event = createReinforcementEvent({
+    resource_id: memory.resource_id,
+    profile_id: memory.profile_id,
+    thread_id: input.session_id,
+    memory_id: decision.memory_id,
+    outcome: decision.outcome,
+    notes: decision.reason,
+    now: input.now,
+  });
+  appendReinforcementEvent(root, event);
+  return { decision, event };
 }
 
 export function recordExplicitReinforcement(

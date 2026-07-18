@@ -15,6 +15,7 @@ export interface RecallEvent {
   excluded_memory_ids: string[];
   source: RecallEventSource;
   outcome?: RecallEventOutcome;
+  observable_outcome?: { kind: "test" | "tool"; success: boolean; tool_name?: string };
   mutation_performed: false;
 }
 
