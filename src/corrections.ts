@@ -14,7 +14,14 @@
 
 import { buildCandidateTrustMetadata } from "./trust";
 import { scanSecrets, shouldBlockPersistence } from "./secret-scanner";
+import { scoreMemoryWorth } from "./memory-worth";
 import type { CaptureCandidate, DurabilitySignal, MemoryRuleType } from "./types";
+
+export type CorrectionCaptureDecision =
+  | { action: "candidate"; candidate: CaptureCandidate }
+  | { action: "daily_only"; text: string; reasons: string[] }
+  | { action: "inquiry"; question: string; reasons: string[] }
+  | { action: "reject"; reasons: string[] };
 
 // ─── Detection patterns ───────────────────────────────────────────────────────
 
@@ -35,7 +42,7 @@ const CORRECTION_PATTERNS = [
   /\b(?:make\s+sure|ensure)\s+(?:we\s+)?(?:always\s+)?(?:use|write|add|include|check|validate)\b/i,
   /\bnot\s+the\s+(?:right\s+)?pattern\b/i,
   /\bthat['']?s\s+wrong\b/i,
-  /\bthis\s+(?:project|repo|codebase)\s+uses\b/i,
+  /\bthis\s+(?:project|repo|repository|codebase)\s+(?:always\s+)?uses\b/i,
   /\bdon['']?t\s+edit\b/i,
   /\bnever\s+modify\b/i,
   // Durable-intent patterns: "going forward", "from now on", "in the future"
@@ -49,7 +56,7 @@ const CONVERSATIONAL_EXCLUSIONS = [
   /\b(?:let's|lets|can we|could we|why is|what else|is there|seems logical|never mind|for now)\b/i,
   /\b(?:message to you|your message|without any context)\b/i,
   // Exclude task/subagent prompts -- these contain correction-like language but are instructions, not corrections
-  /^(?:task:|your goal is|you are a delegated|you are a subagent|<file name=)/i,
+  /^(?:task:|your goal is|you are a delegated|you are a subagent|you are acting as (?:a )?(?:constrained )?(?:local )?(?:implementation|execution) agent|for this task\b|<file name=)/i,
   /\[Read from:.*\.md\]/i,
 ];
 
@@ -61,6 +68,10 @@ export function maybeCorrectionSignal(text: string): boolean {
   if (trimmed.startsWith("/")) return false; // slash commands
   if (CONVERSATIONAL_EXCLUSIONS.some((p) => p.test(trimmed))) return false;
   return CORRECTION_PATTERNS.some((p) => p.test(trimmed));
+}
+
+function isStructuralTaskWrapper(text: string): boolean {
+  return CONVERSATIONAL_EXCLUSIONS.slice(3).some((pattern) => pattern.test(text.trim()));
 }
 
 export function correctionConfidence(text: string): number {
@@ -115,4 +126,24 @@ export function extractCorrectionCandidate(
     ruleType,
     ...buildCandidateTrustMetadata("user_correction", durability),
   };
+}
+
+export function classifyCorrectionCapture(text: string, today: string, cwd: string): CorrectionCaptureDecision {
+  const normalized = text.trim().slice(0, 500).replace(/\s+/g, " ");
+  if (isStructuralTaskWrapper(normalized)) return { action: "reject", reasons: ["task_or_agent_wrapper"] };
+  if (!maybeCorrectionSignal(normalized)) return { action: "reject", reasons: ["not_a_correction_signal"] };
+  const durability: "task" | "project" = /\b(?:this task|for this task|this session|for now|right now)\b/i.test(normalized) ? "task" : "project";
+  const worth = scoreMemoryWorth({
+    observation: normalized,
+    explicitUserRequest: true,
+    durability,
+    operationalImpact: 0.8,
+    evidenceStrength: 0.75,
+    scope: durability === "project" ? "project" : "task",
+  });
+  if (worth.decision === "reject") return { action: "reject", reasons: worth.reasons };
+  if (worth.decision === "daily_only") return { action: "daily_only", text: normalized.slice(0, 300), reasons: worth.reasons };
+  if (worth.decision === "inquiry") return { action: "inquiry", question: `Should this guidance become durable memory? ${normalized.slice(0, 220)}`, reasons: worth.reasons };
+  const candidate = extractCorrectionCandidate(normalized, today, cwd);
+  return candidate ? { action: "candidate", candidate } : { action: "reject", reasons: ["below_correction_threshold"] };
 }
