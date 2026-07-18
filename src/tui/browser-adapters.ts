@@ -8,7 +8,7 @@ import type { RelationshipQualityEdgeItem, RelationshipQualityReport } from "../
 import type { StoreQualityMetric, StoreQualityReport } from "../store-quality";
 import type { RecallEffectivenessReport, RecallMemoryStat } from "../recall-effectiveness";
 import type { RecallXrayReport, IncludedMemoryXray, ExcludedMemoryXray } from "../recall-xray";
-import type { CaptureCandidate, EvidenceRecord, MemoryRecord } from "../types";
+import type { CaptureCandidate, EvidenceRecord, InquiryRecord, MemoryRecord } from "../types";
 
 export function memoryRecordBrowserOptions(records: MemoryRecord[]): BrowserOptions<MemoryRecord> {
   const items: BrowserItem<MemoryRecord>[] = records.map((record) => ({
@@ -77,6 +77,27 @@ export function candidateBrowserOptions(candidates: CaptureCandidate[]): Browser
       { key: "a", label: "approve eligible", action: "approve" },
       { key: "r", label: "review patch", action: "review" },
       { key: "s", label: "skip", action: "skip" },
+    ],
+  };
+}
+
+export function inquiryBrowserOptions(inquiries: InquiryRecord[]): BrowserOptions<InquiryRecord> {
+  return {
+    title: "Inquiry Review",
+    subtitle: "Use /memory-inquiries answer, withdraw, or stale for explicit transitions.",
+    items: inquiries.map((inquiry) => ({
+      id: inquiry.id,
+      item: inquiry,
+      status: inquiry.status === "open" ? "warning" : "info",
+      searchText: `${inquiry.id} ${inquiry.status} ${inquiry.priority} ${inquiry.tags.join(" ")} ${inquiry.question}`,
+      details: [`Question: ${inquiry.question}`, `Context: ${inquiry.context}`, `Status: ${inquiry.status}`, `Related memories: ${inquiry.related_memory_ids?.join(", ") || "none"}`],
+    })),
+    pageSize: 20,
+    columns: [
+      { key: "id", label: "ID", width: 18, minWidth: 10, priority: 1, render: (item) => item.id },
+      { key: "status", label: "Status", width: 12, minWidth: 8, priority: 2, render: (item) => item.status },
+      { key: "priority", label: "Priority", width: 10, minWidth: 8, priority: 3, render: (item) => item.priority },
+      { key: "question", label: "Question", minWidth: 24, priority: 1, render: (item) => item.question },
     ],
   };
 }
