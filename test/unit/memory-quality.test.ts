@@ -50,6 +50,9 @@ describe("memory quality analyzer", () => {
     const report = analyzeMemoryQuality(r, { now: "2026-07-07T00:00:00Z" });
 
     expect(report.summary.total_records).toBe(5);
+    expect(report.heuristic_version).toBe("memory-quality-v2");
+    expect(report.summary.structured_evidence_adoption_ratio).toBe(1);
+    expect(report.summary.unresolved_legacy_evidence_count).toBe(0);
     expect(report.items.find((item) => item.memory_id === "mem_good")?.quality_score).toBeGreaterThan(80);
     expect(report.items.find((item) => item.memory_id === "mem_weak")?.lifecycle_state).toBe("stale");
     expect(report.items.find((item) => item.memory_id === "mem_dup_a")?.signals).toContain("duplicate_normalized_key");
