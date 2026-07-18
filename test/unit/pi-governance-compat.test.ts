@@ -9,7 +9,7 @@ import { appendEvidenceRecord, readEvidenceRecords } from "../../src/evidence";
 import { appendInquiryRecord, createInquiryRecord, readInquiryRecords } from "../../src/inquiries";
 import { appendDeletionTombstone, createDeletionTombstone } from "../../src/tombstones";
 import { appendReinforcementEvent, createReinforcementEvent, readReinforcementEvents } from "../../src/reinforcement";
-import { unsafeAddMemoryRecord } from "../../src/store";
+import { loadAllRecords, unsafeAddMemoryRecord } from "../../src/store";
 import { loadConfig } from "../../src/config";
 import {
   exportToPiGovernanceBundle,
@@ -173,6 +173,38 @@ describe("pi-governance-rs compatibility bundle", () => {
       expect(applied.applied.records_skipped_existing).toBe(1);
       expect(applied.applied.candidates_added).toBe(1);
       expect(applied.applied.tombstones_added).toBe(1);
+    } finally { cleanup(dir); }
+  });
+
+  test("preserves domain scope when importing portable records", () => {
+    const dir = root();
+    try {
+      const bundle: PiGovernanceBundle = {
+        schema_version: 1,
+        format: "pi-governance",
+        producer: { name: "pi-governance-rs", version: "1.1.0" },
+        records: [{
+          id: "mem_domain",
+          namespace: "default",
+          layer: "l2_playbook",
+          claim: "Apply only in healthcare.",
+          status: "active",
+          memory_kind: "instruction",
+          confidence: 0.9,
+          evidence_ids: [],
+          scope: { level: "domain", key: "healthcare" },
+          tags: ["domain"],
+        }],
+        patches: [], evidence: [], inquiries: [], sessions: [], reinforcement: [], events: [], tombstones: [],
+        redaction: { enabled: false, fields_checked: [], fields_redacted: [], notes: [] },
+      };
+
+      importFromPiGovernanceBundle(dir, bundle, { dryRun: false, project: "fallback-project" });
+
+      expect(loadAllRecords(dir).find((item) => item.id === "mem_domain")?.scope).toEqual({
+        type: "domain",
+        domains: ["healthcare"],
+      });
     } finally { cleanup(dir); }
   });
 
