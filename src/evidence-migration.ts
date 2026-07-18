@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { boundSourceSummary, createEvidenceId } from "./evidence";
+import { readJsonl, writeJsonlAtomic } from "./jsonl";
+import { resolvePaths } from "./paths";
 import { scanSecrets, shouldBlockPersistence } from "./secret-scanner";
 import type { EvidenceRecord, EvidenceSourceKind, MemoryRecord } from "./types";
 
@@ -15,6 +17,16 @@ export interface LegacyEvidenceFinding {
   memory_id: string;
   reference: string;
   reason: "missing" | "outside_store" | "secret_blocked";
+}
+
+export interface LegacyEvidenceMigrationApplyResult {
+  dry_run: false;
+  mutation_performed: boolean;
+  fingerprint: string;
+  evidence_created: number;
+  records_updated: number;
+  backup_path?: string;
+  report_path?: string;
 }
 
 export interface LegacyEvidenceMigrationPlan {
@@ -143,4 +155,97 @@ export function planLegacyEvidenceMigration(
     proposals: ordered,
     findings,
   };
+}
+
+interface CanonicalRow {
+  file: string;
+  record: MemoryRecord;
+}
+
+function canonicalRows(root: string): CanonicalRow[] {
+  const paths = resolvePaths(root);
+  const files = [paths.memory.L1, paths.memory.L2];
+  if (existsSync(paths.memory.projects)) {
+    files.push(...readdirSync(paths.memory.projects)
+      .filter((name) => name.endsWith(".jsonl"))
+      .sort()
+      .map((name) => join(paths.memory.projects, name)));
+  }
+  return files.filter(existsSync).flatMap((file) => readJsonl<MemoryRecord>(file).map((record) => ({ file, record })));
+}
+
+export function scanLegacyEvidenceMigration(root: string): LegacyEvidenceMigrationPlan {
+  const paths = resolvePaths(root);
+  const records = canonicalRows(root).map((row) => row.record);
+  const evidence = existsSync(paths.memory.evidence) ? readJsonl<EvidenceRecord>(paths.memory.evidence) : [];
+  return planLegacyEvidenceMigration(root, records, evidence);
+}
+
+function timestampSlug(now: string): string {
+  return now.replace(/[^0-9]/g, "").slice(0, 17);
+}
+
+export function applyLegacyEvidenceMigration(
+  root: string,
+  expectedFingerprint: string,
+  now = new Date().toISOString(),
+): LegacyEvidenceMigrationApplyResult {
+  const plan = scanLegacyEvidenceMigration(root);
+  if (plan.fingerprint !== expectedFingerprint) throw new Error("Legacy evidence migration preview is stale; run preview again.");
+  const base = {
+    dry_run: false as const,
+    mutation_performed: false,
+    fingerprint: plan.fingerprint,
+    evidence_created: 0,
+    records_updated: 0,
+  };
+  if (plan.proposals.length === 0) return base;
+
+  const paths = resolvePaths(root);
+  const rows = canonicalRows(root);
+  const evidenceByReference = new Map<string, string>();
+  for (const proposal of plan.proposals) {
+    for (const reference of proposal.record_references) {
+      evidenceByReference.set(`${reference.memory_id}\n${reference.original_ref}`, proposal.evidence.id);
+    }
+  }
+  const updatedRows = rows.map((row) => {
+    const additions = row.record.evidence.flatMap((inline) => {
+      const id = evidenceByReference.get(`${row.record.id}\n${inline.ref}`);
+      if (!id || row.record.evidence.some((item) => item.ref === id)) return [];
+      return [{ type: "source" as const, ref: id, note: "Structured evidence created by legacy_evidence_backfill_v1." }];
+    });
+    return additions.length > 0
+      ? { ...row, record: { ...row.record, evidence: [...row.record.evidence, ...additions] } }
+      : row;
+  });
+  const affectedFiles = [...new Set(updatedRows
+    .filter((row, index) => row.record !== rows[index].record)
+    .map((row) => row.file))].sort();
+  const slug = timestampSlug(now);
+  const backupPath = join(root, "backups", `legacy-evidence-backfill-v1-${slug}`);
+  const backupFiles = [paths.memory.evidence, ...affectedFiles].filter(existsSync);
+  for (const file of backupFiles) {
+    const destination = join(backupPath, relative(root, file));
+    mkdirSync(dirname(destination), { recursive: true });
+    copyFileSync(file, destination);
+  }
+
+  const existingEvidence = existsSync(paths.memory.evidence) ? readJsonl<EvidenceRecord>(paths.memory.evidence) : [];
+  writeJsonlAtomic(paths.memory.evidence, [...existingEvidence, ...plan.proposals.map((proposal) => proposal.evidence)]);
+  for (const file of affectedFiles) {
+    writeJsonlAtomic(file, updatedRows.filter((row) => row.file === file).map((row) => row.record));
+  }
+  const reportPath = join(root, "reports", `legacy-evidence-backfill-${slug}.json`);
+  mkdirSync(dirname(reportPath), { recursive: true });
+  const result: LegacyEvidenceMigrationApplyResult = {
+    ...base,
+    mutation_performed: true,
+    evidence_created: plan.proposals.length,
+    records_updated: new Set(plan.proposals.flatMap((proposal) => proposal.evidence.related_memory_ids)).size,
+    backup_path: backupPath,
+    report_path: reportPath,
+  };
+  writeFileSync(reportPath, `${JSON.stringify({ ...result, plan }, null, 2)}\n`, "utf-8");
+  return result;
 }

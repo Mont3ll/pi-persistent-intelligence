@@ -119,6 +119,22 @@ export function runMemoryDiagnostics(root: string, options: { profile?: boolean 
   }
   endOrphanEvidence?.({ orphan_evidence: orphanEvidence.length });
 
+  const structuredEvidenceIds = new Set(allEvidence.map((evidence) => evidence.id));
+  const unstructuredLegacyEvidence = allRecords.filter((record) =>
+    record.status === "active"
+    && record.evidence.length > 0
+    && record.evidence.every((inline) => !structuredEvidenceIds.has(inline.ref)),
+  );
+  if (unstructuredLegacyEvidence.length > 0) {
+    findings.push(warn(
+      "legacy_evidence_unstructured",
+      `${unstructuredLegacyEvidence.length} active record(s) contain only unresolved legacy evidence references; run the reviewed legacy evidence migration before treating them as structured IDs.`,
+      unstructuredLegacyEvidence.map((record) => record.id),
+    ));
+  } else {
+    findings.push(ok("legacy_evidence_unstructured", "No active records rely only on unresolved legacy evidence references."));
+  }
+
   // 3. Tombstoned records appearing in the store with active status
   const zombied = allRecords.filter((r) =>
     r.status === "active" &&
