@@ -56,7 +56,8 @@ const CONVERSATIONAL_EXCLUSIONS = [
   /\b(?:let's|lets|can we|could we|why is|what else|is there|seems logical|never mind|for now)\b/i,
   /\b(?:message to you|your message|without any context)\b/i,
   // Exclude task/subagent prompts -- these contain correction-like language but are instructions, not corrections
-  /^(?:task:|your goal is|you are a delegated|you are a subagent|you are acting as (?:a )?(?:constrained )?(?:local )?(?:implementation|execution) agent|for this task\b|<file name=)/i,
+  /^(?:task:|your goal is|you are a delegated|you are a subagent|you are acting as (?:a )?(?:constrained )?(?:local )?(?:[a-z-]+(?:\s+[a-z-]+){0,5})?\s*agent\b|you are continuing\b.*(?:autoresearch|evaluation|run)|for this task\b|<file name=)/i,
+  /^# instructions \(read first\)/i,
   /\[Read from:.*\.md\]/i,
 ];
 
@@ -70,7 +71,7 @@ export function maybeCorrectionSignal(text: string): boolean {
   return CORRECTION_PATTERNS.some((p) => p.test(trimmed));
 }
 
-function isStructuralTaskWrapper(text: string): boolean {
+export function isStructuralTaskWrapper(text: string): boolean {
   return CONVERSATIONAL_EXCLUSIONS.slice(3).some((pattern) => pattern.test(text.trim()));
 }
 
