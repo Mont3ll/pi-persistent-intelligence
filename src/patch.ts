@@ -59,12 +59,14 @@ function applyDecision(root: string, op: PatchOp): ApplyDecision {
     return { ok: true };
   }
 
-  if (op.target_id && isTombstonedRecord(root, op.target_id)) return reject("tombstoned", `Target ${op.target_id} is tombstoned.`);
+  if (op.target_id && isTombstonedRecord(root, op.target_id) && !(op.op === "delete" && op.deletion_mode === "privacy_purge")) {
+    return reject("tombstoned", `Target ${op.target_id} is tombstoned.`);
+  }
 
   if ([...updateOps, ...targetOnlyOps, "supersede"].includes(op.op)) {
     const target = op.target_id ? byId.get(op.target_id) : undefined;
     if (!target) return reject("missing_target", `Target ${op.target_id ?? "(missing)"} does not exist.`);
-    if (target.status === "deleted" || target.status === "superseded") {
+    if ((target.status === "deleted" || target.status === "superseded") && !(op.op === "delete" && op.deletion_mode === "privacy_purge")) {
       return reject("target_terminal", `Target ${target.id} has terminal status ${target.status}.`);
     }
   }
@@ -139,8 +141,8 @@ function applyOp(root: string, patchId: string, op: PatchOp, now: string): void 
     updateMemoryRecord(root, op.target_id, (record) => {
       foundContent = JSON.stringify({ statement: record.statement, evidence: record.evidence, tags: record.tags });
       const tombstone = createDeletionTombstone({
-        resource_id: record.resource_id,
-        profile_id: record.profile_id,
+        resource_id: mode === "privacy_purge" ? undefined : record.resource_id,
+        profile_id: mode === "privacy_purge" ? undefined : record.profile_id,
         deleted_record_id: record.id,
         deletion_mode: mode,
         deletion_reason: reason,
@@ -151,13 +153,21 @@ function applyOp(root: string, patchId: string, op: PatchOp, now: string): void 
       if (mode === "privacy_purge") {
         redactEvidenceForMemory(root, record.id);
         return {
-          ...record,
+          id: record.id,
+          layer: record.layer,
+          scope: { type: "global" as const },
           statement: "[deleted]",
           tags: [],
           evidence: [{ type: "deletion", ref: tombstone.id, note: "Content removed by privacy purge." }],
           confidence: 0,
-          status: "deleted" as const,
+          stability: "low" as const,
+          created_at: record.created_at,
           updated_at: now.slice(0, 10),
+          review: { ...record.review, change_condition: "[privacy purged]" },
+          status: "deleted" as const,
+          supersedes: [],
+          superseded_by: [],
+          vault_ref: null,
         };
       }
       return { ...record, status: "deleted" as const, updated_at: now.slice(0, 10) };
