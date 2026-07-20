@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyCorrectionCapture, maybeCorrectionSignal, correctionConfidence, extractCorrectionCandidate } from "../../src/corrections";
+import { classifyCorrectionCapture, isStructuralTaskWrapper, maybeCorrectionSignal, correctionConfidence, extractCorrectionCandidate } from "../../src/corrections";
 
 describe("classified correction capture", () => {
   for (const text of [
@@ -8,6 +8,8 @@ describe("classified correction capture", () => {
     "You are acting as a constrained local implementation agent for the Rust port.",
     "For this task, do not use the production store.",
     "You are acting as a constrained local release-packaging agent for pi-governance-rs. Always run release checks.",
+    "You are acting as a constrained crates.io recovery and public documentation cleanup agent for pi-governance-rs. Always preserve published versions.",
+    "You are acting as a constrained local packaging, repository-creation, and push-preparation agent for pi-governance-rs. Always preserve tags.",
     "You are continuing the SomaAI autoresearch model evaluation after run backend/autoresearch/runs/123. Never change the baseline.",
     "# Instructions (read first) # Open Design charter You are an expert designer. Always deliver HTML.",
     "# Instructions (read first) ## OVERRIDE — form already answered. Never execute the turn-one flow.",
@@ -25,6 +27,10 @@ describe("classified correction capture", () => {
       expect(classifyCorrectionCapture(text, "2026-07-18", "/tmp/project")).toMatchObject({ action: "candidate" });
     });
   }
+});
+
+test("structural wrapper detection tolerates role punctuation", () => {
+  expect(isStructuralTaskWrapper("You are acting as a constrained local packaging, repository-creation, and push-preparation agent for pi-governance-rs.")).toBe(true);
 });
 
 describe("maybeCorrectionSignal", () => {
