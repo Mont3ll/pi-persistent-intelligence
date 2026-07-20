@@ -11,6 +11,7 @@ import { extractHardRules } from "../../src/rules";
 import { loadAllRecords, unsafeAddMemoryRecord } from "../../src/store";
 import { isTombstonedRecord, readDeletionTombstones } from "../../src/tombstones";
 import { MemoryFtsIndex } from "../../src/search/fts";
+import { runMemoryDiagnostics } from "../../src/diagnostics";
 import type { EvidenceRecord, MemoryPatch, MemoryRecord } from "../../src/types";
 
 let dirs: string[] = [];
@@ -104,6 +105,9 @@ describe("delete patch", () => {
     expect(JSON.stringify(deleted)).not.toContain("secret-project-token");
     expect(readFileSync(ensureMemoryDirs(dir).memory.tombstones, "utf-8")).not.toContain("secret-project-token");
     expect(readDeletionTombstones(dir)[0]).toMatchObject({ deleted_record_id: "mem_delete", deletion_mode: "privacy_purge", content_removed: true });
+    unsafeAddMemoryRecord(dir, record({ id: "mem_replacement", statement: "Safe replacement.", status: "active", supersedes: ["mem_delete"], superseded_by: [] }));
+    renderMemoryToDisk(dir);
+    expect(runMemoryDiagnostics(dir).findings.filter((finding) => finding.severity === "error")).toEqual([]);
   });
 
   test("privacy_purge removes normal record content and redacts linked evidence", () => {

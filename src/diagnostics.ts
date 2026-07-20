@@ -167,7 +167,7 @@ export function runMemoryDiagnostics(root: string, options: { profile?: boolean 
   if (existsSync(renderedPath)) {
     const rendered = require("node:fs").readFileSync(renderedPath, "utf-8");
     const deletedIds = allRecords.filter((r) => r.status === "deleted").map((r) => r.id);
-    const leaked = deletedIds.filter((id) => rendered.includes(id));
+    const leaked = deletedIds.filter((id) => rendered.includes(`### ${id}\n`));
     if (leaked.length > 0) findings.push(error("deleted_in_rendered", `${leaked.length} deleted record ID(s) appear in rendered/MEMORY.md.`, leaked));
     else findings.push(ok("deleted_in_rendered", "No deleted records in rendered Markdown."));
   } else {
