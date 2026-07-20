@@ -39,8 +39,8 @@ export function checkProvenanceLiveness(root: string, now = new Date().toISOStri
   const reverify = new Set<string>();
 
   for (const memory of memories) {
-    if (isTombstonedRecord(root, memory.id)) {
-      findings.push({ code: "memory_tombstoned", status: "invalid", severity: "error", memory_id: memory.id, message: `Memory ${memory.id} is tombstoned.` });
+    if (isTombstonedRecord(root, memory.id) && memory.status !== "deleted") {
+      findings.push({ code: "memory_tombstoned", status: "invalid", severity: "error", memory_id: memory.id, message: `Memory ${memory.id} is tombstoned but still has status ${memory.status}.` });
       reverify.add(memory.id);
     }
 
