@@ -7,6 +7,10 @@ describe("classified correction capture", () => {
     "You are a delegated subagent. Always run the focused tests.",
     "You are acting as a constrained local implementation agent for the Rust port.",
     "For this task, do not use the production store.",
+    "You are acting as a constrained local release-packaging agent for pi-governance-rs. Always run release checks.",
+    "You are continuing the SomaAI autoresearch model evaluation after run backend/autoresearch/runs/123. Never change the baseline.",
+    "# Instructions (read first) # Open Design charter You are an expert designer. Always deliver HTML.",
+    "# Instructions (read first) ## OVERRIDE — form already answered. Never execute the turn-one flow.",
   ]) {
     test(`rejects task wrapper: ${text.slice(0, 28)}`, () => {
       expect(classifyCorrectionCapture(text, "2026-07-18", "/tmp/project")).toMatchObject({ action: "reject" });
