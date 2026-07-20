@@ -85,6 +85,7 @@ describe("pi-governance-rs compatibility bundle", () => {
     try {
       unsafeAddMemoryRecord(dir, record({ id: "mem_l1", layer: "L1", scope: { type: "global" }, ruleType: "preference" }));
       unsafeAddMemoryRecord(dir, record({ id: "mem_l2", layer: "L2" }));
+      unsafeAddMemoryRecord(dir, record({ id: "mem_deleted", status: "deleted", statement: "[deleted]", evidence: [{ type: "deletion", ref: "tomb_demo", note: "Content removed." }] }));
       appendDailyLog(dir, "2026-06-30", "#decision keep release namespace stable");
       appendCandidate(dir, candidate({ id: "cap_pending", status: "new" }));
       appendCandidate(dir, candidate({ id: "cap_rejected", status: "rejected" }));
@@ -104,6 +105,7 @@ describe("pi-governance-rs compatibility bundle", () => {
       expect(bundle.producer).toEqual({ name: "pi-persistent-intelligence", version: "0.13.0" });
       expect(bundle.records.map((r) => [r.id, r.layer])).toContainEqual(["mem_l1", "l1_identity"]);
       expect(bundle.records.map((r) => [r.id, r.layer])).toContainEqual(["mem_l2", "l2_playbook"]);
+      expect(bundle.records.find((r) => r.id === "mem_deleted")?.status).toBe("tombstoned");
       expect(bundle.sessions.map((s) => [s.layer, s.text])).toContainEqual(["l3_session", "#decision keep release namespace stable"]);
       expect(bundle.records.find((r) => r.id === "mem_l2")?.rule_type).toBe("workflow");
       expect(bundle.records.find((r) => r.id === "mem_l2")?.memory_kind).toBe("instruction");

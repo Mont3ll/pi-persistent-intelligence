@@ -160,7 +160,7 @@ function unmapLayer(layer: PiGovernanceLayer): MemoryRecord["layer"] {
 
 function mapRecordStatus(status: MemoryRecord["status"]): PiGovernanceRecordStatus {
   if (status === "deprecated") return "tombstoned";
-  if (status === "deleted") return "deleted";
+  if (status === "deleted") return "tombstoned";
   if (status === "promoted") return "active";
   return status;
 }
