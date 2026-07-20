@@ -90,6 +90,22 @@ describe("delete patch", () => {
     expect(readRuntimeContext(dir)).not.toContain("secret token");
   });
 
+  test("privacy_purge removes a superseded terminal record while audit_preserving still rejects it", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record({ status: "superseded", scope: { type: "project", project: "secret-project-token" }, superseded_by: ["mem_replacement"] }));
+    const audit = applyPatch(dir, patch("audit_preserving"), { selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z" });
+    expect(audit.skipped_ops).toContainEqual(expect.objectContaining({ op_id: "op_001", reason: "target_terminal" }));
+
+    const purged = applyPatch(dir, patch("privacy_purge"), { selectedOpIds: ["op_001"], now: "2026-05-19T10:01:00.000Z" });
+    expect(purged.applied_ops).toEqual(["op_001"]);
+    const deleted = loadAllRecords(dir).find((item) => item.id === "mem_delete");
+    expect(deleted).toMatchObject({ status: "deleted", statement: "[deleted]", evidence: [expect.objectContaining({ type: "deletion" })] });
+    expect(JSON.stringify(deleted)).not.toContain("secret token");
+    expect(JSON.stringify(deleted)).not.toContain("secret-project-token");
+    expect(readFileSync(ensureMemoryDirs(dir).memory.tombstones, "utf-8")).not.toContain("secret-project-token");
+    expect(readDeletionTombstones(dir)[0]).toMatchObject({ deleted_record_id: "mem_delete", deletion_mode: "privacy_purge", content_removed: true });
+  });
+
   test("privacy_purge removes normal record content and redacts linked evidence", () => {
     const dir = root();
     unsafeAddMemoryRecord(dir, record());
