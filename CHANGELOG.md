@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-24
+
 ### Added
 
 - Added dry-run-first `/memory-store-integrity` repair with reviewed fingerprints, mandatory backups, and audit reports.

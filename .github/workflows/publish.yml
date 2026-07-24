@@ -40,7 +40,20 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      - name: Check whether this version is already on npm
+        id: npm-version
+        shell: bash
+        run: |
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm
+        if: steps.npm-version.outputs.published != 'true'
         run: npm publish --access public --provenance
 
   # Publish to GitHub Packages — makes the GitHub repo Packages tab show the package
