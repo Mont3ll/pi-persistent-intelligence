@@ -50,6 +50,8 @@ After a `privacy_purge` delete:
   - `source_excerpt` removed
   - `redaction_status` set to `"deleted"`
 - Content-free tombstone written (contains only deletion metadata, no original content)
+- Correlated historical capture candidates and embedded patch payloads are replaced with non-replayable privacy-purged audit shells; their stable audit IDs and statuses remain
+- Correlated artifact replacement is staged and rollback-safe without retaining plaintext rollback copies after success
 - FTS synced immediately
 
 ---

@@ -22,6 +22,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Privacy purge now redacts correlated historical capture candidates and embedded patch payloads, including safe reruns after the canonical record was already purged.
 - Prevented exact duplicate stable IDs from entering canonical memory.
 - Preserved domain scope across JS/Rust imports and exports.
 - Restored full `pi-governance` bundle interoperability with Rust v1.1.0: RFC 3339 timestamp normalization, native Rust patch import, auxiliary artifact preservation, ID-based deduplication, and import backups.

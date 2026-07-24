@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { addMemoryRecordFromPatch, loadAllRecords, PATCH_APPLY_CONTEXT, updateMemoryRecord } from "./store";
 import { listCandidates, updateCandidateStatus } from "./inbox";
 import { renderMemoryToDisk } from "./render";
@@ -7,6 +7,7 @@ import { ensureMemoryDirs } from "./paths";
 import { writeVaultPromotionReport } from "./vaultPromotion";
 import { createDeletionTombstone, appendDeletionTombstone, isTombstonedRecord } from "./tombstones";
 import { readEvidenceRecords, redactEvidenceForMemory } from "./evidence";
+import { collectPrivacyCandidateCorrelations, purgeCorrelatedPrivacyArtifacts, redactPrivacyPatchForExecution, redactPrivacyPatchForPersistence, validatePrivacyArtifactSet } from "./privacy-artifacts";
 import { affectedRecordIdsFromPatchOps, postMutationModeFromOps, runPostMutationChecks } from "./post-mutation-checks";
 import type { MemoryPatch, PatchOp, PatchSkip, PatchSkipReason } from "./types";
 
@@ -199,7 +200,14 @@ function applyOp(root: string, patchId: string, op: PatchOp, now: string): void 
   }
 }
 
+function validatePatchId(patchId: string): void {
+  if (!patchId || basename(patchId) !== patchId || patchId === "." || patchId === "..") {
+    throw new Error("Invalid patch ID: path components are not allowed");
+  }
+}
+
 export function writePatchFile(root: string, patch: MemoryPatch): string {
+  validatePatchId(patch.patch_id);
   const paths = ensureMemoryDirs(root);
   const file = join(paths.patches, `${patch.patch_id}.json`);
   writeFileSync(file, `${JSON.stringify(patch, null, 2)}\n`, "utf-8");
@@ -216,7 +224,9 @@ export function listPatchFiles(root: string): string[] {
 
 export function readPatchFile(root: string, patchId: string): MemoryPatch {
   const paths = ensureMemoryDirs(root);
-  const filename = patchId.endsWith(".json") ? patchId : `${patchId}.json`;
+  const normalizedId = patchId.endsWith(".json") ? patchId.slice(0, -5) : patchId;
+  validatePatchId(normalizedId);
+  const filename = `${normalizedId}.json`;
   const file = join(paths.patches, filename);
   if (!existsSync(file)) throw new Error(`Patch not found: ${patchId}`);
   const parsed = JSON.parse(readFileSync(file, "utf-8")) as Omit<MemoryPatch, "skipped_ops"> & { skipped_ops?: Array<PatchSkip | string> };
@@ -229,10 +239,19 @@ export function readPatchFile(root: string, patchId: string): MemoryPatch {
 }
 
 export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatchOptions): MemoryPatch {
-  writePatchFile(root, patch);
+  const privacyTargets = patch.ops
+    .filter((op) => isSelected(op, options.selectedOpIds) && op.op === "delete" && op.deletion_mode === "privacy_purge" && op.target_id)
+    .map((op) => op.target_id!);
+  if (privacyTargets.length > 0) validatePrivacyArtifactSet(root);
+  const correlatedCandidateIds = privacyTargets.length > 0
+    ? collectPrivacyCandidateCorrelations(root, privacyTargets)
+    : [];
+  const executionPatch = redactPrivacyPatchForExecution(patch, privacyTargets, correlatedCandidateIds);
+  writePatchFile(root, redactPrivacyPatchForPersistence(patch, privacyTargets, correlatedCandidateIds));
+  for (const targetId of privacyTargets) purgeCorrelatedPrivacyArtifacts(root, targetId);
   const applied_ops: string[] = [];
   const skipped_ops: PatchSkip[] = [];
-  for (const op of patch.ops) {
+  for (const op of executionPatch.ops) {
     const selected = isSelected(op, options.selectedOpIds);
     const decision = selected
       ? applyDecision(root, op)
@@ -256,15 +275,16 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
       ? "partially_applied"
       : "applied";
   const appliedPatch: MemoryPatch = {
-    ...patch,
+    ...executionPatch,
     status,
     applied_at: options.now,
     applied_ops,
     skipped_ops,
   };
-  writePatchFile(root, appliedPatch);
+  const persistedPatch = redactPrivacyPatchForPersistence(appliedPatch, privacyTargets, correlatedCandidateIds);
+  writePatchFile(root, persistedPatch);
+  const appliedOps = executionPatch.ops.filter((op) => applied_ops.includes(op.op_id));
   renderMemoryToDisk(root);
-  const appliedOps = patch.ops.filter((op) => applied_ops.includes(op.op_id));
   runPostMutationChecks({
     root,
     patchId: patch.patch_id,
@@ -275,5 +295,5 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
   });
   // FTS/qmd sync remains a caller invariant: extension flows call updateQmd()/syncFtsIndex()
   // after patch application. Keeping this here avoids coupling patch application to an index backend.
-  return appliedPatch;
+  return persistedPatch;
 }

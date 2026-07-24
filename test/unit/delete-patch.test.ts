@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
 import { appendEvidenceRecord, findEvidenceById } from "../../src/evidence";
-import { applyPatch } from "../../src/patch";
+import { applyPatch, readPatchFile } from "../../src/patch";
 import { readRuntimeContext, buildRetrievalContext, syncFtsIndex } from "../../src/retriever";
 import { renderMemoryToDisk } from "../../src/render";
 import { extractHardRules } from "../../src/rules";
@@ -108,6 +108,154 @@ describe("delete patch", () => {
     unsafeAddMemoryRecord(dir, record({ id: "mem_replacement", statement: "Safe replacement.", status: "active", supersedes: ["mem_delete"], superseded_by: [] }));
     renderMemoryToDisk(dir);
     expect(runMemoryDiagnostics(dir).findings.filter((finding) => finding.severity === "error")).toEqual([]);
+  });
+
+  test("privacy_purge also redacts correlated historical candidates and patch payloads", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    applyPatch(dir, patch("privacy_purge"), { selectedOpIds: ["op_001"], now: "2026-05-19T09:30:00.000Z" });
+    const paths = ensureMemoryDirs(dir);
+    const secret = "API_TOKEN=legacy-secret-value";
+    writeFileSync(paths.inbox.captured, `${JSON.stringify({
+      id: "candidate_arbitrary",
+      created_at: "2026-05-19T09:00:00.000Z",
+      source: { type: "manual", ref: "daily", cwd: "/secret/scope" },
+      text: secret,
+      tags: ["secret-tag"],
+      evidence_refs: ["secret-evidence"],
+      confidence: 0.9,
+      status: "patched",
+    })}\n${JSON.stringify({
+      id: "candidate_direct_relationship",
+      created_at: "2026-05-19T09:00:00.000Z",
+      source: { type: "manual", ref: "daily" },
+      text: secret,
+      tags: ["secret-tag"],
+      evidence_refs: ["secret-evidence"],
+      matched_memory_ids: ["mem_delete"],
+      status: "new",
+    })}\n`);
+    writeFileSync(join(paths.patches, "patch_historical.json"), `${JSON.stringify({
+      patch_id: "patch_historical",
+      created_at: "2026-05-19T09:00:00.000Z",
+      generated_by: "curator",
+      mode: "propose",
+      summary: secret,
+      ops: [{
+        op_id: "op_historical",
+        candidate_id: "candidate_arbitrary",
+        op: "add",
+        target: "memory/L2.playbooks.jsonl",
+        record: record({ statement: secret }),
+        rationale: secret,
+        risk: "low",
+        default_selected: true,
+      }, {
+        op_id: "op_sibling",
+        candidate_id: "candidate_arbitrary",
+        op: "flag_for_review",
+        target_id: "unrelated_record",
+        updates: { review: { cadence_days: 1, next_review: "2026-05-20", change_condition: secret } },
+        rationale: secret,
+        risk: "low",
+        default_selected: false,
+      }, {
+        op_id: "op_relationship_only",
+        candidate_id: "candidate_direct_relationship",
+        op: "add",
+        record: record({ id: "relationship_only_record", statement: secret }),
+        rationale: secret,
+        risk: "low",
+        default_selected: false,
+      }],
+      status: "applied",
+      applied_at: "2026-05-19T09:01:00.000Z",
+      applied_ops: ["op_historical"],
+      skipped_ops: [],
+    }, null, 2)}\n`);
+
+    const current = patch("privacy_purge");
+    current.summary = secret;
+    current.ops[0].reason = secret;
+    current.ops.push({
+      op_id: "op_reintroduce",
+      candidate_id: "candidate_direct_relationship",
+      op: "add",
+      record: record({ id: "mem_reintroduced", statement: secret }),
+      rationale: secret,
+      risk: "low",
+      default_selected: true,
+    });
+    const applied = applyPatch(dir, current, { selectedOpIds: ["op_001", "op_reintroduce"], now: "2026-05-19T10:00:00.000Z" });
+
+    expect(applied.summary).toBe("[privacy purged]");
+    expect(JSON.stringify(applied)).not.toContain(secret);
+    expect(readFileSync(join(paths.patches, "patch_privacy_purge.json"), "utf-8")).not.toContain(secret);
+    expect(readFileSync(paths.inbox.captured, "utf-8")).not.toContain(secret);
+    expect(readFileSync(join(paths.patches, "patch_historical.json"), "utf-8")).not.toContain(secret);
+    expect(readFileSync(paths.inbox.captured, "utf-8")).toContain("[privacy purged]");
+    expect(readFileSync(join(paths.patches, "patch_historical.json"), "utf-8")).toContain("[privacy purged]");
+    expect(loadAllRecords(dir).some((item) => item.id === "mem_reintroduced")).toBe(false);
+
+    unsafeAddMemoryRecord(dir, record({ id: "unrelated_record", statement: "Unrelated safe record." }));
+    const shell = readPatchFile(dir, "patch_historical");
+    applyPatch(dir, shell, { selectedOpIds: ["op_sibling"], now: "2026-05-19T10:05:00.000Z" });
+    expect(loadAllRecords(dir).find((item) => item.id === "unrelated_record")?.statement).toBe("Unrelated safe record.");
+  });
+
+  test("executes multiple selected privacy deletes even when they share a candidate", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    unsafeAddMemoryRecord(dir, record({ id: "mem_second", statement: "Second private record." }));
+    const multi = patch("privacy_purge");
+    multi.ops[0].candidate_id = "candidate_shared";
+    multi.ops.push({
+      op_id: "op_002",
+      op: "delete",
+      target_id: "mem_second",
+      candidate_id: "candidate_shared",
+      deletion_mode: "privacy_purge",
+      deletion_reason: "privacy_sensitive",
+      reason: "privacy cleanup",
+      risk: "high",
+      default_selected: true,
+    });
+
+    applyPatch(dir, multi, { selectedOpIds: ["op_001", "op_002"], now: "2026-05-19T10:00:00.000Z" });
+
+    expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("deleted");
+    expect(loadAllRecords(dir).find((item) => item.id === "mem_second")?.status).toBe("deleted");
+  });
+
+  test("preflights historical artifacts before a privacy mutation", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    const paths = ensureMemoryDirs(dir);
+    writeFileSync(join(paths.patches, "malformed.json"), `${JSON.stringify({ patch_id: "malformed", ops: [] })}\n`);
+    writeFileSync(paths.inbox.captured, `${JSON.stringify({
+      id: "bad_candidate",
+      created_at: "2026-05-19T09:00:00.000Z",
+      text: "safe",
+      tags: [],
+      evidence_refs: [],
+      matched_memory_ids: "mem_delete",
+      status: "new",
+    })}\n`);
+
+    expect(() => applyPatch(dir, patch("privacy_purge"), { selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z" })).toThrow();
+    expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("active");
+    expect(existsSync(join(paths.patches, "patch_privacy_purge.json"))).toBe(false);
+  });
+
+  test("rejects patch IDs containing path components before writing or mutating", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    const malicious = patch("privacy_purge");
+    malicious.patch_id = "../escaped";
+
+    expect(() => applyPatch(dir, malicious, { selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z" })).toThrow("Invalid patch ID");
+    expect(existsSync(join(dir, "escaped.json"))).toBe(false);
+    expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("active");
   });
 
   test("privacy_purge removes normal record content and redacts linked evidence", () => {
