@@ -116,6 +116,7 @@ export function auditCaptureHistory(root: string, options: { since?: string; now
       let row: { id?: string; file?: string; date?: string };
       try { row = JSON.parse(rawRow) as typeof row; } catch { continue; }
       if (!row.file || !row.id || (options.since && row.date && row.date < options.since) || !existsSync(row.file)) continue;
+      if (/(?:^|\/)run-\d+\/session\.jsonl$/i.test(row.file) || row.file.includes("/.pi-subagents/")) continue;
       try {
         if (statSync(row.file).size > 20_000_000) continue;
         const session = parseSession(row.file, false);

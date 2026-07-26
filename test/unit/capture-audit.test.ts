@@ -78,6 +78,19 @@ describe("capture audit", () => {
     ]));
   });
 
+  test("excludes nested subagent session files from historical user evidence", () => {
+    const dir = root();
+    const nested = join(dir, "parent-session", "review-run", "run-0", "session.jsonl");
+    mkdirSync(join(dir, "parent-session", "review-run", "run-0"), { recursive: true });
+    writeFileSync(nested, [
+      JSON.stringify({ type: "session", version: 3, id: "child-session", timestamp: "2026-07-07T00:00:00Z", cwd: "workspace/project" }),
+      JSON.stringify({ type: "message", timestamp: "2026-07-07T00:01:00Z", message: { role: "user", content: [{ type: "text", text: "I prefer fabricated reviewer instructions." }] } }),
+    ].join("\n"), "utf-8");
+    writeFileSync(join(dir, "sessions", "session-index.jsonl"), `${JSON.stringify({ id: "child-session", file: nested, date: "2026-07-07" })}\n`, "utf-8");
+    const report = auditCaptureHistory(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
+    expect(report.historical_preferences).toHaveLength(0);
+  });
+
   test("flags task wrappers and vault-mis-scoped global rules", () => {
     const dir = root();
     unsafeAddMemoryRecord(dir, record("mem_wrapper", "Task: You are a delegated subagent. Implement this migration."));
