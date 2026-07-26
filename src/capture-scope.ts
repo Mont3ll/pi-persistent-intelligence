@@ -34,7 +34,16 @@ export function resolveCaptureScopes(input: ResolveCaptureScopeInput): CaptureSc
     if (vaultProject) return [{ type: "project", project: vaultProject, confidence: 0.95, basis: ["explicit_vault_scope"] }];
   }
 
-  if (input.decision.intent === "user_preference" && input.decision.project_cues.length === 0) {
+  const explicitProjects = unique(input.activity.flatMap((row) => row.explicit_project_mentions));
+  if (explicitProjects.length > 0) {
+    return explicitProjects.map((project) => ({ type: "project", project, confidence: 0.95, basis: ["explicit_project_scope"] }));
+  }
+
+  if (input.decision.project_cues.length > 0) {
+    return [{ type: "project", project: input.launch_project.project_id, confidence: 0.9, basis: ["explicit_project_language"] }];
+  }
+
+  if (input.decision.intent === "user_preference") {
     return [{
       type: "global",
       confidence: input.decision.global_cues.length > 0 ? 0.9 : 0.7,
@@ -42,17 +51,12 @@ export function resolveCaptureScopes(input: ResolveCaptureScopeInput): CaptureSc
     }];
   }
 
-  const explicitProjects = unique(input.activity.flatMap((row) => row.explicit_project_mentions));
-  if (explicitProjects.length > 0) {
-    return explicitProjects.map((project) => ({ type: "project", project, confidence: 0.95, basis: ["explicit_project_scope"] }));
-  }
-
   const modifiedProjects = unique(input.activity.flatMap((row) => row.modified_projects.map((item) => item.project_id)));
   if (modifiedProjects.length > 0) {
     return modifiedProjects.map((project) => ({ type: "project", project, confidence: 0.9, basis: ["modified_project"] }));
   }
 
-  if (input.decision.project_cues.length > 0 || input.decision.durability === "project") {
+  if (input.decision.durability === "project") {
     return [{ type: "project", project: input.launch_project.project_id, confidence: 0.6, basis: ["launch_project_fallback"] }];
   }
 
