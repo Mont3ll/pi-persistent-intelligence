@@ -34,6 +34,12 @@ describe("capture scope", () => {
     expect(targets).toEqual([{ type: "global", confidence: 0.95, basis: ["explicit_user_global"] }]);
   });
 
+  test("ordinary personal preference stays global despite repository activity", () => {
+    const text = "I prefer plain punctuation.";
+    const targets = resolveCaptureScopes({ text, decision: classifyCaptureIntent(text), launch_project: project("repo-a"), activity: [activity(["repo-a"])] });
+    expect(targets).toEqual([{ type: "global", confidence: 0.9, basis: ["personal_preference"] }]);
+  });
+
   test("replicates non-global rule to every modified repository", () => {
     const text = "Before publishing, run the release audit and package dry-run.";
     const targets = resolveCaptureScopes({

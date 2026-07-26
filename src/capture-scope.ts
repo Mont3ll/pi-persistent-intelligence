@@ -34,6 +34,14 @@ export function resolveCaptureScopes(input: ResolveCaptureScopeInput): CaptureSc
     if (vaultProject) return [{ type: "project", project: vaultProject, confidence: 0.95, basis: ["explicit_vault_scope"] }];
   }
 
+  if (input.decision.intent === "user_preference" && input.decision.project_cues.length === 0) {
+    return [{
+      type: "global",
+      confidence: input.decision.global_cues.length > 0 ? 0.9 : 0.7,
+      basis: [input.decision.global_cues.length > 0 ? "personal_preference" : "long_term_user_instruction"],
+    }];
+  }
+
   const explicitProjects = unique(input.activity.flatMap((row) => row.explicit_project_mentions));
   if (explicitProjects.length > 0) {
     return explicitProjects.map((project) => ({ type: "project", project, confidence: 0.95, basis: ["explicit_project_scope"] }));
