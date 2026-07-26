@@ -45,7 +45,10 @@ function sessionSummaryFiles(root: string): string[] {
 }
 
 function proposedScope(intent: ReturnType<typeof classifyCaptureIntent>): CaptureScopeTarget {
-  if (intent.global_cues.length > 0 || intent.intent === "user_preference") return { type: "global", confidence: intent.global_cues.length ? 0.95 : 0.75, basis: [intent.global_cues.length ? "explicit_user_global" : "historical_user_preference"] };
+  const strongGlobalCue = intent.global_cues.some((cue) => !["\\bmy preference\\b", "\\bi prefer\\b", "\\bi do not like\\b"].includes(cue));
+  if (strongGlobalCue) return { type: "global", confidence: 0.95, basis: ["explicit_user_global"] };
+  if (intent.project_cues.length > 0 || intent.durability === "project") return { type: "project", confidence: 0.45, basis: ["historical_scope_requires_review"] };
+  if (intent.intent === "user_preference") return { type: "global", confidence: 0.75, basis: ["historical_user_preference"] };
   return { type: "project", confidence: 0.45, basis: ["historical_scope_requires_review"] };
 }
 
@@ -79,15 +82,17 @@ export function auditCaptureHistory(root: string, options: { since?: string; now
     });
   };
 
-  for (const file of sessionSummaryFiles(root)) {
-    const content = readFileSync(file, "utf-8");
-    const date = summaryDate(content);
-    if (options.since && date && date < options.since) continue;
-    const sourceRef = `session-summary:${hash(file).slice(0, 16)}`;
-    for (const line of content.split(/\r?\n/)) addFinding(line, sourceRef);
+  const indexPath = join(root, "sessions", "session-index.jsonl");
+  if (!existsSync(indexPath)) {
+    for (const file of sessionSummaryFiles(root)) {
+      const content = readFileSync(file, "utf-8");
+      const date = summaryDate(content);
+      if (options.since && date && date < options.since) continue;
+      const sourceRef = `session-summary:${hash(file).slice(0, 16)}`;
+      for (const line of content.split(/\r?\n/)) addFinding(line, sourceRef);
+    }
   }
 
-  const indexPath = join(root, "sessions", "session-index.jsonl");
   if (existsSync(indexPath)) {
     for (const rawRow of readFileSync(indexPath, "utf-8").split(/\r?\n/)) {
       if (!rawRow.trim()) continue;

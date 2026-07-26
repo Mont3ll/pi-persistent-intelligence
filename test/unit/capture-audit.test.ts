@@ -54,6 +54,15 @@ describe("capture audit", () => {
     expect(canonicalSnapshot(dir)).toEqual(before);
   });
 
+  test("keeps explicitly repository-scoped preferences out of global backfill", () => {
+    const dir = root();
+    const summaries = join(dir, "sessions", "summaries");
+    mkdirSync(summaries, { recursive: true });
+    writeFileSync(join(summaries, "session.md"), "# Session\nDate: 2026-07-07\n- I prefer no generated files in this repository.\n", "utf-8");
+    const report = auditCaptureHistory(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
+    expect(report.historical_preferences[0].proposed_scope.type).toBe("project");
+  });
+
   test("scans indexed direct user turns", () => {
     const dir = root();
     const raw = join(dir, "raw-session.jsonl");
