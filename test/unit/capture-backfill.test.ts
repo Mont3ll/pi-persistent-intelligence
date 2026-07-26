@@ -32,6 +32,23 @@ describe("capture backfill", () => {
     expect(loadAllRecords(dir)).toHaveLength(0);
   });
 
+  test("groups equivalent historical preferences into recurrence on one candidate", () => {
+    const dir = root();
+    writeFileSync(join(dir, "sessions", "summaries", "second.md"), "# Session\nDate: 2026-07-08\n- Never use em dashes when writing for me.\n", "utf-8");
+    const preview = previewCaptureBackfill(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
+    expect(preview.candidates).toHaveLength(1);
+    expect(preview.candidates[0].recurrence_count).toBe(2);
+    expect(preview.candidates[0].evidence_refs).toHaveLength(2);
+  });
+
+  test("does not create a project candidate when historical evidence lacks a project target", () => {
+    const dir = root();
+    writeFileSync(join(dir, "sessions", "summaries", "session.md"), "# Session\nDate: 2026-07-07\n- This project always runs release audit before publishing.\n", "utf-8");
+    const preview = previewCaptureBackfill(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
+    expect(preview.candidates).toHaveLength(0);
+    expect(preview.skipped_ambiguous_scope_count).toBe(1);
+  });
+
   test("rejects source drift after preview", () => {
     const dir = root();
     const preview = previewCaptureBackfill(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCaptureQualityReport, renderCaptureQualityReport } from "../../src/capture-quality";
 import { processCaptureTurn } from "../../src/capture-coordinator";
+import { captureQualityBrowserOptions } from "../../src/tui/browser-adapters";
 import type { ProjectIdentity } from "../../src/types";
 
 const dirs: string[] = [];
@@ -27,5 +28,8 @@ describe("capture quality", () => {
     expect(report.runtime_bytes).toBeGreaterThan(0);
     expect(JSON.stringify(report)).not.toContain("sk-proj-abcdefghijklmnopqrstuvwxyz");
     expect(renderCaptureQualityReport(report)).toContain("Messages evaluated: 3");
+    const browser = captureQualityBrowserOptions(report);
+    expect(browser.title).toBe("Capture Quality Dashboard");
+    expect(browser.items.length).toBeGreaterThan(0);
   });
 });
