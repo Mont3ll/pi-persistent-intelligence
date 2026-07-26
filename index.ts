@@ -48,7 +48,7 @@ import { runConsolidation, type ConsolidationResult } from "./src/consolidator";
 import { loadConfig } from "./src/config";
 import { SessionStore, buildSessionSearchTools, buildSessionContextBlock, SESSION_SYNC_INTERVAL_MS } from "./src/session-search";
 import { isChildProcess } from "./src/sessions/store";
-import { createInboxReviewComponent, buildInboxNotification, type InboxOverlayAction } from "./src/tui/InboxReviewOverlay";
+import { createInboxReviewComponent, buildInboxNotification, shouldPromptForInbox, type InboxOverlayAction } from "./src/tui/InboxReviewOverlay";
 import { maybeCorrectionSignal } from "./src/corrections";
 import { actionsFromAgentMessages } from "./src/capture-activity";
 import { processCaptureTurn } from "./src/capture-coordinator";
@@ -365,7 +365,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       const promptThreshold = cfg.curator.inboxPromptThreshold ?? 3;
       const pending = listCandidates(root).filter((c) => c.status === "new");
 
-      if (pending.length >= promptThreshold) {
+      if (shouldPromptForInbox(pending, { batchThreshold: promptThreshold, singletonDirectReview: cfg.capture.singletonDirectReview })) {
         const autoEligible = pending.filter((c) => (c.confidence ?? 0) >= threshold);
         const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
 

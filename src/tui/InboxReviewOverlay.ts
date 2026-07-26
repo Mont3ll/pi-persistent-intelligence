@@ -27,6 +27,19 @@ export interface InboxOverlayOptions {
   highThreshold: number;
 }
 
+export function shouldPromptForInbox(
+  candidates: CaptureCandidate[],
+  options: { batchThreshold: number; singletonDirectReview: boolean },
+): boolean {
+  if (candidates.length >= options.batchThreshold) return true;
+  if (!options.singletonDirectReview) return false;
+  return candidates.some((candidate) => [
+    "direct_user_instruction",
+    "user_correction",
+    "repeated_user_preference",
+  ].includes(candidate.primary_trust_class ?? ""));
+}
+
 // ─── Theme (mirrors PatchReviewPanel's PatchPanelTheme) ───────────────────────
 
 type StyleFn = (text: string) => string;
