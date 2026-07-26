@@ -14,28 +14,36 @@ Persistent Intelligence separates operational context from durable beliefs.
 | Active task or reminder | `scratchpad` |
 | Session note, recent decision, in-progress context | `memory_write target=daily` with `#decision` tag |
 | Durable workflow/playbook/preference | `memory_write target=long_term` → inbox → `/curate-memory` |
-| Explicit correction ("don't use X", "prefer Y over Z") | Captured automatically via correction detection |
+| Direct preference or correction | Captured deterministically as a governed inbox candidate |
 | Research source, citation-backed domain claim | Obsidian vault under AGENTS.md protocol |
 | Stable dev pattern observed in 2+ projects for 30+ days | `promote_to_vault_candidate` patch op |
 
-## Automatic correction capture
+## Deterministic preference and correction capture
 
-You do NOT need to call `memory_write` for corrections. If you say "don't use echo >> for file writes, use sed instead", the system automatically detects the correction signal in `agent_end`, infers `ruleType: "avoid_pattern"`, and adds a candidate to the inbox. Strong corrections (confidence ≥ 0.85) are auto-applied at session end.
+You do not need to call `memory_write` for direct preferences or corrections. Natural instructions such as "Avoid promotional language in my public writing" and "This project always runs the release audit before publishing" are classified at the end of the turn and checkpointed immediately. Capture does not depend on session shutdown or LLM consolidation.
 
-Tag patterns detected: "don't/do not use X", "prefer/favor X over Y", "use X instead of Y", "always/never [verb]", "this project uses X", "never edit/modify".
+Direct capture is candidate-first. It never writes an active memory record by itself. A singleton direct-user candidate is visible for review, while generated or inferred singleton candidates keep the normal batch threshold. Equivalent preferences add recurrence evidence to one candidate rather than disappearing as duplicates.
+
+Scope is independent of the launch directory:
+
+- Personal writing, interaction, and cross-project workflow preferences are proposed as global L2 records and require review.
+- Repository conventions target every materially modified repository.
+- Read-only repositories and a vault used as a research source are not inferred as targets.
+- Explicit project or vault restrictions override inferred activity.
 
 ## L1 vs L2
 
-L1 identity/preference memory is rare and high risk:
-- requires 3+ evidence instances
-- confidence ≥ 0.85
+L1 identity memory is rare and high risk:
+- requires strong repeated evidence
 - must include a falsifiable change condition
-- **never** auto-applied
+- never auto-applies
 
-L2 playbook memory is the productive layer:
-- requires 2+ evidence instances at apply time (1 accepted for inbox display)
-- confidence ≥ 0.75
-- includes ruleType, tags, evidence, stability, review cadence, change condition
+L2 is the productive layer for personal preferences, repository conventions, corrections, and playbooks:
+- direct user evidence can create an inbox candidate immediately
+- recurrence strengthens provenance without silently activating the rule
+- global preferences always require explicit review
+- approved multi-project candidates materialize as one correlated record per project
+- records include rule type, tags, evidence, stability, review cadence, and a change condition
 
 ## Rule types
 
@@ -48,23 +56,23 @@ memory_write target=long_term \
   confidence=0.88
 ```
 
-High-confidence records with `ruleType` in `["avoid_pattern","prefer_pattern","correction","convention"]` are promoted to **hard rules** — injected above general memory with `⚠️`/`✓`/`📌` prefixes.
+High-confidence active records with `ruleType` in `["avoid_pattern","prefer_pattern","correction","convention"]` may render as **hard rules** after scope and positive applicability filtering. A writing preference is injected for relevant writing or documentation tasks, not for unrelated coding work.
 
 ## Curation modes
 
 ```text
-memory_write target=long_term   →  inbox candidate
-LLM consolidation (session end) →  inbox candidate (Jaccard-deduped)
-Automatic correction capture    →  inbox candidate (instant)
-                                          ↓
-                              tiered auto-curation (session end):
-                               conf ≥ 0.85  →  auto-applied to L2
-                               conf < 0.85  →  held in inbox
-                                          ↓
-                     inbox review panel (next session start, if ≥ 3 pending)
-                               [a] approve  [r] /curate-memory  [s] skip
-                                          ↓
-                     /curate-memory → PatchReviewPanel → applyPatch
+memory_write target=long_term     -> inbox candidate
+LLM consolidation                 -> inferred inbox candidate
+Direct preference or correction   -> checkpointed inbox candidate
+Repeated equivalent preference    -> recurrence on existing candidate
+                                             |
+                                             v
+                                governed review and patch proposal
+                                global preference: explicit review
+                                project group: one op per target
+                                             |
+                                             v
+                                  selected patch operations apply
 ```
 
 ## Memory search
@@ -100,13 +108,15 @@ Set `PI_VAULT_PATH` to enable `vault_ref` auto-suggestions during `/curate-memor
 
 ## KV-cache efficiency
 
-Memory injection uses a per-turn custom message (not systemPrompt mutation). The system prompt stays stable across turns — preserving the provider's KV-cache prefix and saving 10× on cache-hit turns. Never inject memory by mutating systemPrompt.
+Memory injection uses a per-turn custom message rather than system prompt mutation. The system prompt stays stable across turns, preserving the provider's KV-cache prefix. Never inject memory by mutating the system prompt.
 
 ## Context injection priority
 
 Under the 14 KB budget:
-1. **Hard rules** — high-confidence typed corrections (⚠️/✓/📌 prefixed)
-2. **L1 identity** — always included
-3. **Scratchpad** — active task items
-4. **L2 selected** — FTS/hybrid matched records (staleness-tagged)
-5. **Daily digest** — `#decision` markers and session count
+1. **Hard rules**: applicable high-confidence typed corrections
+2. **L1 identity**: always included
+3. **Scratchpad**: active task items
+4. **L2 selected**: FTS or hybrid matched records
+5. **Daily digest**: `#decision` markers and session count
+
+Positive applicability is evaluated before hard-rule rendering. The total default budget remains 14 KB, including a 2 KB hard-rule cap. Capture metadata, activity ledgers, checkpoints, and recurrence history are not injected as prose.

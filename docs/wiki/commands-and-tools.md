@@ -315,6 +315,40 @@ Regenerates the rendered Markdown projection from canonical JSONL.
 
 ---
 
+### `/memory-capture-quality`
+
+Shows aggregate preference capture outcomes, rejection reasons, proposed scope distribution, recurrence, and bounded runtime storage. The command is report-only.
+
+```bash
+/memory-capture-quality
+/memory-capture-quality --json
+```
+
+---
+
+### `/memory-capture-audit`
+
+Reviews historical session summaries and canonical state for likely missed preferences, task-wrapper contamination, and likely scope errors. It does not create candidates or patches.
+
+```bash
+/memory-capture-audit --since 2026-05-01
+/memory-capture-audit --since 2026-05-01 --json
+```
+
+---
+
+### `/memory-capture-backfill`
+
+Builds a deterministic candidate-only recovery preview. Apply requires the exact reviewed fingerprint, rejects source drift, validates a backup, and appends candidates for governance review. It does not activate memory or apply cleanup proposals.
+
+```bash
+/memory-capture-backfill --since 2026-05-01
+/memory-capture-backfill --since 2026-05-01 --output capture-preview.json
+/memory-capture-backfill --since 2026-05-01 --apply --fingerprint <reviewed-sha256>
+```
+
+---
+
 ### `/memory-store-quality`
 
 Shows aggregate store health across memory quality, relationship quality, recall effectiveness, governance, inbox, and runtime signals. This is report-only.
