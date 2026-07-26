@@ -472,6 +472,8 @@ export interface MemoryRecord {
   ruleType?: MemoryRuleType;
   /** Optional public taxonomy for filtering/explanation. Missing legacy values are inferred at read/report time. */
   memory_kind?: MemoryKind;
+  /** Optional provenance for records materialized from one multi-scope capture. */
+  capture_group_id?: string;
 }
 
 export interface CaptureCandidate {

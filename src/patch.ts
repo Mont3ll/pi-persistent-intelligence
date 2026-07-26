@@ -89,7 +89,6 @@ function applyOp(root: string, patchId: string, op: PatchOp, now: string): void 
   if (op.op === "add") {
     if (!op.record) throw new Error(`Patch op ${op.op_id} missing record`);
     addMemoryRecordFromPatch(root, op.record);
-    if (op.candidate_id) updateCandidateStatus(root, op.candidate_id, "patched");
     return;
   }
 
@@ -190,7 +189,6 @@ function applyOp(root: string, patchId: string, op: PatchOp, now: string): void 
       updated_at: now.slice(0, 10),
     }), PATCH_APPLY_CONTEXT);
     addMemoryRecordFromPatch(root, replacement);
-    if (op.candidate_id) markCandidateIfNew(root, op.candidate_id, "patched");
     return;
   }
 
@@ -260,7 +258,6 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
       applyOp(root, patch.patch_id, op, options.now);
       applied_ops.push(op.op_id);
     } else {
-      if (selected && op.candidate_id) markCandidateIfNew(root, op.candidate_id, "rejected");
       skipped_ops.push({
         op_id: op.op_id,
         ...(op.candidate_id ? { candidate_id: op.candidate_id } : {}),
@@ -269,6 +266,15 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
       });
     }
   }
+  const candidateIds = [...new Set(executionPatch.ops.flatMap((op) => op.candidate_id ? [op.candidate_id] : []))];
+  for (const candidateId of candidateIds) {
+    const candidateOps = executionPatch.ops.filter((op) => op.candidate_id === candidateId);
+    const appliedCount = candidateOps.filter((op) => applied_ops.includes(op.op_id)).length;
+    const selectedCount = candidateOps.filter((op) => isSelected(op, options.selectedOpIds)).length;
+    if (appliedCount === candidateOps.length) markCandidateIfNew(root, candidateId, "patched");
+    else if (selectedCount > 0 && appliedCount === 0) markCandidateIfNew(root, candidateId, "rejected");
+  }
+
   const status: MemoryPatch["status"] = applied_ops.length === 0 && skipped_ops.length > 0
     ? "rejected_at_apply"
     : skipped_ops.length > 0
