@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { listCandidates } from "./inbox";
 import { loadActiveRecords } from "./store";
 import { inferProjectScope } from "./project";
@@ -8,7 +9,7 @@ import { loadConfig } from "./config";
 import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
 import { createInquiryFromCandidate } from "./inquiries";
-import type { CaptureCandidate, MemoryPatch, MemoryRecord, PatchOp } from "./types";
+import type { CaptureCandidate, CaptureScopeTarget, MemoryPatch, MemoryRecord, MemoryScope, PatchOp } from "./types";
 
 interface CurateOptions {
   now: string;
@@ -31,8 +32,19 @@ function nextReviewDate(date: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function memoryIdFromCandidate(candidate: CaptureCandidate): string {
-  return candidate.id.replace(/^cap_/, "mem_");
+function scopeHash(target: CaptureScopeTarget): string {
+  return createHash("sha256").update(JSON.stringify({ type: target.type, project: target.project, domain: target.domain })).digest("hex").slice(0, 8);
+}
+
+function memoryIdFromCandidate(candidate: CaptureCandidate, target?: CaptureScopeTarget): string {
+  const base = candidate.id.replace(/^cap_/, "mem_");
+  return target && (candidate.scope_targets?.length ?? 0) > 1 ? `${base}_${scopeHash(target)}` : base;
+}
+
+function memoryScopeFromTarget(target: CaptureScopeTarget): MemoryScope {
+  if (target.type === "project") return { type: "project", project: target.project };
+  if (target.type === "domain") return { type: "domain", domains: target.domain ? [target.domain] : [] };
+  return { type: "global" };
 }
 
 function explicitSupersedes(candidate: CaptureCandidate): string | null {
@@ -85,12 +97,12 @@ function parseLlmContradictions(value: unknown): Map<string, LlmContradiction> {
   return new Map(contradictions.filter(isLlmContradiction).map((item) => [item.candidate_id, item]));
 }
 
-function candidateToRecord(candidate: CaptureCandidate, now: string): MemoryRecord {
+function candidateToRecord(candidate: CaptureCandidate, now: string, target?: CaptureScopeTarget): MemoryRecord {
   const created = dateOnly(now);
   return {
-    id: memoryIdFromCandidate(candidate),
+    id: memoryIdFromCandidate(candidate, target),
     layer: "L2",
-    scope: candidate.source.cwd ? inferProjectScope(candidate.source.cwd) : { type: "global" },
+    scope: target ? memoryScopeFromTarget(target) : candidate.source.cwd ? inferProjectScope(candidate.source.cwd) : { type: "global" },
     tags: candidateTags(candidate),
     statement: candidate.text,
     evidence: candidate.evidence_refs.map((ref) => ({ type: "artifact", ref, note: "Captured evidence reference" })),
@@ -110,6 +122,10 @@ function candidateToRecord(candidate: CaptureCandidate, now: string): MemoryReco
     // Propagate typed metadata from candidate (set by correction detection, memory-worth scoring, or manual capture)
     ruleType: candidate.ruleType,
     memory_kind: candidate.memory_kind,
+    applies_when: candidate.proposed_applies_when,
+    does_not_apply_when: candidate.proposed_does_not_apply_when,
+    known_exceptions: candidate.proposed_known_exceptions,
+    capture_group_id: candidate.capture_group_id,
   };
 }
 
@@ -128,7 +144,8 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
   const activeRecords = loadActiveRecords(root);
   const activeIds = new Set(activeRecords.map((record) => record.id));
 
-  const ops: PatchOp[] = eligible.map((rawCandidate, index) => {
+  let opIndex = 0;
+  const ops: PatchOp[] = eligible.flatMap((rawCandidate) => {
     const candidate = attachVerification(root, applyCandidateMatch(rawCandidate, activeRecords));
     // Automatically create open inquiry for ambiguous/conflict matches where human resolution is needed
     createInquiryFromCandidate(root, candidate, { profile_id: candidate.profile_id ?? options.vaultPath });
@@ -136,13 +153,18 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
     const explicitTarget = explicitSupersedes(candidate);
     const heuristicTarget = heuristicSupersedes(candidate, activeRecords);
     const targetId = explicitTarget ?? heuristicTarget ?? llm?.target_id ?? null;
-    const record = { ...candidateToRecord(candidate, options.now), normalized_key: candidate.normalized_key };
-    const base = {
-      op_id: `op_${String(index + 1).padStart(3, "0")}`,
-      candidate_id: candidate.id,
-    };
+    const scopeTargets = candidate.scope_targets?.filter((target) => target.type !== "session") ?? [];
+    const materializationTargets = scopeTargets.length > 0 ? scopeTargets : [undefined];
 
-    if (targetId && activeIds.has(targetId)) {
+    return materializationTargets.map((scopeTarget) => {
+      opIndex++;
+      const record = { ...candidateToRecord(candidate, options.now, scopeTarget), normalized_key: candidate.normalized_key };
+      const base = {
+        op_id: `op_${String(opIndex).padStart(3, "0")}`,
+        candidate_id: candidate.id,
+      };
+
+    if (targetId && activeIds.has(targetId) && materializationTargets.length === 1) {
       const reason = explicitTarget
         ? `Candidate ${candidate.id} explicitly supersedes ${targetId}.`
         : heuristicTarget
@@ -168,7 +190,8 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       return suggestions.length > 0 ? ` Possible vault_ref: ${suggestions.map((s) => `[[${s}]]`).join(", ")}.` : "";
     })();
 
-    const autoApplyEligible = isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
+    const isGlobalPreference = scopeTarget?.type === "global" && candidate.capture_intent === "user_preference";
+    const autoApplyEligible = !isGlobalPreference && isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
     const trustGateNote = autoApplyEligible ? "" : " Trust/match gate requires human review before auto-apply.";
     const matchNote = candidate.match_kind && candidate.match_kind !== "new"
       ? ` Match: ${candidate.match_kind}; matched memories: ${(candidate.matched_memory_ids ?? []).join(", ") || "none"}; reasons: ${(candidate.match_reasons ?? []).join("; ") || "none"}. Suggested path: ${candidate.match_kind === "potential_conflict" ? "contest or add_exception" : candidate.match_kind === "supersedes_existing" ? "supersede after review" : candidate.match_kind === "ambiguous" ? "manual merge/review" : "review/update"}.`
@@ -183,6 +206,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       risk: candidate.poisoning_risk === "high" ? "high" as const : "low" as const,
       default_selected: autoApplyEligible,
     };
+    });
   });
 
   const stamp = options.now.replace(/[-:T]/g, "").slice(0, 12);
