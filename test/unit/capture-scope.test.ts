@@ -40,6 +40,20 @@ describe("capture scope", () => {
     expect(targets).toEqual([{ type: "global", confidence: 0.9, basis: ["personal_preference"] }]);
   });
 
+  test("explicit project mention constrains a personal preference", () => {
+    const text = "I prefer cargo fmt in pi-governance-rs.";
+    const row = activity(["pi-governance-rs", "repo-b"]);
+    row.explicit_project_mentions = ["pi-governance-rs"];
+    const targets = resolveCaptureScopes({ text, decision: classifyCaptureIntent(text), launch_project: project("repo-b"), activity: [row] });
+    expect(targets).toEqual([{ type: "project", project: "pi-governance-rs", confidence: 0.95, basis: ["explicit_project_scope"] }]);
+  });
+
+  test("this-repository preference targets the launch repository only", () => {
+    const text = "I prefer no generated files in this repository.";
+    const targets = resolveCaptureScopes({ text, decision: classifyCaptureIntent(text), launch_project: project("repo-a"), activity: [activity(["repo-a", "repo-b"])] });
+    expect(targets).toEqual([{ type: "project", project: "repo-a", confidence: 0.9, basis: ["explicit_project_language"] }]);
+  });
+
   test("replicates non-global rule to every modified repository", () => {
     const text = "Before publishing, run the release audit and package dry-run.";
     const targets = resolveCaptureScopes({
