@@ -2,10 +2,9 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { classifyCaptureIntent } from "./capture-intent";
-import { listCandidates } from "./inbox";
+import { readCaptureCandidatesSnapshot, readMemoryRecordsSnapshot } from "./capture-report-snapshot";
 import { ensureMemoryDirs } from "./paths";
 import { redactSecrets, scanSecrets, shouldBlockPersistence } from "./secret-scanner";
-import { loadAllRecords } from "./store";
 import { parseSession } from "./sessions/parser";
 import type { CaptureIntent, CaptureScopeTarget } from "./types";
 
@@ -114,14 +113,14 @@ export function auditCaptureHistory(root: string, options: { since?: string; now
     }
   }
 
-  const active = loadAllRecords(root).filter((record) => record.status === "active");
+  const active = readMemoryRecordsSnapshot(root).filter((record) => record.status === "active");
   const contaminated = active.filter((record) => /^(?:task:|your goal is|you are a delegated|you are a subagent|<file name=|# instructions)/i.test(record.statement.trim())).map((record) => record.id);
   const rescope = active.filter((record) =>
     record.scope.type === "project"
     && /\b(across projects|for any project|all public repositor|whenever you write for me|my preference)\b/i.test(record.statement)
   ).map((record) => ({ record_id: record.id, from_project: record.scope.project, proposed_scope: "global" as const, reason: "global_language_in_project_scope" }));
 
-  const allCandidates = listCandidates(root);
+  const allCandidates = readCaptureCandidatesSnapshot(root);
   const candidates = allCandidates.filter((candidate) => candidate.status === "new");
   const contaminatedCandidates = allCandidates.filter((candidate) => /^(?:task:|your goal is|you are a delegated|you are a subagent|<file name=|# instructions)/i.test(candidate.text.trim())).map((candidate) => candidate.id);
 

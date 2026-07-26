@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCaptureQualityReport, renderCaptureQualityReport } from "../../src/capture-quality";
@@ -13,6 +13,13 @@ afterEach(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: 
 const resolver = (): ProjectIdentity => ({ project_id: "repo", source: "package_name", package_name: "repo" });
 
 describe("capture quality", () => {
+  test("does not create runtime or canonical files for an empty store", () => {
+    const dir = root();
+    expect(readdirSync(dir)).toEqual([]);
+    const report = buildCaptureQualityReport(dir, { now: "2026-07-26T01:00:00Z" });
+    expect(report.messages_evaluated).toBe(0);
+    expect(readdirSync(dir)).toEqual([]);
+  });
   test("reports capture funnel, reasons, scopes, and bytes without raw messages", () => {
     const dir = root();
     processCaptureTurn(dir, { session_id: "s1", turn_id: "t1", message: "Avoid em dashes in my public writing.", launch_cwd: "/repo", actions: [], resolver, now: "2026-07-26T00:00:00Z" });
