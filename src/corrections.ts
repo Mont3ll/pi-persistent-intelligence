@@ -14,6 +14,7 @@
 
 import { buildCandidateTrustMetadata } from "./trust";
 import { scanSecrets, shouldBlockPersistence } from "./secret-scanner";
+import { classifyCaptureIntent } from "./capture-intent";
 import { scoreMemoryWorth } from "./memory-worth";
 import type { CaptureCandidate, DurabilitySignal, MemoryRuleType } from "./types";
 
@@ -68,6 +69,8 @@ export function maybeCorrectionSignal(text: string): boolean {
   if (!trimmed || trimmed.length < MIN_LENGTH) return false;
   if (trimmed.startsWith("/")) return false; // slash commands
   if (CONVERSATIONAL_EXCLUSIONS.some((p) => p.test(trimmed))) return false;
+  const intent = classifyCaptureIntent(trimmed).intent;
+  if (["user_preference", "behavior_correction", "project_convention", "workflow_playbook"].includes(intent)) return true;
   return CORRECTION_PATTERNS.some((p) => p.test(trimmed));
 }
 
@@ -107,7 +110,7 @@ export function extractCorrectionCandidate(
   // Infer ruleType from the correction pattern for better retrieval and injection
   const lower = statement.toLowerCase();
   const ruleType: MemoryRuleType =
-    /\b(don['\u2019]?t|do not|never|avoid|stop)\s+use\b/.test(lower) ? "avoid_pattern" :
+    /\bavoid(?:ing)?\b/.test(lower) || /\b(don['\u2019]?t|do not|never|stop)\s+use\b/.test(lower) ? "avoid_pattern" :
     /\b(prefer|favor|use .+ instead|instead of)\b/.test(lower)       ? "prefer_pattern" :
     /\bthis\s+(project|repo|codebase)\s+uses\b/.test(lower)          ? "convention" :
     /\b(always|never)\b/.test(lower) && /\b(use|write|add|run|edit|modify)\b/.test(lower) ? "convention" :
