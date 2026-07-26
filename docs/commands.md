@@ -41,6 +41,10 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 
 | Command | Description |
 |---|---|
+| `/memory-capture-quality [--plain\|--json]` | Show the report-only preference capture funnel, rejection reasons, scope distribution, recurrence, and bounded runtime byte counts. |
+| `/memory-capture-audit [--since YYYY-MM-DD] [--plain\|--json]` | Audit historical preference misses, wrapper contamination, and likely mis-scoping without mutation. |
+| `/memory-capture-backfill [--since YYYY-MM-DD] [--output FILE]` | Preview candidate-only historical recovery and return a deterministic fingerprint. |
+| `/memory-capture-backfill --apply --fingerprint HASH [--since YYYY-MM-DD]` | Recompute the preview, reject drift, create a validated backup, and append review candidates only. It does not activate memory or apply cleanup proposals. |
 | `/memory-store-quality [--plain\|--json]` | Browse report-only aggregate store quality across memory, relationships, recall effectiveness, governance, inbox, and runtime; never mutates memory. |
 | `/memory-recall-effectiveness [--plain\|--json]` | Browse report-only analytics for recalled, excluded, never-recalled, and correction-adjacent memories; never mutates memory. |
 | `/memory-quality [--plain\|--json]` | Browse report-only per-memory quality and lifecycle analysis with review recommendations; never mutates memory. |
@@ -109,6 +113,9 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 /memory-store-integrity --json
 /memory-store-integrity --apply --fingerprint <fingerprint-from-preview> --json
 /memory-health-audit --save
+/memory-capture-quality
+/memory-capture-audit --since 2026-05-01 --json
+/memory-capture-backfill --since 2026-05-01
 /memory-store-quality
 /memory-recall-effectiveness
 /memory-quality

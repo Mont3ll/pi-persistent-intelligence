@@ -116,7 +116,7 @@ Optional external `pi-governance-rs` bridge diagnostics. Disabled standalone mod
 
 | Key | Default | Description |
 |---|---|---|
-| `reviewWindowDays` | `30` | Open inquiry age before it appears in `stale-scan`; integer 1–3650 |
+| `reviewWindowDays` | `30` | Open inquiry age before it appears in `stale-scan`; integer from 1 to 3650 |
 
 ### `reinforcement`
 

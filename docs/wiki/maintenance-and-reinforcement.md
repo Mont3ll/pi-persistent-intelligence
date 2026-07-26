@@ -34,11 +34,15 @@ Use `/memory-reinforce <memory-id> --note "..."` only for direct user confirmati
 
 ---
 
-## Automatic correction linking
+## Direct preference and correction capture
 
-When a user message is detected as an explicit correction (via the correction signal detector), PI attempts to match it to a selected memory record from the current turn. If exactly one active record clearly matches the correction text (by token overlap), an `explicit_correction` reinforcement event is appended for that record.
+PI classifies direct user turns for durable preferences, corrections, project conventions, reusable workflows, temporary instructions, and non-memory text. Explicit durable instructions are checkpointed per turn and become inbox candidates immediately, so capture does not depend on session shutdown or LLM consolidation. Temporary instructions remain daily-only. Task wrappers, quoted repository text, and secret-bearing text are rejected from durable capture.
 
-If the correction is ambiguous (matches zero or more than one record), no reinforcement event is created. The correction still goes to the inbox as a candidate.
+Candidate scope comes from explicit language and bounded repository activity. A user-wide preference is proposed as global L2 and requires review. A non-global convention can produce correlated targets for every materially modified repository. The session launch directory and read-only repositories are not sufficient scope evidence.
+
+Equivalent preferences reinforce one pending candidate by adding recurrence and source references. A changed target or applicability remains separate for review rather than being merged silently.
+
+When a direct message is also an explicit correction, PI attempts to match it to a selected active memory from the current turn. If exactly one record clearly matches by token overlap, an `explicit_correction` reinforcement event is appended. Ambiguous corrections do not create reinforcement events, but their review candidate remains visible.
 
 ---
 

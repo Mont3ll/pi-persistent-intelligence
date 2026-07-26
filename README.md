@@ -100,6 +100,16 @@ Durable memory changes are patch-governed. No record is silently mutated. Low-tr
 
 Legacy provenance backfill and inquiry staleness are preview-first migrations: review their fingerprint before apply, which creates backups and audit reports. Explicit reinforcement records user confirmation without directly changing confidence or stability; implicit success requires observable successful execution rather than mere exposure.
 
+## Context-sensitive preference capture
+
+PI recognizes natural-language preferences such as "Avoid promotional language in my public writing" without requiring a special command. Capture remains **candidate-first**: direct preferences are checkpointed per turn, surfaced for review, and never written directly to active memory. Repeated equivalent preferences reinforce one candidate instead of creating silent duplicates.
+
+Scope follows intent and observed work, not the shell location. The launch directory does not determine scope. User-wide writing and interaction preferences are proposed as global L2 records. Repository conventions target each materially modified project, while repositories used only for reading are not inferred as targets. Reading research in an Obsidian vault does not make a repository convention vault-scoped.
+
+Global preferences use positive, context-sensitive applicability. A writing preference can appear for editing or documentation work and stay out of unrelated debugging. This filtering keeps the existing 14 KB default context budget and the bounded hard-rule section unchanged.
+
+Use `/memory-capture-quality` for aggregate capture health, `/memory-capture-audit` for report-only historical findings, and `/memory-capture-backfill` for fingerprinted candidate-only recovery. Backfill preview is the default and does not activate memories or apply cleanup proposals.
+
 ## Relationship to pi-governance-rs
 
 The ecosystem model is:

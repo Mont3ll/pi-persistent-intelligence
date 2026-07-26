@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added deterministic natural-language capture for direct user preferences, corrections, repository conventions, and reusable workflows.
+- Added bounded repository activity attribution, per-turn checkpoints, recurrence reinforcement, multi-project candidate groups, and positive applicability filtering.
+- Added report-only capture quality and historical audit commands plus fingerprinted, backed-up, candidate-only backfill.
+
+### Changed
+
+- Direct global preferences now become review-only L2 candidates instead of depending on session-end consolidation or launch-directory scope.
+- Global preferences are recalled only for positively matching task contexts while the 14 KB default context budget remains unchanged.
+
 ## [0.14.0] - 2026-07-24
 
 ### Added

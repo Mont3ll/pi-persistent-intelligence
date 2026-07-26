@@ -83,6 +83,16 @@ describe("docs contract", () => {
     expect(readme).not.toMatch(/Rust is required/i);
   });
 
+  test("documents context-sensitive candidate-first preference capture", () => {
+    for (const command of ["/memory-capture-quality", "/memory-capture-audit", "/memory-capture-backfill"]) expect(commandsDoc).toContain(command);
+    expect(readme).toMatch(/natural(?:-language| language) preference/i);
+    expect(readme).toMatch(/candidate-first/i);
+    expect(readme).toMatch(/launch directory.*(?:does not|doesn't).*scope/i);
+    expect(readme).toContain("14 KB");
+    expect(readme).toMatch(/context-sensitive applicability/i);
+    expect(publicDocs).not.toMatch(/every preference (?:is )?auto-appl/i);
+  });
+
   test("README avoids report-style release status language", () => {
     expect(readme).not.toMatch(/blocker|partial success|pending approval|if approved|release gate|final git status|worktree clean|agent report|publishing readiness|remaining blockers/i);
   });
