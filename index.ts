@@ -78,6 +78,7 @@ import { analyzeStoreQuality, renderStoreQualityReport } from "./src/store-quali
 import { InvocationProfiler, renderInvocationProfileReport } from "./src/profiling";
 import { scoreMemoryWorth } from "./src/memory-worth";
 import { buildCaptureQualityReport, renderCaptureQualityReport } from "./src/capture-quality";
+import { auditCaptureHistory, renderCaptureAuditReport } from "./src/capture-audit";
 import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
 import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-analysis";
 import { renderGovernanceSimulationReport, simulatePatchImpact } from "./src/governance-simulation";
@@ -1160,6 +1161,26 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         else await openBrowser(ctx, recallEffectivenessBrowserOptions(report), text);
       } catch (err) {
         ctx.ui.notify(`Recall effectiveness analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-capture-audit", {
+    description: "Audit historical preference capture and scope without mutation. Usage: /memory-capture-audit [--since YYYY-MM-DD] [--plain|--json]",
+    handler: async (args, ctx) => {
+      try {
+        const parsed = parseCommandArgs(args);
+        const since = typeof parsed.flags.since === "string" ? parsed.flags.since : undefined;
+        if (since && !/^20\d{2}-\d{2}-\d{2}$/.test(since)) {
+          ctx.ui.notify("Invalid --since date. Use YYYY-MM-DD.", "warning");
+          return;
+        }
+        const report = auditCaptureHistory(root, { since, now: nowIso() });
+        const text = renderCaptureAuditReport(report);
+        rememberCommand("memory-capture-audit", text, `capture audit: ${report.historical_preferences.length} historical preferences, ${report.contaminated_record_ids.length} contaminated records`);
+        notifyStructured(ctx, args, report, text, report.contaminated_record_ids.length || report.rescope_proposals.length ? "warning" : "info");
+      } catch (err) {
+        ctx.ui.notify(`Capture audit failed: ${err instanceof Error ? err.message : String(err)}`, "error");
       }
     },
   });
