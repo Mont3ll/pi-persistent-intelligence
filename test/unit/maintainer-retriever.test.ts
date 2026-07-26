@@ -97,6 +97,7 @@ describe("retriever", () => {
       "StatusFilterProcessor",
       "ProfileScopeProcessor",
       "BasicScopeProcessor",
+      "PositiveApplicabilityProcessor",
       "NegativeScopeProcessor",
     ]);
   });
