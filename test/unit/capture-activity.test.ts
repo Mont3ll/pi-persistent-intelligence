@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendSessionActivity, collectSessionActivity, listSessionActivity } from "../../src/capture-activity";
+import { actionsFromAgentMessages, appendSessionActivity, collectSessionActivity, listSessionActivity } from "../../src/capture-activity";
 import { defaultConfig } from "../../src/config";
 import type { ProjectIdentity } from "../../src/types";
 
@@ -17,6 +17,19 @@ function resolver(path: string): ProjectIdentity {
 }
 
 describe("capture activity", () => {
+  test("extracts bounded read, write, and command actions from agent messages", () => {
+    const actions = actionsFromAgentMessages([
+      { role: "toolResult", toolName: "read", input: { path: "/projects/reference/README.md" } },
+      { role: "toolResult", toolName: "edit", input: { path: "/projects/a/src/a.ts" } },
+      { role: "toolResult", toolName: "bash", input: { command: "cargo test", cwd: "/projects/b" } },
+      { role: "assistant", content: "done" },
+    ], "/vault");
+    expect(actions).toEqual([
+      { kind: "read", path: "/projects/reference/README.md" },
+      { kind: "write", path: "/projects/a/src/a.ts" },
+      { kind: "command", command: "cargo test", cwd: "/projects/b" },
+    ]);
+  });
   test("tracks every materially affected repository and separates read-only sources", () => {
     const activity = collectSessionActivity({
       session_id: "s1",

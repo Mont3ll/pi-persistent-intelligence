@@ -49,7 +49,9 @@ import { loadConfig } from "./src/config";
 import { SessionStore, buildSessionSearchTools, buildSessionContextBlock, SESSION_SYNC_INTERVAL_MS } from "./src/session-search";
 import { isChildProcess } from "./src/sessions/store";
 import { createInboxReviewComponent, buildInboxNotification, type InboxOverlayAction } from "./src/tui/InboxReviewOverlay";
-import { classifyCorrectionCapture, maybeCorrectionSignal } from "./src/corrections";
+import { maybeCorrectionSignal } from "./src/corrections";
+import { actionsFromAgentMessages } from "./src/capture-activity";
+import { processCaptureTurn } from "./src/capture-coordinator";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
 import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, inquiryBrowserOptions, memoryQualityBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallEffectivenessBrowserOptions, recallXrayBrowserOptions, relationshipQualityBrowserOptions, storeQualityBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
@@ -465,39 +467,31 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
   pi.on("agent_end", async (event) => {
     let sawObservableOutcome = false;
-    for (const msg of (event.messages as any[]) ?? []) {
+    const eventMessages = (event.messages as any[]) ?? [];
+    const captureActions = actionsFromAgentMessages(eventMessages, sessionCwd);
+    const captureSessionId = String((event as any).session_id ?? (event as any).sessionId ?? "current-session");
+    for (const [messageIndex, msg] of eventMessages.entries()) {
       if (msg.role === "user" && !msg.customType) {
         const text = extractText(msg.content);
         if (text.trim()) {
           pendingUserMessages.push(text);
           if (pendingUserMessages.length > 60) pendingUserMessages.shift();
 
-          // Automatic correction capture — detects "don't use X", "prefer Y over Z",
-          // "always use Z" etc. in user messages and adds them as inbox candidates
-          // without requiring explicit memory_write calls. Confidence-gated:
-          // strong corrections (≥0.85) become auto-eligible; weaker ones held for review.
+          const messageTurnId = String(msg.id ?? msg.messageId ?? msg.timestamp ?? (event as any).turn_id ?? (event as any).turnId ?? (event as any).id ?? `user-${messageIndex}`);
+          processCaptureTurn(root, {
+            session_id: captureSessionId,
+            turn_id: messageTurnId,
+            message: text,
+            launch_cwd: sessionCwd,
+            actions: captureActions,
+            now: nowIso(),
+          });
+
           if (maybeCorrectionSignal(text)) {
             try {
               const selected = JSON.parse((await import("node:fs")).readFileSync(ensureMemoryDirs(root).runtime.selected, "utf-8")) as import("./src/types").MemoryRecord[];
-              linkExplicitCorrectionToMemory(root, text, selected, { thread_id: "current-session", now: nowIso() });
+              linkExplicitCorrectionToMemory(root, text, selected, { thread_id: captureSessionId, now: nowIso() });
             } catch { /* best-effort reinforcement linking */ }
-            const decision = classifyCorrectionCapture(text, todayString(), sessionCwd);
-            if (decision.action === "candidate") {
-              appendCandidate(root, decision.candidate);
-            } else if (decision.action === "daily_only") {
-              appendDailyLog(root, todayString(), `Correction kept daily-only: ${decision.text}`);
-            } else if (decision.action === "inquiry") {
-              const profile = resolveMemoryProfile(root, sessionCwd);
-              appendInquiryRecord(root, createInquiryRecord({
-                question: decision.question,
-                context: "Automatic correction capture required clarification before durable persistence.",
-                profile_id: profile.profile_id,
-                resource_id: profile.resource_id,
-                tags: ["correction", "capture-review"],
-                session_id: "current-session",
-                now: nowIso(),
-              }));
-            }
           }
         }
       } else if (msg.role === "toolResult" || msg.role === "tool") {
