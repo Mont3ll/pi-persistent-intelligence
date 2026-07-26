@@ -77,6 +77,7 @@ import { analyzeRelationshipQuality, renderRelationshipQualityReport } from "./s
 import { analyzeStoreQuality, renderStoreQualityReport } from "./src/store-quality";
 import { InvocationProfiler, renderInvocationProfileReport } from "./src/profiling";
 import { scoreMemoryWorth } from "./src/memory-worth";
+import { buildCaptureQualityReport, renderCaptureQualityReport } from "./src/capture-quality";
 import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
 import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-analysis";
 import { renderGovernanceSimulationReport, simulatePatchImpact } from "./src/governance-simulation";
@@ -1159,6 +1160,20 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         else await openBrowser(ctx, recallEffectivenessBrowserOptions(report), text);
       } catch (err) {
         ctx.ui.notify(`Recall effectiveness analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-capture-quality", {
+    description: "Show read-only preference capture funnel and scope quality. Usage: /memory-capture-quality [--plain|--json]",
+    handler: async (args, ctx) => {
+      try {
+        const report = buildCaptureQualityReport(root, { now: nowIso() });
+        const text = renderCaptureQualityReport(report);
+        rememberCommand("memory-capture-quality", text, `capture quality: ${report.messages_evaluated} evaluated, ${report.pending_candidates} pending`);
+        notifyStructured(ctx, args, report, text, report.funnel.rejected > report.funnel.candidate_created ? "warning" : "info");
+      } catch (err) {
+        ctx.ui.notify(`Capture quality analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
       }
     },
   });
