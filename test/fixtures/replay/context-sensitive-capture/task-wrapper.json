@@ -1,0 +1,35 @@
+{
+  "fixture_id": "context-sensitive-task-wrapper",
+  "description": "A delegated task wrapper is not durable memory.",
+  "redaction_version": "synthetic-v1",
+  "metadata": {
+    "fixture_id": "context-sensitive-task-wrapper",
+    "fixture_kind": "synthetic",
+    "redaction_version": "synthetic-v1",
+    "source_description": "Synthetic wrapper rejection scenario",
+    "created_at": "2026-07-26T00:00:00Z",
+    "privacy_reviewed": true,
+    "contains_real_user_content": false
+  },
+  "sessions": [
+    {
+      "session_id": "wrapper-session",
+      "launch_cwd": "workspace/project-a",
+      "turns": [
+        {
+          "role": "user",
+          "content": "Task: You are a delegated subagent. Implement this migration.",
+          "expected_no_capture": true
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "expected_intents": ["not_memory"],
+    "expected_scope_targets": [],
+    "expected_applicability": ["implementation"],
+    "expected_recurrence_count": 0,
+    "expected_candidate_count": 0,
+    "expected_no_capture_count": 1
+  }
+}

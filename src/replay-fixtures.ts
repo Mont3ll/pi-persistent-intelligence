@@ -1,11 +1,14 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { maybeCorrectionSignal, extractCorrectionCandidate } from "./corrections";
+import { processCaptureTurn } from "./capture-coordinator";
+import { classifyCaptureIntent } from "./capture-intent";
+import { appendRuntimeEvent } from "./runtime-events";
 import { appendCandidate, listCandidates } from "./inbox";
 import { scoreMemoryWorth } from "./memory-worth";
 import { buildRecallXray } from "./recall-xray";
 import { readRecentRuntimeEvents } from "./runtime-events";
 import { unsafeAddMemoryRecord } from "./store";
-import type { MemoryRecord } from "./types";
+import type { CaptureCandidate, CaptureIntent, CaptureScopeTarget, MemoryRecord, ProjectIdentity } from "./types";
 
 export interface ReplayTurn {
   role: "user" | "assistant" | "tool";
@@ -14,6 +17,7 @@ export interface ReplayTurn {
   expected_capture?: boolean;
   expected_recall?: string[];
   expected_no_capture?: boolean;
+  actions?: Array<{ kind: "read" | "write"; path: string } | { kind: "command"; cwd: string; command: string }>;
 }
 
 export interface ReplayFixtureMetadata {
@@ -32,7 +36,7 @@ export interface ReplayFixture {
   redaction_version: string;
   synthetic?: boolean;
   metadata?: ReplayFixtureMetadata;
-  sessions: Array<{ session_id: string; turns: ReplayTurn[] }>;
+  sessions: Array<{ session_id: string; launch_cwd?: string; consolidation_failure?: boolean; turns: ReplayTurn[] }>;
   expected: {
     candidates?: string[];
     inquiries?: string[];
@@ -40,6 +44,13 @@ export interface ReplayFixture {
     recall_query?: string;
     expected_recalled_memory_ids?: string[];
     expected_omissions?: string[];
+    expected_intents?: CaptureIntent[];
+    expected_scope_targets?: Array<Partial<CaptureScopeTarget>>;
+    expected_applicability?: string[];
+    expected_recurrence_count?: number;
+    expected_candidate_count?: number;
+    expected_no_capture_count?: number;
+    expected_consolidation_failures?: number;
   };
 }
 
@@ -104,6 +115,75 @@ export function redactReplayFixture(fixture: ReplayFixture): ReplayFixture {
 export function redactReplayFixtureFile(inputPath: string, outputPath: string): void {
   const fixture = JSON.parse(readFileSync(inputPath, "utf-8")) as ReplayFixture;
   writeFileSync(outputPath, `${JSON.stringify(redactReplayFixture(fixture), null, 2)}\n`, "utf-8");
+}
+
+export interface CaptureReplayResult {
+  fixture_id: string;
+  candidates: CaptureCandidate[];
+  detected_intents: CaptureIntent[];
+  no_capture_count: number;
+  consolidation_failure_count: number;
+  failures: string[];
+}
+
+function syntheticProjectResolver(path: string): ProjectIdentity {
+  const normalized = path.replace(/\\/g, "/");
+  const projectId = normalized.match(/(?:^|\/)workspace\/([^/]+)/)?.[1] ?? "synthetic-project";
+  return { project_id: projectId, display_name: projectId, source: "cwd_fallback" };
+}
+
+function targetMatches(actual: CaptureScopeTarget, expected: Partial<CaptureScopeTarget>): boolean {
+  return Object.entries(expected).every(([key, value]) => actual[key as keyof CaptureScopeTarget] === value);
+}
+
+export function runCaptureReplayFixture(root: string, fixture: ReplayFixture): CaptureReplayResult {
+  const failures: string[] = [];
+  if (!validateReplayFixture(fixture)) return { fixture_id: "invalid", candidates: [], detected_intents: [], no_capture_count: 0, consolidation_failure_count: 0, failures: ["invalid_fixture"] };
+  const privacyFindings = validateReplayFixturePrivacy(fixture);
+  if (privacyFindings.length) return { fixture_id: fixture.fixture_id, candidates: [], detected_intents: [], no_capture_count: 0, consolidation_failure_count: 0, failures: privacyFindings };
+
+  const detectedIntents: CaptureIntent[] = [];
+  let noCaptureCount = 0;
+  let consolidationFailureCount = 0;
+  let turnNumber = 0;
+  for (const session of fixture.sessions) {
+    if (session.consolidation_failure) {
+      consolidationFailureCount++;
+      appendRuntimeEvent(root, { type: "warn", severity: "medium", component: "consolidation", message: "synthetic replay consolidation failed" });
+    }
+    for (const turn of session.turns) {
+      if (turn.role !== "user") continue;
+      turnNumber++;
+      const decision = classifyCaptureIntent(turn.content);
+      detectedIntents.push(decision.intent);
+      const result = processCaptureTurn(root, {
+        session_id: session.session_id,
+        turn_id: `turn-${turnNumber}`,
+        message: turn.content,
+        launch_cwd: session.launch_cwd ?? "workspace/synthetic-project",
+        actions: turn.actions ?? [],
+        resolver: syntheticProjectResolver,
+        now: `2026-07-26T00:${String(turnNumber).padStart(2, "0")}:00Z`,
+      });
+      if (result.candidates_created === 0 && result.candidates_reinforced === 0) noCaptureCount++;
+      if (turn.expected_capture && result.candidates_created + result.candidates_reinforced === 0) failures.push(`expected capture missing at ${session.session_id}:turn-${turnNumber}`);
+      if (turn.expected_no_capture && result.candidates_created + result.candidates_reinforced > 0) failures.push(`unexpected capture at ${session.session_id}:turn-${turnNumber}`);
+    }
+  }
+
+  const candidates = listCandidates(root).filter((candidate) => candidate.status === "new");
+  if (fixture.expected.expected_candidate_count !== undefined && candidates.length !== fixture.expected.expected_candidate_count) failures.push(`expected ${fixture.expected.expected_candidate_count} candidates, received ${candidates.length}`);
+  if (fixture.expected.expected_no_capture_count !== undefined && noCaptureCount !== fixture.expected.expected_no_capture_count) failures.push(`expected ${fixture.expected.expected_no_capture_count} non-captures, received ${noCaptureCount}`);
+  for (const intent of fixture.expected.expected_intents ?? []) if (!detectedIntents.includes(intent)) failures.push(`expected intent missing ${intent}`);
+  for (const expectedTarget of fixture.expected.expected_scope_targets ?? []) {
+    if (!candidates.some((candidate) => candidate.scope_targets?.some((target) => targetMatches(target, expectedTarget)))) failures.push(`expected scope target missing ${JSON.stringify(expectedTarget)}`);
+  }
+  for (const applicability of fixture.expected.expected_applicability ?? []) {
+    if (!candidates.some((candidate) => candidate.proposed_applies_when?.includes(applicability)) && !detectedIntents.some((_, index) => classifyCaptureIntent(fixture.sessions.flatMap((session) => session.turns).filter((turn) => turn.role === "user")[index]?.content ?? "").applicability.includes(applicability))) failures.push(`expected applicability missing ${applicability}`);
+  }
+  if (fixture.expected.expected_recurrence_count !== undefined && (candidates[0]?.recurrence_count ?? 0) !== fixture.expected.expected_recurrence_count) failures.push(`expected recurrence ${fixture.expected.expected_recurrence_count}, received ${candidates[0]?.recurrence_count ?? 0}`);
+  if (fixture.expected.expected_consolidation_failures !== undefined && consolidationFailureCount !== fixture.expected.expected_consolidation_failures) failures.push(`expected ${fixture.expected.expected_consolidation_failures} consolidation failures, received ${consolidationFailureCount}`);
+  return { fixture_id: fixture.fixture_id, candidates, detected_intents: detectedIntents, no_capture_count: noCaptureCount, consolidation_failure_count: consolidationFailureCount, failures };
 }
 
 function record(id: string, statement: string): MemoryRecord {

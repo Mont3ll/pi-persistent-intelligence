@@ -1,0 +1,43 @@
+{
+  "fixture_id": "context-sensitive-vault-multi-repo",
+  "description": "Vault research is read while two repositories are modified, so the repository workflow targets both modified projects only.",
+  "redaction_version": "synthetic-v1",
+  "metadata": {
+    "fixture_id": "context-sensitive-vault-multi-repo",
+    "fixture_kind": "synthetic",
+    "redaction_version": "synthetic-v1",
+    "source_description": "Synthetic multi-project attribution scenario",
+    "created_at": "2026-07-26T00:00:00Z",
+    "privacy_reviewed": true,
+    "contains_real_user_content": false
+  },
+  "sessions": [
+    {
+      "session_id": "multi-repo-session",
+      "launch_cwd": "workspace/obsidian-vault",
+      "turns": [
+        {
+          "role": "user",
+          "content": "For these repositories, always run the release audit before publishing.",
+          "expected_capture": true,
+          "actions": [
+            { "kind": "read", "path": "workspace/obsidian-vault/research/note.md" },
+            { "kind": "write", "path": "workspace/pi-persistent-intelligence/src/release.ts" },
+            { "kind": "write", "path": "workspace/pi-governance-rs/crates/release.rs" }
+          ]
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "expected_intents": ["workflow_playbook"],
+    "expected_scope_targets": [
+      { "type": "project", "project": "pi-governance-rs" },
+      { "type": "project", "project": "pi-persistent-intelligence" }
+    ],
+    "expected_applicability": ["release"],
+    "expected_recurrence_count": 1,
+    "expected_candidate_count": 1,
+    "expected_no_capture_count": 0
+  }
+}

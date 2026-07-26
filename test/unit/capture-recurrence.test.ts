@@ -34,6 +34,8 @@ describe("capture recurrence", () => {
   test("normalizes equivalent em dash preferences", () => {
     expect(normalizedPreferenceKey("Avoid em-dashes in public writing.", "user_preference"))
       .toBe(normalizedPreferenceKey("Never use em dashes in public writing.", "user_preference"));
+    expect(normalizedPreferenceKey("Avoid em dashes entirely.", "user_preference"))
+      .toBe(normalizedPreferenceKey("Never use em dashes when writing for me.", "user_preference"));
   });
 
   test("reinforces an equivalent candidate instead of appending a duplicate", () => {

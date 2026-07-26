@@ -12,6 +12,7 @@ import { appendReinforcementEvent, createReinforcementEvent, readReinforcementEv
 import { loadAllRecords, unsafeAddMemoryRecord } from "../../src/store";
 import { loadConfig } from "../../src/config";
 import { readPortableEvents } from "../../src/portable-events";
+import { processCaptureTurn } from "../../src/capture-coordinator";
 import {
   exportToPiGovernanceBundle,
   importFromPiGovernanceBundle,
@@ -337,6 +338,32 @@ describe("pi-governance-rs compatibility bundle", () => {
         expect.objectContaining({ id:"patch_applied", text:"Preserve applied patch history.", status:"patched" })
       ]));
     } finally { cleanup(dir); }
+  });
+
+  test("round-trips global and project record scope without exporting runtime capture state", () => {
+    const source = root();
+    const destination = root();
+    try {
+      unsafeAddMemoryRecord(source, record({ id: "mem_global_scope", scope: { type: "global" }, ruleType: "preference" }));
+      unsafeAddMemoryRecord(source, record({ id: "mem_project_scope", scope: { type: "project", project: "project-alpha" } }));
+      processCaptureTurn(source, {
+        session_id: "runtime-session-private",
+        turn_id: "runtime-turn-private",
+        message: "Avoid promotional language in my public writing.",
+        launch_cwd: "workspace/project-alpha",
+        actions: [],
+        resolver: () => ({ project_id: "project-alpha", display_name: "project-alpha", source: "cwd_fallback" }),
+        now: "2026-07-26T00:00:00Z",
+      });
+      const bundle = exportToPiGovernanceBundle(source);
+      expect(JSON.stringify(bundle)).not.toContain("runtime-session-private");
+      expect(JSON.stringify(bundle)).not.toContain("runtime-turn-private");
+      importFromPiGovernanceBundle(destination, bundle, { dryRun: false });
+      expect(loadAllRecords(destination)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "mem_global_scope", scope: { type: "global" } }),
+        expect.objectContaining({ id: "mem_project_scope", scope: { type: "project", project: "project-alpha" } }),
+      ]));
+    } finally { cleanup(source); cleanup(destination); }
   });
 
   test("preserves migrated evidence, inquiry lifecycle states, and every reinforcement outcome", () => {
