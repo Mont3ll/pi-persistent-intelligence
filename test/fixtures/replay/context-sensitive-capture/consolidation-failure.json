@@ -1,0 +1,37 @@
+{
+  "fixture_id": "context-sensitive-consolidation-failure",
+  "description": "Direct capture survives an independent consolidation failure marker.",
+  "redaction_version": "synthetic-v1",
+  "metadata": {
+    "fixture_id": "context-sensitive-consolidation-failure",
+    "fixture_kind": "synthetic",
+    "redaction_version": "synthetic-v1",
+    "source_description": "Synthetic direct-capture resilience scenario",
+    "created_at": "2026-07-26T00:00:00Z",
+    "privacy_reviewed": true,
+    "contains_real_user_content": false
+  },
+  "sessions": [
+    {
+      "session_id": "failure-session",
+      "launch_cwd": "workspace/project-a",
+      "consolidation_failure": true,
+      "turns": [
+        {
+          "role": "user",
+          "content": "I prefer sentence case headings in my public writing.",
+          "expected_capture": true
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "expected_intents": ["user_preference"],
+    "expected_scope_targets": [{ "type": "global" }],
+    "expected_applicability": ["writing", "documentation"],
+    "expected_recurrence_count": 1,
+    "expected_candidate_count": 1,
+    "expected_no_capture_count": 0,
+    "expected_consolidation_failures": 1
+  }
+}

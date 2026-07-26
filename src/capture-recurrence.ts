@@ -10,7 +10,7 @@ export function normalizedPreferenceKey(text: string, intent: CaptureIntent): st
   const normalized = text.toLowerCase()
     .replace(/em[ -]?dashes?/g, "em dash")
     .replace(/en[ -]?dashes?/g, "en dash")
-    .replace(/\b(?:please|always|never|avoid|avoiding|do not|don't|use|prefer|my preference is|i prefer|when writing for me|for all my writing)\b/g, " ")
+    .replace(/\b(?:please|always|never|avoid|avoiding|do not|don't|use|prefer|my preference is|i prefer|when writing for me|for all my writing|entirely)\b/g, " ")
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");

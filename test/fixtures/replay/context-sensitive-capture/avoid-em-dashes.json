@@ -1,0 +1,38 @@
+{
+  "fixture_id": "context-sensitive-avoid-em-dashes",
+  "description": "A repeated direct writing preference becomes one global review candidate.",
+  "redaction_version": "synthetic-v1",
+  "metadata": {
+    "fixture_id": "context-sensitive-avoid-em-dashes",
+    "fixture_kind": "synthetic",
+    "redaction_version": "synthetic-v1",
+    "source_description": "Synthetic recurrence and applicability scenario",
+    "created_at": "2026-07-26T00:00:00Z",
+    "privacy_reviewed": true,
+    "contains_real_user_content": false
+  },
+  "sessions": [
+    {
+      "session_id": "writing-session-1",
+      "launch_cwd": "workspace/vault",
+      "turns": [
+        { "role": "user", "content": "Avoid em dashes entirely.", "expected_capture": true }
+      ]
+    },
+    {
+      "session_id": "writing-session-2",
+      "launch_cwd": "workspace/project-a",
+      "turns": [
+        { "role": "user", "content": "Never use em dashes when writing for me.", "expected_capture": true }
+      ]
+    }
+  ],
+  "expected": {
+    "expected_intents": ["user_preference"],
+    "expected_scope_targets": [{ "type": "global" }],
+    "expected_applicability": ["writing"],
+    "expected_recurrence_count": 2,
+    "expected_candidate_count": 1,
+    "expected_no_capture_count": 0
+  }
+}

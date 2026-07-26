@@ -7,7 +7,15 @@ import { runReplayFixture, validateReplayFixture, validateReplayFixturePrivacy }
 import { appendRuntimeEvent } from "../../src/runtime-events";
 
 function fixture(name: string): any { return JSON.parse(readFileSync(join(process.cwd(), "eval", "fixtures", name), "utf-8")); }
+function captureFixture(name: string): any { return JSON.parse(readFileSync(join(process.cwd(), "test", "fixtures", "replay", "context-sensitive-capture", name), "utf-8")); }
 function root(): string { const dir = mkdtempSync(join(tmpdir(), "pi-redacted-replay-")); ensureMemoryDirs(dir); return dir; }
+
+const captureFixtures = [
+  "avoid-em-dashes.json",
+  "vault-multi-repo.json",
+  "task-wrapper.json",
+  "consolidation-failure.json",
+];
 
 const expectedFixtures = [
   "durable-correction-survives.json",
@@ -40,6 +48,12 @@ describe("redacted replay validation", () => {
 
   test("all committed replay fixtures pass privacy validation", () => {
     for (const name of expectedFixtures) expect(validateReplayFixturePrivacy(fixture(name))).toEqual([]);
+    for (const name of captureFixtures) {
+      const loaded = captureFixture(name);
+      expect(validateReplayFixture(loaded)).toBe(true);
+      expect(validateReplayFixturePrivacy(loaded)).toEqual([]);
+      expect(JSON.stringify(loaded)).not.toContain("/home/");
+    }
   });
 
   test("durable correction fixture recalls bun convention and omits npm convention", () => {
