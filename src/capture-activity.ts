@@ -11,6 +11,26 @@ export type CaptureActivityAction =
   | { kind: "write"; path: string }
   | { kind: "command"; cwd: string; command: string };
 
+export function actionsFromAgentMessages(messages: unknown[], fallbackCwd: string): CaptureActivityAction[] {
+  const actions: CaptureActivityAction[] = [];
+  for (const raw of messages.slice(-200)) {
+    if (!raw || typeof raw !== "object") continue;
+    const message = raw as Record<string, any>;
+    if (message.role !== "toolResult" && message.role !== "tool") continue;
+    const name = String(message.toolName ?? message.name ?? message.tool_name ?? "").toLowerCase();
+    const input = (message.input && typeof message.input === "object" ? message.input : {}) as Record<string, unknown>;
+    const details = (message.details && typeof message.details === "object" ? message.details : {}) as Record<string, unknown>;
+    const path = String(input.path ?? input.file ?? details.path ?? details.file ?? "");
+    if (/(^|[_.-])(read|fetch|get)([_.-]|$)/.test(name) && path) actions.push({ kind: "read", path });
+    else if (/(^|[_.-])(edit|write|move|create|delete)([_.-]|$)/.test(name) && path) actions.push({ kind: "write", path });
+    else if (/(^|[_.-])(bash|shell|exec)([_.-]|$)/.test(name)) {
+      const command = String(input.command ?? details.command ?? "");
+      if (command) actions.push({ kind: "command", command, cwd: String(input.cwd ?? details.cwd ?? fallbackCwd) });
+    }
+  }
+  return actions.slice(-100);
+}
+
 export interface CollectActivityInput {
   session_id: string;
   turn_id: string;
