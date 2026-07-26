@@ -22,7 +22,8 @@ export function resolveCaptureScopes(input: ResolveCaptureScopeInput): CaptureSc
     return [{ type: "session", confidence: 0.98, basis: ["non_durable_intent"] }];
   }
 
-  if (input.decision.global_cues.length > 0) {
+  const strongGlobalCue = input.decision.global_cues.some((cue) => !["\\bmy preference\\b", "\\bi prefer\\b", "\\bi do not like\\b"].includes(cue));
+  if (strongGlobalCue) {
     return [{ type: "global", confidence: 0.95, basis: ["explicit_user_global"] }];
   }
 

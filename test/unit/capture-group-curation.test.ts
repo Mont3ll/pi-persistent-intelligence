@@ -60,6 +60,11 @@ describe("capture group curation", () => {
     const patch = curateInbox(dir, { now: "2026-07-26T00:00:00Z", mode: "propose", minEvidenceCount: 1 });
     applyPatch(dir, patch, { selectedOpIds: [patch.ops[0].op_id], now: "2026-07-26T00:01:00Z" });
     expect(listCandidates(dir)[0].status).toBe("new");
+    const remaining = curateInbox(dir, { now: "2026-07-26T00:02:00Z", mode: "propose", minEvidenceCount: 1 });
+    expect(remaining.ops).toHaveLength(1);
+    expect(remaining.ops[0].record?.scope).toEqual({ type: "project", project: "repo-b" });
+    applyPatch(dir, remaining, { selectedOpIds: [remaining.ops[0].op_id], now: "2026-07-26T00:03:00Z" });
+    expect(listCandidates(dir)[0].status).toBe("patched");
   });
 
   test("marks grouped candidate patched after every project target is applied", () => {

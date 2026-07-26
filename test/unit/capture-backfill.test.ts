@@ -49,6 +49,13 @@ describe("capture backfill", () => {
     expect(preview.skipped_ambiguous_scope_count).toBe(1);
   });
 
+  test("fingerprint changes when equivalent recurrence evidence is added", () => {
+    const dir = root();
+    const preview = previewCaptureBackfill(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
+    writeFileSync(join(dir, "sessions", "summaries", "second.md"), "# Session\nDate: 2026-07-08\n- Never use em dashes when writing for me.\n", "utf-8");
+    expect(() => applyCaptureBackfill(dir, { since: "2026-05-01", fingerprint: preview.fingerprint, now: "2026-07-26T00:01:00Z" })).toThrow("Backfill source drift detected");
+  });
+
   test("rejects source drift after preview", () => {
     const dir = root();
     const preview = previewCaptureBackfill(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });

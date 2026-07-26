@@ -154,7 +154,8 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
     const heuristicTarget = heuristicSupersedes(candidate, activeRecords);
     const targetId = explicitTarget ?? heuristicTarget ?? llm?.target_id ?? null;
     const scopeTargets = candidate.scope_targets?.filter((target) => target.type !== "session") ?? [];
-    const materializationTargets = scopeTargets.length > 0 ? scopeTargets : [undefined];
+    const requestedTargets = scopeTargets.length > 0 ? scopeTargets : [undefined];
+    const materializationTargets = requestedTargets.filter((scopeTarget) => !activeIds.has(candidateToRecord(candidate, options.now, scopeTarget).id));
 
     return materializationTargets.map((scopeTarget) => {
       opIndex++;
@@ -164,7 +165,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
         candidate_id: candidate.id,
       };
 
-    if (targetId && activeIds.has(targetId) && materializationTargets.length === 1) {
+    if (targetId && activeIds.has(targetId) && requestedTargets.length === 1) {
       const reason = explicitTarget
         ? `Candidate ${candidate.id} explicitly supersedes ${targetId}.`
         : heuristicTarget
