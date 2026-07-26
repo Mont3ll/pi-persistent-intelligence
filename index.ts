@@ -79,6 +79,7 @@ import { InvocationProfiler, renderInvocationProfileReport } from "./src/profili
 import { scoreMemoryWorth } from "./src/memory-worth";
 import { buildCaptureQualityReport, renderCaptureQualityReport } from "./src/capture-quality";
 import { auditCaptureHistory, renderCaptureAuditReport } from "./src/capture-audit";
+import { applyCaptureBackfill, previewCaptureBackfill, saveCaptureBackfillPreview } from "./src/capture-backfill";
 import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
 import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-analysis";
 import { renderGovernanceSimulationReport, simulatePatchImpact } from "./src/governance-simulation";
@@ -1161,6 +1162,39 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         else await openBrowser(ctx, recallEffectivenessBrowserOptions(report), text);
       } catch (err) {
         ctx.ui.notify(`Recall effectiveness analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-capture-backfill", {
+    description: "Preview or apply fingerprinted candidate-only historical preference backfill. Usage: /memory-capture-backfill [--since YYYY-MM-DD] [--output FILE] [--apply --fingerprint HASH]",
+    handler: async (args, ctx) => {
+      try {
+        const parsed = parseCommandArgs(args);
+        const since = typeof parsed.flags.since === "string" ? parsed.flags.since : undefined;
+        if (since && !/^20\d{2}-\d{2}-\d{2}$/.test(since)) {
+          ctx.ui.notify("Invalid --since date. Use YYYY-MM-DD.", "warning");
+          return;
+        }
+        if (parsed.flags.apply === true) {
+          const fingerprint = typeof parsed.flags.fingerprint === "string" ? parsed.flags.fingerprint : "";
+          const result = applyCaptureBackfill(root, { since, fingerprint, now: nowIso() });
+          ctx.ui.notify(`Backfill created ${result.candidates_created} candidate(s) and reinforced ${result.candidates_reinforced}. Backup: ${result.backup_path}`, "success");
+          return;
+        }
+        const preview = previewCaptureBackfill(root, { since, now: nowIso() });
+        const output = typeof parsed.flags.output === "string" ? saveCaptureBackfillPreview(root, preview, parsed.flags.output) : undefined;
+        const text = [
+          `Capture backfill preview: ${preview.candidates.length} candidate(s).`,
+          `Fingerprint: ${preview.fingerprint}`,
+          `Contaminated records: ${preview.contaminated_record_ids.length}`,
+          `Rescope records: ${preview.rescope_record_ids.length}`,
+          ...(output ? [`Report: ${output}`] : []),
+          "No mutation performed.",
+        ].join("\n");
+        notifyStructured(ctx, args, preview, text, preview.candidates.length ? "warning" : "info");
+      } catch (err) {
+        ctx.ui.notify(`Capture backfill failed: ${err instanceof Error ? err.message : String(err)}`, "error");
       }
     },
   });
