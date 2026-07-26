@@ -1,8 +1,8 @@
 import { existsSync, statSync } from "node:fs";
-import { listCaptureEvents } from "./capture-coordinator";
-import { listCandidates } from "./inbox";
-import { ensureMemoryDirs } from "./paths";
-import { loadAllRecords } from "./store";
+import { readJsonl } from "./jsonl";
+import { resolvePaths } from "./paths";
+import { readCaptureCandidatesSnapshot, readMemoryRecordsSnapshot } from "./capture-report-snapshot";
+import type { CaptureEvent } from "./capture-coordinator";
 import type { CaptureEventOutcome } from "./types";
 
 export interface CaptureQualityReport {
@@ -24,9 +24,10 @@ function increment(target: Record<string, number>, key: string): void {
 }
 
 export function buildCaptureQualityReport(root: string, options: { now?: string } = {}): CaptureQualityReport {
-  const events = listCaptureEvents(root);
-  const candidates = listCandidates(root);
-  const records = loadAllRecords(root).filter((record) => record.status === "active");
+  const paths = resolvePaths(root);
+  const events = readJsonl<CaptureEvent>(paths.runtime.captureEvents);
+  const candidates = readCaptureCandidatesSnapshot(root);
+  const records = readMemoryRecordsSnapshot(root).filter((record) => record.status === "active");
   const funnel = {
     detected: 0,
     rejected: 0,
@@ -50,7 +51,6 @@ export function buildCaptureQualityReport(root: string, options: { now?: string 
     for (const scope of event.scope_types) increment(scopeDistribution, scope);
   }
 
-  const paths = ensureMemoryDirs(root);
   const runtimeBytes = [paths.runtime.captureActivity, paths.runtime.captureCheckpoints, paths.runtime.captureEvents]
     .reduce((total, path) => total + (existsSync(path) ? statSync(path).size : 0), 0);
 

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { auditCaptureHistory } from "./capture-audit";
 import { createCaptureBackfillBackup } from "./capture-backup";
@@ -125,7 +125,9 @@ export function previewCaptureBackfill(root: string, options: { since?: string; 
 
 export function saveCaptureBackfillPreview(root: string, preview: CaptureBackfillPreview, filename: string): string {
   if (!filename || basename(filename) !== filename || !filename.endsWith(".json")) throw new Error("Invalid capture preview filename");
-  const path = join(root, "reports", filename);
+  const reports = join(root, "reports");
+  mkdirSync(reports, { recursive: true });
+  const path = join(reports, filename);
   writeFileSync(path, `${JSON.stringify(preview, null, 2)}\n`, "utf-8");
   return path;
 }
