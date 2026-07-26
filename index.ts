@@ -54,7 +54,7 @@ import { actionsFromAgentMessages } from "./src/capture-activity";
 import { processCaptureTurn } from "./src/capture-coordinator";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
-import { backgroundBrowserOptions, candidateBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, inquiryBrowserOptions, memoryQualityBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallEffectivenessBrowserOptions, recallXrayBrowserOptions, relationshipQualityBrowserOptions, storeQualityBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
+import { backgroundBrowserOptions, candidateBrowserOptions, captureQualityBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, inquiryBrowserOptions, memoryQualityBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallEffectivenessBrowserOptions, recallXrayBrowserOptions, relationshipQualityBrowserOptions, storeQualityBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
@@ -1188,7 +1188,9 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
           `Capture backfill preview: ${preview.candidates.length} candidate(s).`,
           `Fingerprint: ${preview.fingerprint}`,
           `Contaminated records: ${preview.contaminated_record_ids.length}`,
+          `Contaminated candidates: ${preview.contaminated_candidate_ids.length}`,
           `Rescope records: ${preview.rescope_record_ids.length}`,
+          `Skipped ambiguous-scope findings: ${preview.skipped_ambiguous_scope_count}`,
           ...(output ? [`Report: ${output}`] : []),
           "No mutation performed.",
         ].join("\n");
@@ -1211,7 +1213,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         }
         const report = auditCaptureHistory(root, { since, now: nowIso() });
         const text = renderCaptureAuditReport(report);
-        rememberCommand("memory-capture-audit", text, `capture audit: ${report.historical_preferences.length} historical preferences, ${report.contaminated_record_ids.length} contaminated records`);
+        rememberCommand("memory-capture-audit", text, `capture audit: ${report.historical_preferences.length} historical preferences, ${report.contaminated_record_ids.length} contaminated records, ${report.contaminated_candidate_ids.length} contaminated candidates`);
         notifyStructured(ctx, args, report, text, report.contaminated_record_ids.length || report.rescope_proposals.length ? "warning" : "info");
       } catch (err) {
         ctx.ui.notify(`Capture audit failed: ${err instanceof Error ? err.message : String(err)}`, "error");
@@ -1226,7 +1228,8 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         const report = buildCaptureQualityReport(root, { now: nowIso() });
         const text = renderCaptureQualityReport(report);
         rememberCommand("memory-capture-quality", text, `capture quality: ${report.messages_evaluated} evaluated, ${report.pending_candidates} pending`);
-        notifyStructured(ctx, args, report, text, report.funnel.rejected > report.funnel.candidate_created ? "warning" : "info");
+        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.funnel.rejected > report.funnel.candidate_created ? "warning" : "info");
+        else await openBrowser(ctx, captureQualityBrowserOptions(report), text);
       } catch (err) {
         ctx.ui.notify(`Capture quality analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
       }

@@ -50,6 +50,13 @@ describe("capture recurrence", () => {
     expect(rows[0].primary_trust_class).toBe("repeated_user_preference");
   });
 
+  test("adds the full recurrence count from a grouped backfill candidate", () => {
+    const dir = root();
+    appendCandidate(dir, candidate("cap_1", "Avoid em dashes in public writing.", "s1"));
+    appendOrReinforceCandidate(dir, { ...candidate("cap_2", "Never use em dashes in public writing.", "s2"), recurrence_count: 3 });
+    expect(listCandidates(dir)[0].recurrence_count).toBe(4);
+  });
+
   test("does not merge the same wording across different project scopes", () => {
     const dir = root();
     const first = candidate("cap_1", "Run cargo test before release.", "s1");

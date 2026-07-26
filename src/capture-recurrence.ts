@@ -39,7 +39,7 @@ export function appendOrReinforceCandidate(root: string, incoming: CaptureCandid
 
   const updated: CaptureCandidate = {
     ...existing,
-    recurrence_count: (existing.recurrence_count ?? 1) + 1,
+    recurrence_count: (existing.recurrence_count ?? 1) + (incoming.recurrence_count ?? 1),
     evidence_refs: [...new Set([...existing.evidence_refs, ...incoming.evidence_refs])],
     evidence_ids: [...new Set([...(existing.evidence_ids ?? []), ...(incoming.evidence_ids ?? [])])],
     source_session_ids: [...new Set([...(existing.source_session_ids ?? []), ...(incoming.source_session_ids ?? [])])],

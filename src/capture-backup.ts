@@ -29,7 +29,7 @@ export function createCaptureBackfillBackup(root: string, previewFingerprint: st
   mkdirSync(backupsRoot, { recursive: true });
   const backupPath = join(backupsRoot, `capture-backfill-v1-${slug}-pid${process.pid}-${randomBytes(4).toString("hex")}`);
   mkdirSync(backupPath, { recursive: false });
-  const sources = ["inbox", "memory", "patches", join("sessions", "session-index.jsonl"), join("runtime", "capture")];
+  const sources = ["inbox", "memory", "patches", "reports", join("sessions", "session-index.jsonl"), join("runtime", "capture")];
   for (const source of sources) {
     const from = join(root, source);
     if (!existsSync(from)) continue;

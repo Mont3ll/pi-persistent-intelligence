@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { auditCaptureHistory, renderCaptureAuditReport } from "../../src/capture-audit";
 import { ensureMemoryDirs } from "../../src/paths";
+import { appendCandidate } from "../../src/inbox";
 import { unsafeAddMemoryRecord } from "../../src/store";
 import type { MemoryRecord } from "../../src/types";
 
@@ -43,21 +44,44 @@ describe("capture audit", () => {
     const dir = root();
     const summaries = join(dir, "sessions", "summaries");
     mkdirSync(summaries, { recursive: true });
-    writeFileSync(join(summaries, "session.md"), "# Session\n\nDate: 2026-07-07\n\n- Avoid em dashes entirely.\n- For this response, keep it short.\n", "utf-8");
+    writeFileSync(join(summaries, "session.md"), "# Session\n\nDate: 2026-07-07\n\n- Avoid em dashes entirely.\n- `Avoid em dashes entirely.` was rejected as `not_a_correction_signal`.\n- For this response, keep it short.\n", "utf-8");
     const before = canonicalSnapshot(dir);
     const report = auditCaptureHistory(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
     expect(report.historical_preferences).toHaveLength(1);
+    expect(report.historical_preferences.some((item) => item.excerpt.includes("was rejected"))).toBe(false);
     expect(report.historical_preferences[0].proposed_scope.type).toBe("global");
     expect(report.mutation_performed).toBe(false);
     expect(canonicalSnapshot(dir)).toEqual(before);
   });
 
+  test("scans indexed direct user turns", () => {
+    const dir = root();
+    const raw = join(dir, "raw-session.jsonl");
+    writeFileSync(raw, [
+      JSON.stringify({ type: "session", version: 3, id: "direct-session", timestamp: "2026-07-07T00:00:00Z", cwd: "workspace/project" }),
+      JSON.stringify({ type: "message", timestamp: "2026-07-07T00:01:00Z", message: { role: "user", content: [{ type: "text", text: "Avoid em dashes entirely." }] } }),
+    ].join("\n"), "utf-8");
+    writeFileSync(join(dir, "sessions", "session-index.jsonl"), `${JSON.stringify({ id: "direct-session", file: raw, date: "2026-07-07" })}\n`, "utf-8");
+    const report = auditCaptureHistory(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
+    expect(report.historical_preferences).toEqual(expect.arrayContaining([
+      expect.objectContaining({ excerpt: "Avoid em dashes entirely.", proposed_scope: expect.objectContaining({ type: "global" }) }),
+    ]));
+  });
+
   test("flags task wrappers and vault-mis-scoped global rules", () => {
     const dir = root();
     unsafeAddMemoryRecord(dir, record("mem_wrapper", "Task: You are a delegated subagent. Implement this migration."));
+    appendCandidate(dir, {
+      id: "cap_wrapper",
+      created_at: "2026-07-01T00:00:00Z",
+      source: { type: "user_correction", ref: "test" },
+      text: "Task: You are a delegated subagent. Review this migration.",
+      tags: ["correction"], evidence_refs: ["test"], confidence: 0.9, status: "rejected",
+    });
     unsafeAddMemoryRecord(dir, record("mem_global_in_vault", "Across projects, keep public repositories free of development diary content."));
     const report = auditCaptureHistory(dir, { now: "2026-07-26T00:00:00Z" });
     expect(report.contaminated_record_ids).toContain("mem_wrapper");
+    expect(report.contaminated_candidate_ids).toContain("cap_wrapper");
     expect(report.rescope_proposals.map((item) => item.record_id)).toContain("mem_global_in_vault");
     expect(renderCaptureAuditReport(report)).toContain("Historical preferences");
   });

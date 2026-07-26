@@ -7,6 +7,7 @@ import type { MemoryQualityItem, MemoryQualityReport } from "../memory-quality";
 import type { RelationshipQualityEdgeItem, RelationshipQualityReport } from "../relationship-quality";
 import type { StoreQualityMetric, StoreQualityReport } from "../store-quality";
 import type { RecallEffectivenessReport, RecallMemoryStat } from "../recall-effectiveness";
+import type { CaptureQualityReport } from "../capture-quality";
 import type { RecallXrayReport, IncludedMemoryXray, ExcludedMemoryXray } from "../recall-xray";
 import type { CaptureCandidate, EvidenceRecord, InquiryRecord, MemoryRecord } from "../types";
 
@@ -307,6 +308,38 @@ export function recallEffectivenessBrowserOptions(report: RecallEffectivenessRep
       { key: "selected", label: "Selected", width: 9, minWidth: 5, priority: 3, render: (stat) => String(stat.selected_count), sortValue: (stat) => stat.selected_count },
       { key: "excluded", label: "Excluded", width: 9, minWidth: 5, priority: 4, render: (stat) => String(stat.excluded_count), sortValue: (stat) => stat.excluded_count },
       { key: "signals", label: "Signals", minWidth: 20, priority: 1, render: (stat) => stat.signals.join(",") || "neutral" },
+    ],
+  };
+}
+
+interface CaptureQualityMetric {
+  id: string;
+  label: string;
+  count: number;
+  detail: string;
+}
+
+export function captureQualityBrowserOptions(report: CaptureQualityReport): BrowserOptions<CaptureQualityMetric> {
+  const items: CaptureQualityMetric[] = [
+    { id: "messages", label: "Messages evaluated", count: report.messages_evaluated, detail: "Bounded capture events evaluated" },
+    { id: "created", label: "Candidates created", count: report.funnel.candidate_created, detail: "New governed capture candidates" },
+    { id: "reinforced", label: "Candidates reinforced", count: report.funnel.candidate_reinforced, detail: "Equivalent preferences linked as recurrence" },
+    { id: "rejected", label: "Rejected", count: report.funnel.rejected, detail: Object.entries(report.rejection_reasons).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "No rejection reasons" },
+    { id: "pending", label: "Pending candidates", count: report.pending_candidates, detail: `${report.repeated_pending_preferences} repeated pending preferences` },
+    { id: "global", label: "Active global preferences", count: report.active_global_preferences, detail: `Scopes: ${Object.entries(report.scope_distribution).map(([scope, count]) => `${scope}: ${count}`).join(", ") || "none"}` },
+    { id: "project", label: "Active project conventions", count: report.active_project_conventions, detail: "Project-scoped active conventions" },
+    { id: "bytes", label: "Runtime capture bytes", count: report.runtime_bytes, detail: "Activity, checkpoint, and event storage" },
+  ];
+  return {
+    title: "Capture Quality Dashboard",
+    subtitle: `${report.messages_evaluated} evaluated · ${report.pending_candidates} pending · report-only`,
+    items: items.map((metric) => ({ id: metric.id, item: metric, status: metric.id === "rejected" && metric.count > report.funnel.candidate_created ? "warning" : "info", searchText: `${metric.label} ${metric.detail}`, details: [`Count: ${metric.count}`, metric.detail, "No automatic mutation performed."] })),
+    pageSize: 10,
+    sortBy: "count",
+    columns: [
+      { key: "metric", label: "Metric", width: 28, minWidth: 16, priority: 1, render: (metric) => metric.label },
+      { key: "count", label: "Count", width: 10, minWidth: 7, priority: 2, render: (metric) => String(metric.count), sortValue: (metric) => metric.count },
+      { key: "detail", label: "Detail", minWidth: 24, priority: 1, render: (metric) => metric.detail },
     ],
   };
 }
