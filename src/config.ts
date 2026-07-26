@@ -33,6 +33,13 @@ export interface PiMemoryConfig {
   retrieval: { injectionMode: "scoped" | "policy_only" | "wakeup"; maxRecords?: number; maxL1Records?: number; maxL2Records?: number };
   inquiries: { reviewWindowDays: number };
   reinforcement: { neutralExposureEnabled: boolean };
+  capture: {
+    activityRetentionCount: number;
+    activityRetentionDays: number;
+    singletonDirectReview: boolean;
+    checkpointEveryTurn: boolean;
+    implicitConsolidationTurnInterval: number;
+  };
   metaConsolidation: {
     enabled: boolean;
     cadence: "manual" | "weekly" | "monthly";
@@ -62,6 +69,13 @@ export const defaultConfig: PiMemoryConfig = {
   retrieval: { injectionMode: "scoped" as const },
   inquiries: { reviewWindowDays: 30 },
   reinforcement: { neutralExposureEnabled: false },
+  capture: {
+    activityRetentionCount: 500,
+    activityRetentionDays: 30,
+    singletonDirectReview: true,
+    checkpointEveryTurn: true,
+    implicitConsolidationTurnInterval: 20,
+  },
   metaConsolidation: {
     enabled: false,
     cadence: "manual" as const,
@@ -87,6 +101,7 @@ function mergeConfig(base: PiMemoryConfig, override: DeepPartial<PiMemoryConfig>
     retrieval: { ...base.retrieval, ...(override.retrieval ?? {}) },
     inquiries: { ...base.inquiries, ...(override.inquiries ?? {}) },
     reinforcement: { ...base.reinforcement, ...(override.reinforcement ?? {}) },
+    capture: { ...base.capture, ...(override.capture ?? {}) },
     metaConsolidation: { ...base.metaConsolidation, ...(override.metaConsolidation ?? {}) },
   };
 }
@@ -100,6 +115,9 @@ export function loadConfig(root: string): PiMemoryConfig {
     if (!Number.isInteger(merged.inquiries.reviewWindowDays) || merged.inquiries.reviewWindowDays < 1 || merged.inquiries.reviewWindowDays > 3650) {
       merged.inquiries.reviewWindowDays = defaultConfig.inquiries.reviewWindowDays;
     }
+    if (!Number.isInteger(merged.capture.activityRetentionCount) || merged.capture.activityRetentionCount < 10 || merged.capture.activityRetentionCount > 10000) merged.capture.activityRetentionCount = defaultConfig.capture.activityRetentionCount;
+    if (!Number.isInteger(merged.capture.activityRetentionDays) || merged.capture.activityRetentionDays < 1 || merged.capture.activityRetentionDays > 365) merged.capture.activityRetentionDays = defaultConfig.capture.activityRetentionDays;
+    if (!Number.isInteger(merged.capture.implicitConsolidationTurnInterval) || merged.capture.implicitConsolidationTurnInterval < 3 || merged.capture.implicitConsolidationTurnInterval > 200) merged.capture.implicitConsolidationTurnInterval = defaultConfig.capture.implicitConsolidationTurnInterval;
     return merged;
   } catch {
     return defaultConfig;

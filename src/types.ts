@@ -35,6 +35,45 @@ export type DeletionMode = "audit_preserving" | "privacy_purge";
 export type DeletionReason = "user_requested" | "privacy_sensitive" | "poisoned" | "invalid" | "other";
 export type GovernanceMode = "compatibility" | "strict";
 
+export type CaptureIntent =
+  | "user_preference"
+  | "behavior_correction"
+  | "project_convention"
+  | "workflow_playbook"
+  | "temporary_instruction"
+  | "not_memory";
+
+export interface CaptureScopeTarget {
+  type: "global" | "project" | "domain" | "session";
+  project?: string;
+  domain?: string;
+  confidence: number;
+  basis: string[];
+}
+
+export interface SessionActivity {
+  id: string;
+  session_id: string;
+  turn_id: string;
+  launch_cwd_hash: string;
+  modified_projects: ProjectIdentity[];
+  read_projects: ProjectIdentity[];
+  modified_path_hashes: string[];
+  command_classes: string[];
+  explicit_project_mentions: string[];
+  created_at: string;
+}
+
+export type CaptureEventOutcome =
+  | "detected"
+  | "rejected"
+  | "daily_only"
+  | "inquiry"
+  | "candidate_created"
+  | "candidate_reinforced"
+  | "candidate_promoted"
+  | "candidate_rejected";
+
 export type StrictGovernanceBlockReason =
   | "strict_governance_missing_trust_metadata"
   | "strict_governance_missing_verification"
@@ -313,8 +352,10 @@ export interface MemoryAddress {
 export interface ProjectIdentity {
   project_id: string;
   source: ProjectIdentitySource;
+  display_name?: string;
   git_remote_hash?: string;
   git_root?: string;
+  git_root_hash?: string;
   package_name?: string;
   workspace_name?: string;
   aliases?: string[];
@@ -470,6 +511,14 @@ export interface CaptureCandidate {
   proposed_known_exceptions?: string[];
   verification_status?: VerificationStatus;
   verification_result?: VerificationResult;
+  capture_group_id?: string;
+  capture_intent?: CaptureIntent;
+  scope_targets?: CaptureScopeTarget[];
+  normalized_preference_key?: string;
+  recurrence_count?: number;
+  source_session_ids?: string[];
+  source_turn_ids?: string[];
+  activity_evidence_ids?: string[];
 }
 
 export type MemoryWorthDecision = "reject" | "daily_only" | "candidate" | "inquiry";

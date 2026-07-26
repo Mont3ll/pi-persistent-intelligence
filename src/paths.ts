@@ -12,7 +12,7 @@ export interface MemoryPaths {
   daily: string;
   inbox: { dir: string; captured: string };
   patches: string;
-  runtime: { dir: string; context: string; selected: string };
+  runtime: { dir: string; captureDir: string; context: string; selected: string; captureActivity: string; captureCheckpoints: string; captureEvents: string };
   reports: string;
   sessions: string;
   search: string;
@@ -76,7 +76,15 @@ export function resolvePaths(root = defaultRoot()): MemoryPaths {
     daily: join(root, "daily"),
     inbox: { dir: join(root, "inbox"), captured: join(root, "inbox", "captured.jsonl") },
     patches: join(root, "patches"),
-    runtime: { dir: join(root, "runtime"), context: join(root, "runtime", "context.md"), selected: join(root, "runtime", "selected_memory.json") },
+    runtime: {
+      dir: join(root, "runtime"),
+      captureDir: join(root, "runtime", "capture"),
+      context: join(root, "runtime", "context.md"),
+      selected: join(root, "runtime", "selected_memory.json"),
+      captureActivity: join(root, "runtime", "capture", "activity.jsonl"),
+      captureCheckpoints: join(root, "runtime", "capture", "checkpoints.jsonl"),
+      captureEvents: join(root, "runtime", "capture", "events.jsonl"),
+    },
     reports: join(root, "reports"),
     sessions: join(root, "sessions"),
     search: join(root, "search"),
@@ -96,13 +104,14 @@ export function ensureMemoryDirs(root = defaultRoot()): MemoryPaths {
     paths.inbox.dir,
     paths.patches,
     paths.runtime.dir,
+    paths.runtime.captureDir,
     paths.reports,
     paths.sessions,
     paths.search,
   ]) {
     mkdirSync(dir, { recursive: true });
   }
-  for (const file of [paths.memory.profiles, paths.memory.evidence, paths.memory.tombstones, paths.memory.reinforcement, paths.memory.inquiries, paths.memory.portableEvents, paths.memory.L1, paths.memory.L2, paths.inbox.captured]) {
+  for (const file of [paths.memory.profiles, paths.memory.evidence, paths.memory.tombstones, paths.memory.reinforcement, paths.memory.inquiries, paths.memory.portableEvents, paths.memory.L1, paths.memory.L2, paths.inbox.captured, paths.runtime.captureActivity, paths.runtime.captureCheckpoints, paths.runtime.captureEvents]) {
     if (!existsSync(file)) writeFileSync(file, "", "utf-8");
   }
   if (!existsSync(paths.scratchpad)) writeFileSync(paths.scratchpad, "# Scratchpad\n\n", "utf-8");
