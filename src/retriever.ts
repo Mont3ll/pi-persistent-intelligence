@@ -12,6 +12,7 @@ import { renderHardRulesBlockWithCount } from "./rules";
 import { MemoryFtsIndex } from "./search/fts";
 import { mergeHybridResults, parseQmdMemoryIds } from "./search/hybrid";
 import { resolveMemoryProfile } from "./profile";
+import { detectTaskCategories } from "./capture-applicability";
 import { runMemoryProcessorPipeline } from "./processors";
 import { extractContestedMemory, renderContestedMemoryBlock } from "./contested-memory";
 import { appendRuntimeEvent } from "./runtime-events";
@@ -322,7 +323,7 @@ export async function buildRetrievalContext(root: string, options: RetrievalOpti
     working_directory: cwd,
     latest_user_message: options.prompt,
     recent_files_touched: [],
-    detected_domain_tags: [],
+    detected_domain_tags: detectTaskCategories(options.prompt, []),
     is_trivial_prompt: false,
   };
   const loadStart = performance.now();

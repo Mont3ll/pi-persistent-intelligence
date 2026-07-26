@@ -372,6 +372,9 @@ export interface MemoryProfile {
 }
 
 export type DomainTag =
+  | "writing"
+  | "implementation"
+  | "research"
   | "frontend"
   | "backend"
   | "database"

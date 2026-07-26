@@ -1,3 +1,4 @@
+import { matchesPositiveApplicability } from "./capture-applicability";
 import type { MemoryRecord, ProcessorTrace, SessionContext } from "./types";
 
 export interface MemoryProcessorOutput {
@@ -72,6 +73,16 @@ export function profileScopeProcessor(records: MemoryRecord[], context: SessionC
   return { records: output, trace: trace("ProfileScopeProcessor", records, output, exclusionReasons) };
 }
 
+export function positiveApplicabilityProcessor(records: MemoryRecord[], context: SessionContext): { records: MemoryRecord[]; trace: ProcessorTrace } {
+  const exclusionReasons: Record<string, string> = {};
+  const output = records.filter((record) => {
+    if (matchesPositiveApplicability(record, context)) return true;
+    exclusionReasons[record.id] = "applies_when_unmatched";
+    return false;
+  });
+  return { records: output, trace: trace("PositiveApplicabilityProcessor", records, output, exclusionReasons) };
+}
+
 export function negativeScopeProcessor(records: MemoryRecord[], context: SessionContext): { records: MemoryRecord[]; trace: ProcessorTrace } {
   const exclusionReasons: Record<string, string> = {};
   const text = contextText(context);
@@ -113,7 +124,7 @@ export function basicScopeProcessor(records: MemoryRecord[], context: SessionCon
 export function runMemoryProcessorPipeline(records: MemoryRecord[], context: SessionContext): MemoryProcessorOutput {
   const traces: ProcessorTrace[] = [];
   let current = records;
-  for (const processor of [statusFilterProcessor, profileScopeProcessor, basicScopeProcessor, negativeScopeProcessor]) {
+  for (const processor of [statusFilterProcessor, profileScopeProcessor, basicScopeProcessor, positiveApplicabilityProcessor, negativeScopeProcessor]) {
     const result = processor(current, context);
     current = result.records;
     traces.push(result.trace);
