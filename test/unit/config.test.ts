@@ -19,6 +19,11 @@ describe("config", () => {
     expect(config.vault.enabled).toBe(false);
     expect(config.inquiries.reviewWindowDays).toBe(30);
     expect(config.reinforcement.neutralExposureEnabled).toBe(false);
+    expect(config.capture.activityRetentionCount).toBe(500);
+    expect(config.capture.activityRetentionDays).toBe(30);
+    expect(config.capture.singletonDirectReview).toBe(true);
+    expect(config.capture.checkpointEveryTurn).toBe(true);
+    expect(config.capture.implicitConsolidationTurnInterval).toBe(20);
   });
 
   test("merges user config over defaults", () => {
@@ -30,6 +35,7 @@ describe("config", () => {
     expect(config.curator.minEvidenceCount).toBe(2);
     expect(config.llm.enabled).toBe(true);
     expect(config.llm.model).toBe("test/model");
+    expect(config.capture.activityRetentionCount).toBe(500);
   });
 
   test("validates inquiry review window range", () => {

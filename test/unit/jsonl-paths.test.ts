@@ -25,6 +25,9 @@ describe("paths", () => {
     expect(paths.memory.L2).toBe(join(root, "memory", "L2.playbooks.jsonl"));
     expect(paths.rendered.memory).toBe(join(root, "rendered", "MEMORY.md"));
     expect(paths.inbox.captured).toBe(join(root, "inbox", "captured.jsonl"));
+    expect(paths.runtime.captureActivity).toBe(join(root, "runtime", "capture", "activity.jsonl"));
+    expect(paths.runtime.captureCheckpoints).toBe(join(root, "runtime", "capture", "checkpoints.jsonl"));
+    expect(paths.runtime.captureEvents).toBe(join(root, "runtime", "capture", "events.jsonl"));
   });
 
   test("creates required directories and seed files", () => {
@@ -33,6 +36,9 @@ describe("paths", () => {
     expect(readJsonl(paths.memory.L1)).toEqual([]);
     expect(readJsonl(paths.memory.L2)).toEqual([]);
     expect(readJsonl(paths.inbox.captured)).toEqual([]);
+    expect(readJsonl(paths.runtime.captureActivity)).toEqual([]);
+    expect(readJsonl(paths.runtime.captureCheckpoints)).toEqual([]);
+    expect(readJsonl(paths.runtime.captureEvents)).toEqual([]);
   });
 });
 
