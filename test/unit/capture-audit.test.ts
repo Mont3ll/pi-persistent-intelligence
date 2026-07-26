@@ -44,11 +44,12 @@ describe("capture audit", () => {
     const dir = root();
     const summaries = join(dir, "sessions", "summaries");
     mkdirSync(summaries, { recursive: true });
-    writeFileSync(join(summaries, "session.md"), "# Session\n\nDate: 2026-07-07\n\n- Avoid em dashes entirely.\n- `Avoid em dashes entirely.` was rejected as `not_a_correction_signal`.\n- For this response, keep it short.\n", "utf-8");
+    writeFileSync(join(summaries, "session.md"), "# Session\n\nDate: 2026-07-07\n\n## Constraints & Preferences\n- Avoid em dashes entirely.\n- `Avoid em dashes entirely.` was rejected as `not_a_correction_signal`.\n- For this response, keep it short.\n\n## Assistant excerpt\n- I prefer fabricated assistant advice.\n", "utf-8");
     const before = canonicalSnapshot(dir);
     const report = auditCaptureHistory(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
     expect(report.historical_preferences).toHaveLength(1);
     expect(report.historical_preferences.some((item) => item.excerpt.includes("was rejected"))).toBe(false);
+    expect(report.historical_preferences.some((item) => item.excerpt.includes("fabricated assistant"))).toBe(false);
     expect(report.historical_preferences[0].proposed_scope.type).toBe("global");
     expect(report.mutation_performed).toBe(false);
     expect(canonicalSnapshot(dir)).toEqual(before);
@@ -58,7 +59,7 @@ describe("capture audit", () => {
     const dir = root();
     const summaries = join(dir, "sessions", "summaries");
     mkdirSync(summaries, { recursive: true });
-    writeFileSync(join(summaries, "session.md"), "# Session\nDate: 2026-07-07\n- I prefer no generated files in this repository.\n", "utf-8");
+    writeFileSync(join(summaries, "session.md"), "# Session\nDate: 2026-07-07\n## Constraints & Preferences\n- I prefer no generated files in this repository.\n", "utf-8");
     const report = auditCaptureHistory(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
     expect(report.historical_preferences[0].proposed_scope.type).toBe("project");
   });

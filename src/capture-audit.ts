@@ -56,6 +56,23 @@ function summaryDate(content: string): string | null {
   return content.match(/\b20\d{2}-\d{2}-\d{2}\b/)?.[0] ?? null;
 }
 
+function preferenceSectionLines(content: string): string[] {
+  const lines: string[] = [];
+  let inPreferenceSection = false;
+  for (const line of content.split(/\r?\n/)) {
+    if (/^#{1,6}\s+(?:Constraints\s*&\s*Preferences|Preferences)\s*$/i.test(line.trim())) {
+      inPreferenceSection = true;
+      continue;
+    }
+    if (/^#{1,6}\s+/.test(line.trim())) {
+      inPreferenceSection = false;
+      continue;
+    }
+    if (inPreferenceSection) lines.push(line);
+  }
+  return lines;
+}
+
 export function auditCaptureHistory(root: string, options: { since?: string; now?: string } = {}): CaptureAuditReport {
   const historicalPreferences: HistoricalPreferenceFinding[] = [];
   const seen = new Set<string>();
@@ -89,7 +106,7 @@ export function auditCaptureHistory(root: string, options: { since?: string; now
       const date = summaryDate(content);
       if (options.since && date && date < options.since) continue;
       const sourceRef = `session-summary:${hash(file).slice(0, 16)}`;
-      for (const line of content.split(/\r?\n/)) addFinding(line, sourceRef);
+      for (const line of preferenceSectionLines(content)) addFinding(line, sourceRef);
     }
   }
 
@@ -110,9 +127,9 @@ export function auditCaptureHistory(root: string, options: { since?: string; now
           if (message.length <= 500) addFinding(message, sourceRef);
           else for (const line of message.split(/\r?\n/)) addFinding(line, sourceRef);
         });
-        [...session.compactionSummaries, ...session.branchSummaries].forEach((summary, summaryIndex) => {
+        session.compactionSummaries.forEach((summary, summaryIndex) => {
           const sourceRef = `session-compaction:${hash(row.id!).slice(0, 16)}:${summaryIndex + 1}`;
-          for (const line of summary.split(/\r?\n/)) addFinding(line, sourceRef);
+          for (const line of preferenceSectionLines(summary)) addFinding(line, sourceRef);
         });
       } catch { continue; }
     }

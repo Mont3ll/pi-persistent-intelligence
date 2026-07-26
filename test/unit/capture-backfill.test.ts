@@ -12,7 +12,7 @@ function root(): string {
   dirs.push(dir);
   const summaries = join(dir, "sessions", "summaries");
   mkdirSync(summaries, { recursive: true });
-  writeFileSync(join(summaries, "session.md"), "# Session\nDate: 2026-07-07\n- Avoid em dashes entirely.\n", "utf-8");
+  writeFileSync(join(summaries, "session.md"), "# Session\nDate: 2026-07-07\n## Constraints & Preferences\n- Avoid em dashes entirely.\n", "utf-8");
   return dir;
 }
 afterEach(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }); dirs.length = 0; });
@@ -34,7 +34,7 @@ describe("capture backfill", () => {
 
   test("groups equivalent historical preferences into recurrence on one candidate", () => {
     const dir = root();
-    writeFileSync(join(dir, "sessions", "summaries", "second.md"), "# Session\nDate: 2026-07-08\n- Never use em dashes when writing for me.\n", "utf-8");
+    writeFileSync(join(dir, "sessions", "summaries", "second.md"), "# Session\nDate: 2026-07-08\n## Constraints & Preferences\n- Never use em dashes when writing for me.\n", "utf-8");
     const preview = previewCaptureBackfill(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
     expect(preview.candidates).toHaveLength(1);
     expect(preview.candidates[0].recurrence_count).toBe(2);
@@ -43,7 +43,7 @@ describe("capture backfill", () => {
 
   test("does not create a project candidate when historical evidence lacks a project target", () => {
     const dir = root();
-    writeFileSync(join(dir, "sessions", "summaries", "session.md"), "# Session\nDate: 2026-07-07\n- This project always runs release audit before publishing.\n", "utf-8");
+    writeFileSync(join(dir, "sessions", "summaries", "session.md"), "# Session\nDate: 2026-07-07\n## Constraints & Preferences\n- This project always runs release audit before publishing.\n", "utf-8");
     const preview = previewCaptureBackfill(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
     expect(preview.candidates).toHaveLength(0);
     expect(preview.skipped_ambiguous_scope_count).toBe(1);
@@ -52,14 +52,14 @@ describe("capture backfill", () => {
   test("fingerprint changes when equivalent recurrence evidence is added", () => {
     const dir = root();
     const preview = previewCaptureBackfill(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
-    writeFileSync(join(dir, "sessions", "summaries", "second.md"), "# Session\nDate: 2026-07-08\n- Never use em dashes when writing for me.\n", "utf-8");
+    writeFileSync(join(dir, "sessions", "summaries", "second.md"), "# Session\nDate: 2026-07-08\n## Constraints & Preferences\n- Never use em dashes when writing for me.\n", "utf-8");
     expect(() => applyCaptureBackfill(dir, { since: "2026-05-01", fingerprint: preview.fingerprint, now: "2026-07-26T00:01:00Z" })).toThrow("Backfill source drift detected");
   });
 
   test("rejects source drift after preview", () => {
     const dir = root();
     const preview = previewCaptureBackfill(dir, { since: "2026-05-01", now: "2026-07-26T00:00:00Z" });
-    writeFileSync(join(dir, "sessions", "summaries", "session.md"), "# Session\nDate: 2026-07-07\n- Avoid em dashes entirely.\n- I prefer sentence case headings.\n", "utf-8");
+    writeFileSync(join(dir, "sessions", "summaries", "session.md"), "# Session\nDate: 2026-07-07\n## Constraints & Preferences\n- Avoid em dashes entirely.\n- I prefer sentence case headings.\n", "utf-8");
     expect(() => applyCaptureBackfill(dir, { since: "2026-05-01", fingerprint: preview.fingerprint, now: "2026-07-26T00:01:00Z" })).toThrow("Backfill source drift detected");
     expect(listCandidates(dir)).toHaveLength(0);
   });
