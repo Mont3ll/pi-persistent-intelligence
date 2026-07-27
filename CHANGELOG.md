@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 
 - Direct global preferences now become review-only L2 candidates instead of depending on session-end consolidation or launch-directory scope.
 - Global preferences are recalled only for positively matching task contexts while the 14 KB default context budget remains unchanged.
+- Memory Inbox and Memory Curator now share restrained colors, spacing, navigation language, and width-safe rendering.
 
 ## [0.14.0] - 2026-07-24
 
