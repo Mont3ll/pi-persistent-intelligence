@@ -67,7 +67,7 @@ export function panelWidth(width: number): number {
 }
 
 export function fitPanelLine(line: string, width: number): string {
-  return truncateToWidth(line, panelWidth(width), "…", true);
+  return truncateToWidth(line, panelWidth(width), "…");
 }
 
 export function wrapPanelLine(line: string, width: number): string[] {
