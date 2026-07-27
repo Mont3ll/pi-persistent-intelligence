@@ -1,5 +1,15 @@
-import { CURSOR_MARKER, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, Key, matchesKey } from "@earendil-works/pi-tui";
 import type { MemoryPatch } from "../types";
+import {
+  createMemoryPanelTheme,
+  panelWidth,
+  renderCursorMarker,
+  renderMemoryPanelControls,
+  renderMemoryPanelHeader,
+  wrapPanelHanging,
+  wrapPanelLine,
+  type MemoryPanelTheme,
+} from "./memory-panel";
 
 export interface ComponentLike {
   render(width: number): string[];
@@ -9,86 +19,7 @@ export interface ComponentLike {
 }
 
 type StyleFn = (text: string) => string;
-
-export interface PatchPanelTheme {
-  title: StyleFn;
-  border: StyleFn;
-  dim: StyleFn;
-  accent: StyleFn;
-  success: StyleFn;
-  warning: StyleFn;
-  danger: StyleFn;
-  label: StyleFn;
-  content: StyleFn;
-  selected: StyleFn;
-  cursor: StyleFn;
-  buffer: StyleFn;
-}
-
-const sgr = (code: string): StyleFn => (text) => `\x1b[${code}m${text}\x1b[0m`;
-const compose = (...fns: StyleFn[]): StyleFn => (text) => fns.reduceRight((value, fn) => fn(value), text);
-
-function defaultTheme(): PatchPanelTheme {
-  return {
-    title: compose(sgr("1"), sgr("36")),
-    border: sgr("90"),
-    dim: sgr("90"),
-    accent: sgr("36"),
-    success: sgr("32"),
-    warning: sgr("33"),
-    danger: sgr("31"),
-    label: compose(sgr("1"), sgr("35")),
-    content: sgr("37"),
-    selected: compose(sgr("1"), sgr("2"), sgr("36")),
-    cursor: sgr("7"),
-    buffer: sgr("95"),
-  };
-}
-
-function themeFromPi(theme: unknown): PatchPanelTheme {
-  const fallback = defaultTheme();
-  const maybe = theme as { fg?: (name: string, text: string) => string; bold?: (text: string) => string } | undefined;
-  if (!maybe || typeof maybe.fg !== "function") return fallback;
-  const fg = (name: string, fb: StyleFn): StyleFn => (text) => {
-    try { return maybe.fg?.(name, text) ?? fb(text); } catch { return fb(text); }
-  };
-  const bold: StyleFn = (text) => {
-    try { return maybe.bold?.(text) ?? sgr("1")(text); } catch { return sgr("1")(text); }
-  };
-  return {
-    title: compose(bold, fg("accent", fallback.title)),
-    border: fg("dim", fallback.border),
-    dim: fg("dim", fallback.dim),
-    accent: fg("accent", fallback.accent),
-    success: fg("success", fallback.success),
-    warning: fg("warning", fallback.warning),
-    danger: fg("error", fallback.danger),
-    label: compose(bold, fg("accent", fallback.label)),
-    content: fg("text", fallback.content),
-    selected: compose(bold, fg("accent", fallback.selected), sgr("2")),
-    cursor: fallback.cursor,
-    buffer: fg("warning", fallback.buffer),
-  };
-}
-
-function fit(line: string, width: number): string {
-  if (width <= 0) return "";
-  return truncateToWidth(line, width, "…", true);
-}
-
-function wrapLine(line: string, width: number): string[] {
-  if (width <= 0) return [""];
-  return wrapTextWithAnsi(line, width).flatMap((part) => part === "" ? [""] : [fit(part, width)]);
-}
-
-function wrapHanging(prefix: string, text: string, width: number): string[] {
-  const prefixWidth = visibleWidth(prefix);
-  const bodyWidth = Math.max(1, width - prefixWidth);
-  const wrapped = wrapLine(text, bodyWidth);
-  if (wrapped.length === 0) return [prefix];
-  const continuation = " ".repeat(prefixWidth);
-  return wrapped.map((line, index) => index === 0 ? `${prefix}${line}` : `${continuation}${line}`);
-}
+export type PatchPanelTheme = MemoryPanelTheme;
 
 function riskStyle(theme: PatchPanelTheme, risk: string): StyleFn {
   if (risk === "high") return theme.danger;
@@ -107,7 +38,7 @@ export function createPatchReviewComponent(
   editStatement?: (current: string, opId: string) => string | null,
   theme?: unknown,
 ): ComponentLike {
-  const panel = new PatchReviewPanel(patch, done, editStatement, themeFromPi(theme));
+  const panel = new PatchReviewPanel(patch, done, editStatement, createMemoryPanelTheme(theme));
   return {
     get focused() { return panel.focused; },
     set focused(value: boolean | undefined) { panel.focused = Boolean(value); },
@@ -132,7 +63,7 @@ export class PatchReviewPanel implements ComponentLike {
     private patch: MemoryPatch,
     private done: (selectedOpIds: string[] | null) => void,
     private editStatement?: (current: string, opId: string) => string | null,
-    private theme: PatchPanelTheme = defaultTheme(),
+    private theme: PatchPanelTheme = createMemoryPanelTheme(undefined),
   ) {
     this.selected = new Set(patch.ops.filter((op) => op.default_selected).map((op) => op.op_id));
   }
@@ -160,56 +91,49 @@ export class PatchReviewPanel implements ComponentLike {
     const at = this.editBuffer[this.editCursor] ?? " ";
     const after = this.editBuffer.slice(this.editCursor + (this.editBuffer[this.editCursor] ? 1 : 0));
     const marker = this.focused ? CURSOR_MARKER : "";
-    const prefix = `${this.theme.label("Edit buffer")} ${this.theme.border("│")} `;
+    const prefix = `${this.theme.label("Edit buffer")} ${this.theme.dim("│")} `;
     const visual = `${this.theme.buffer(before)}${marker}${this.theme.cursor(at)}${this.theme.buffer(after)}`;
-    return wrapHanging(prefix, visual, width);
+    return wrapPanelHanging(prefix, visual, width);
   }
 
   render(width: number): string[] {
+    const boundedWidth = panelWidth(width);
     const selectedCount = this.selected.size;
     const skippedCount = this.patch.ops.length - selectedCount;
-    const outerDivider = this.theme.border("─".repeat(Math.max(1, width)));
-    const pad = " ";
-    const padWidth = visibleWidth(pad);
-    const contentWidth = Math.max(1, width - (padWidth * 2));
-    const lines: string[] = [outerDivider];
-    const push = (line = "") => {
-      if (line === "") {
-        lines.push("");
-        return;
-      }
-      for (const wrapped of wrapLine(line, contentWidth)) lines.push(`${pad}${wrapped}${pad}`);
-    };
-    const pushRaw = (line: string) => lines.push(line);
+    const lines = renderMemoryPanelHeader(
+      this.theme,
+      boundedWidth,
+      "Memory Curator",
+      `${this.patch.patch_id} · ${selectedCount} selected · ${skippedCount} skipped`,
+    );
 
-    push(this.theme.title(`Memory Curator — ${this.patch.patch_id}`));
-    push(`${this.theme.accent(`${selectedCount} selected`)} ${this.theme.dim("·")} ${this.theme.dim(`${skippedCount} skipped`)}`);
-    push(this.editing
-      ? `${this.theme.warning("EDITING")} ${this.theme.dim("·")} ${this.theme.accent("type")} ${this.theme.dim("·")} ${this.theme.accent("←/→")} move cursor ${this.theme.dim("·")} ${this.theme.accent("ctrl+u")} clear ${this.theme.dim("·")} ${this.theme.accent("enter")} save ${this.theme.dim("·")} ${this.theme.accent("esc")} cancel edit`
-      : `${this.theme.accent("↑↓")} move ${this.theme.dim("·")} ${this.theme.accent("space")} toggle ${this.theme.dim("·")} ${this.theme.accent("e")} edit ${this.theme.dim("·")} ${this.theme.accent("enter")} apply ${this.theme.dim("·")} ${this.theme.accent("q/ctrl+c")} cancel`);
-    push();
     if (this.editing) {
-      for (const line of this.renderEditBuffer(contentWidth)) push(line);
-      push();
+      lines.push(...this.renderEditBuffer(boundedWidth));
+      lines.push("");
     }
+
     for (let i = 0; i < this.patch.ops.length; i++) {
       const op = this.patch.ops[i];
       const isCursor = i === this.cursor;
-      const rowMarker = isCursor ? "▶" : " ";
+      const marker = renderCursorMarker(this.theme, isCursor);
       const checked = this.selected.has(op.op_id) ? this.theme.success("✓") : this.theme.dim(" ");
       const risk = riskStyle(this.theme, op.risk)(op.risk);
-      const header = `${rowMarker} [${checked}] ${this.theme.label(op.op_id)} ${this.theme.accent(op.op.toUpperCase())} ${this.theme.dim("risk:")}${risk}`;
-      push(isCursor ? this.theme.selected(header) : header);
-      if (op.rationale) {
-        for (const line of wrapHanging(`    ${this.theme.dim("why:")} `, this.theme.content(op.rationale), contentWidth)) push(line);
-      }
+      const header = `${marker} [${checked}] ${this.theme.label(op.op_id)} ${this.theme.accent(op.op.toUpperCase())} ${this.theme.dim("risk:")} ${risk}`;
+      lines.push(...wrapPanelLine(isCursor ? this.theme.selected(header) : header, boundedWidth));
+      if (op.rationale) lines.push(...wrapPanelHanging(`    ${this.theme.dim("why:")} `, this.theme.content(op.rationale), boundedWidth));
       const statement = op.record?.statement ?? op.to_record?.statement;
-      if (statement) {
-        for (const line of wrapHanging(`    ${this.theme.dim("statement:")} `, this.theme.content(statement), contentWidth)) push(line);
-      }
-      if (i < this.patch.ops.length - 1) push();
+      if (statement) lines.push(...wrapPanelHanging(`    ${this.theme.dim("statement:")} `, this.theme.content(statement), boundedWidth));
+      if (i < this.patch.ops.length - 1) lines.push("");
     }
-    pushRaw(outerDivider);
+
+    lines.push("");
+    lines.push(...renderMemoryPanelControls(
+      this.theme,
+      boundedWidth,
+      this.editing
+        ? ["EDITING", "type", "←→ move", "Ctrl+U clear", "Enter save", "Esc cancel"]
+        : ["↑↓ move", "Space toggle", "e edit", "Enter apply", "Esc cancel"],
+    ));
     return lines;
   }
 
