@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { PatchReviewPanel } from "../../src/tui/PatchReviewPanel";
 import type { MemoryPatch } from "../../src/types";
 
@@ -26,6 +27,17 @@ describe("PatchReviewPanel", () => {
     expect(output).toContain("1 selected");
     expect(output).toContain("op_001");
     expect(output).toContain("op_002");
+  });
+
+  test("uses the unified layout without decorative separators or width overflow", () => {
+    const panel = new PatchReviewPanel(patch, () => {});
+    const lines = panel.render(36);
+    const plain = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+    const text = lines.join("\n");
+    expect(text).toContain("Memory Curator");
+    expect(text).toContain("↑↓ move");
+    expect(plain.some((line) => /^─+$/.test(line))).toBe(false);
+    expect(lines.every((line) => visibleWidth(line) <= 36)).toBe(true);
   });
 
   test("toggles highlighted operation with space", () => {
