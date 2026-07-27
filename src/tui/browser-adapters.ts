@@ -49,6 +49,7 @@ export function candidateBrowserOptions(candidates: CaptureCandidate[]): Browser
   return {
     title: "Memory Inbox Browser",
     subtitle: "Inspect candidates. Approval/rejection still flows through governed patch review.",
+    separatorStyle: "frame",
     items: candidates.map((c) => ({
       id: c.id,
       item: c,

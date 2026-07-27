@@ -29,14 +29,17 @@ describe("PatchReviewPanel", () => {
     expect(output).toContain("op_002");
   });
 
-  test("uses the unified layout without decorative separators or width overflow", () => {
+  test("uses one top and one bottom separator without internal rules", () => {
     const panel = new PatchReviewPanel(patch, () => {});
     const lines = panel.render(36);
     const plain = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
     const text = lines.join("\n");
     expect(text).toContain("Memory Curator");
     expect(text).toContain("↑↓ move");
-    expect(plain.some((line) => /^─+$/.test(line))).toBe(false);
+    const separators = plain.filter((line) => /^─+$/.test(line));
+    expect(separators).toHaveLength(2);
+    expect(plain[0]).toMatch(/^─+$/);
+    expect(plain.at(-1)).toMatch(/^─+$/);
     expect(lines.every((line) => visibleWidth(line) <= 36)).toBe(true);
   });
 

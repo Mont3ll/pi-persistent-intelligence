@@ -80,6 +80,20 @@ describe("InteractiveBrowser", () => {
     }
   });
 
+  test("supports a frame with only top and bottom separators", () => {
+    const panel = new InteractiveBrowser<Item>({
+      title: "Memory Inbox Browser",
+      items: items(2),
+      columns: [{ key: "id", label: "ID", width: 12, render: (item) => item.id }],
+      separatorStyle: "frame",
+    });
+    const plain = panel.render(80).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+    const separators = plain.filter((line) => /^─+$/.test(line));
+    expect(separators).toHaveLength(2);
+    expect(plain[0]).toMatch(/^─+$/);
+    expect(plain.at(-1)).toMatch(/^─+$/);
+  });
+
   test("renders empty states", () => {
     const panel = browser(0, 20);
     const text = panel.render(80).join("\n");

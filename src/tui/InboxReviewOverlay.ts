@@ -23,6 +23,7 @@ import {
   panelWidth,
   renderMemoryPanelControls,
   renderMemoryPanelHeader,
+  renderMemoryPanelSeparator,
   wrapPanelHanging,
   wrapPanelLine,
   type MemoryPanelTheme,
@@ -106,12 +107,15 @@ export class InboxReviewOverlay {
     const width = panelWidth(termWidth);
     const count = this.opts.candidates.length;
     const auto = this.opts.autoEligibleCount;
-    const lines = renderMemoryPanelHeader(
-      th,
-      width,
-      "Memory Inbox",
-      `${count} candidate${count !== 1 ? "s" : ""} · ${auto} auto-eligible`,
-    );
+    const lines = [
+      renderMemoryPanelSeparator(th, width),
+      ...renderMemoryPanelHeader(
+        th,
+        width,
+        "Memory Inbox",
+        `${count} candidate${count !== 1 ? "s" : ""} · ${auto} auto-eligible`,
+      ),
+    ];
 
     for (const candidate of this.opts.candidates.slice(0, 7)) {
       const isAuto = (candidate.confidence ?? 0) >= this.opts.highThreshold;
@@ -129,7 +133,7 @@ export class InboxReviewOverlay {
     });
     lines.push(...wrapPanelLine(actions.join(th.dim("   ")), width));
     lines.push(...renderMemoryPanelControls(th, width, ["↑↓ choose", "Enter confirm", "a/r/s shortcuts", "Esc cancel"]));
-    lines.push("");
+    lines.push(renderMemoryPanelSeparator(th, width));
     return lines;
   }
 }

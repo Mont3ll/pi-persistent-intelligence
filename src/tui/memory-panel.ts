@@ -4,6 +4,7 @@ type StyleFn = (text: string) => string;
 
 export interface MemoryPanelTheme {
   title: StyleFn;
+  border: StyleFn;
   dim: StyleFn;
   accent: StyleFn;
   success: StyleFn;
@@ -22,6 +23,7 @@ const compose = (...fns: StyleFn[]): StyleFn => (text) => fns.reduceRight((value
 function defaultMemoryPanelTheme(): MemoryPanelTheme {
   return {
     title: compose(sgr("1"), sgr("36")),
+    border: sgr("90"),
     dim: sgr("90"),
     accent: sgr("36"),
     success: sgr("32"),
@@ -49,6 +51,7 @@ export function createMemoryPanelTheme(theme: unknown): MemoryPanelTheme {
 
   return {
     title: compose(bold, fg("accent", fallback.title)),
+    border: fg("dim", fallback.border),
     dim: fg("dim", fallback.dim),
     accent: fg("accent", fallback.accent),
     success: fg("success", fallback.success),
@@ -85,6 +88,10 @@ export function wrapPanelHanging(prefix: string, text: string, width: number): s
   if (body.length === 0) return [fittedPrefix];
   const continuation = " ".repeat(prefixWidth);
   return body.map((line, index) => fitPanelLine(index === 0 ? `${fittedPrefix}${line}` : `${continuation}${line}`, boundedWidth));
+}
+
+export function renderMemoryPanelSeparator(theme: MemoryPanelTheme, width: number): string {
+  return theme.border("─".repeat(panelWidth(width)));
 }
 
 export function renderMemoryPanelHeader(
