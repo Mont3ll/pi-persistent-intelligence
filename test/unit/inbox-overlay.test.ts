@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { InboxReviewOverlay, buildInboxNotification, themeFromInbox } from "../../src/tui/InboxReviewOverlay";
 import type { CaptureCandidate } from "../../src/types";
 
@@ -33,6 +34,19 @@ describe("InboxReviewOverlay", () => {
     const text = lines.join("\n");
     expect(text).toContain("Memory Inbox");
     expect(text).toContain("3 candidate");
+  });
+
+  test("uses the unified layout without decorative separators or width overflow", () => {
+    const overlay = new InboxReviewOverlay(
+      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      themeFromInbox(undefined),
+      () => {},
+    );
+    const lines = overlay.render(36);
+    const plain = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+    expect(lines.join("\n")).toContain("↑↓ choose");
+    expect(plain.some((line) => /^─+$/.test(line))).toBe(false);
+    expect(lines.every((line) => visibleWidth(line) <= 36)).toBe(true);
   });
 
   test("renders candidates with confidence and statement", () => {
@@ -113,6 +127,18 @@ describe("InboxReviewOverlay", () => {
     // Initial selection is 0 (approve). Move right to review (1).
     overlay.handleInput("\u001b[C"); // right arrow
     overlay.handleInput("\r");       // enter
+    expect(result).toBe("review");
+  });
+
+  test("down navigation updates selection then Enter confirms", () => {
+    let result: string | undefined;
+    const overlay = new InboxReviewOverlay(
+      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      themeFromInbox(undefined),
+      (action) => { result = action ?? "null"; },
+    );
+    overlay.handleInput("\u001b[B");
+    overlay.handleInput("\r");
     expect(result).toBe("review");
   });
 
