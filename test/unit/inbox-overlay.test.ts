@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { InboxReviewOverlay, buildInboxNotification, themeFromInbox } from "../../src/tui/InboxReviewOverlay";
+import { candidateBrowserOptions } from "../../src/tui/browser-adapters";
 import type { CaptureCandidate } from "../../src/types";
 
 function candidate(id: string, confidence: number, text = "test pattern"): CaptureCandidate {
@@ -36,7 +37,7 @@ describe("InboxReviewOverlay", () => {
     expect(text).toContain("3 candidate");
   });
 
-  test("uses the unified layout without decorative separators or width overflow", () => {
+  test("uses one top and one bottom separator without internal rules", () => {
     const overlay = new InboxReviewOverlay(
       { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
       themeFromInbox(undefined),
@@ -45,7 +46,10 @@ describe("InboxReviewOverlay", () => {
     const lines = overlay.render(36);
     const plain = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
     expect(lines.join("\n")).toContain("↑↓ choose");
-    expect(plain.some((line) => /^─+$/.test(line))).toBe(false);
+    const separators = plain.filter((line) => /^─+$/.test(line));
+    expect(separators).toHaveLength(2);
+    expect(plain[0]).toMatch(/^─+$/);
+    expect(plain.at(-1)).toMatch(/^─+$/);
     expect(lines.every((line) => visibleWidth(line) <= 36)).toBe(true);
   });
 
@@ -151,6 +155,12 @@ describe("InboxReviewOverlay", () => {
     );
     const text = overlay.render(80).join("\n");
     expect(text).toContain("2 more");
+  });
+});
+
+describe("candidate browser presentation", () => {
+  test("uses the shared top and bottom frame style", () => {
+    expect(candidateBrowserOptions([candidate("cap_1", 0.9)]).separatorStyle).toBe("frame");
   });
 });
 

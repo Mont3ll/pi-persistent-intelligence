@@ -6,6 +6,7 @@ import {
   renderCursorMarker,
   renderMemoryPanelControls,
   renderMemoryPanelHeader,
+  renderMemoryPanelSeparator,
   wrapPanelHanging,
   wrapPanelLine,
   type MemoryPanelTheme,
@@ -100,12 +101,15 @@ export class PatchReviewPanel implements ComponentLike {
     const boundedWidth = panelWidth(width);
     const selectedCount = this.selected.size;
     const skippedCount = this.patch.ops.length - selectedCount;
-    const lines = renderMemoryPanelHeader(
-      this.theme,
-      boundedWidth,
-      "Memory Curator",
-      `${this.patch.patch_id} · ${selectedCount} selected · ${skippedCount} skipped`,
-    );
+    const lines = [
+      renderMemoryPanelSeparator(this.theme, boundedWidth),
+      ...renderMemoryPanelHeader(
+        this.theme,
+        boundedWidth,
+        "Memory Curator",
+        `${this.patch.patch_id} · ${selectedCount} selected · ${skippedCount} skipped`,
+      ),
+    ];
 
     if (this.editing) {
       lines.push(...this.renderEditBuffer(boundedWidth));
@@ -134,6 +138,7 @@ export class PatchReviewPanel implements ComponentLike {
         ? ["EDITING", "type", "←→ move", "Ctrl+U clear", "Enter save", "Esc cancel"]
         : ["↑↓ move", "Space toggle", "e edit", "Enter apply", "Esc cancel"],
     ));
+    lines.push(renderMemoryPanelSeparator(this.theme, boundedWidth));
     return lines;
   }
 
