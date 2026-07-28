@@ -289,8 +289,7 @@ export class InteractiveBrowser<T> {
     } else {
       const header = `    ${columns.map((column) => pad(column.label, column.actualWidth)).join(" ")}`;
       lines.push(th.dim(fit(header, W)));
-      if (framed) lines.push("");
-      else lines.push(sep);
+      if (!framed) lines.push(sep);
       for (let offset = 0; offset < pageItems.length; offset++) {
         const absolute = start + offset;
         const entry = pageItems[offset]!;

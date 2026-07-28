@@ -97,7 +97,7 @@ describe("InteractiveBrowser", () => {
     const rowIndex = plain.findIndex((line) => line.includes("item_0"));
     const controlsIndex = plain.findIndex((line) => line.includes("↑↓ move"));
     expect(plain[headerIndex - 1]?.trim()).toBe("");
-    expect(plain[rowIndex - 1]?.trim()).toBe("");
+    expect(rowIndex).toBe(headerIndex + 1);
     expect(plain[controlsIndex - 1]?.trim()).toBe("");
     expect(titleIndex).toBe(1);
     expect(plain.at(-2)).toContain("↑↓ move");
