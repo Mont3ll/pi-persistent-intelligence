@@ -109,6 +109,7 @@ export class InboxReviewOverlay {
     const auto = this.opts.autoEligibleCount;
     const lines = [
       renderMemoryPanelSeparator(th, width),
+      "",
       ...renderMemoryPanelHeader(
         th,
         width,
@@ -133,6 +134,7 @@ export class InboxReviewOverlay {
     });
     lines.push(...wrapPanelLine(actions.join(th.dim("   ")), width));
     lines.push(...renderMemoryPanelControls(th, width, ["↑↓ choose", "Enter confirm", "a/r/s shortcuts", "Esc cancel"]));
+    lines.push("");
     lines.push(renderMemoryPanelSeparator(th, width));
     return lines;
   }

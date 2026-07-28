@@ -91,6 +91,16 @@ describe("InteractiveBrowser", () => {
     const separators = plain.filter((line) => /^─+$/.test(line));
     expect(separators).toHaveLength(2);
     expect(plain[0]).toMatch(/^─+$/);
+    expect(plain[1]?.trim()).toBe("");
+    const titleIndex = plain.findIndex((line) => line.includes("Memory Inbox Browser"));
+    const headerIndex = plain.findIndex((line) => /^\s*ID\s/.test(line));
+    const rowIndex = plain.findIndex((line) => line.includes("item_0"));
+    const controlsIndex = plain.findIndex((line) => line.includes("↑↓ move"));
+    expect(plain[headerIndex - 1]?.trim()).toBe("");
+    expect(plain[rowIndex - 1]?.trim()).toBe("");
+    expect(plain[controlsIndex - 1]?.trim()).toBe("");
+    expect(titleIndex).toBeGreaterThan(1);
+    expect(plain.at(-2)?.trim()).toBe("");
     expect(plain.at(-1)).toMatch(/^─+$/);
   });
 
