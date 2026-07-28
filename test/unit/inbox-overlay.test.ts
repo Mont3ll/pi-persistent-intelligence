@@ -49,8 +49,8 @@ describe("InboxReviewOverlay", () => {
     const separators = plain.filter((line) => /^─+$/.test(line));
     expect(separators).toHaveLength(2);
     expect(plain[0]).toMatch(/^─+$/);
-    expect(plain[1]).toBe("");
-    expect(plain.at(-2)).toBe("");
+    expect(plain[1]).toContain("Memory Inbox");
+    expect(plain.at(-2)).toContain("Esc cancel");
     expect(plain.at(-1)).toMatch(/^─+$/);
     expect(lines.every((line) => visibleWidth(line) <= 36)).toBe(true);
   });

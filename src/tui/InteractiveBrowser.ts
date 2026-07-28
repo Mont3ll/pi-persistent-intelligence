@@ -276,7 +276,7 @@ export class InteractiveBrowser<T> {
     const pageItems = filtered.slice(start, endExclusive);
     const columns = this.layoutColumns(W);
     const lines: string[] = [];
-    if (framed) lines.push(sep, "");
+    if (framed) lines.push(sep);
     const title = th.title(`  ${this.opts.title}`);
     const stats = th.dim(`Page ${this.page + 1} / ${maxPage + 1} · Showing ${filtered.length ? start + 1 : 0}–${endExclusive} of ${filtered.length}${filtered.length !== this.opts.items.length ? ` (filtered from ${this.opts.items.length})` : ""}  `);
     lines.push(title + " ".repeat(Math.max(1, W - plainWidth(title) - plainWidth(stats))) + stats);
@@ -313,7 +313,7 @@ export class InteractiveBrowser<T> {
     const actions = this.opts.actions?.length ? ` · ${this.opts.actions.map((a) => `${a.key} ${a.label}`).join(" · ")}` : "";
     lines.push(fit(th.dim(`  ↑↓ move · PgUp/PgDn/n/p page · Home/End · / search · Enter/Space expand · Tab sort · S reverse · ? help · q quit${actions}`), W));
     if (this.searchMode) lines.push(fit(th.accent("  Type to filter live · Enter/Esc closes search · Ctrl+U clears"), W));
-    if (framed) lines.push("", sep);
+    if (framed) lines.push(sep);
     this.cachedWidth = width;
     this.cachedState = state;
     this.cachedLines = lines.map((line) => fit(line, W));
