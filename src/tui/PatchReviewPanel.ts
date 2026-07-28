@@ -103,7 +103,6 @@ export class PatchReviewPanel implements ComponentLike {
     const skippedCount = this.patch.ops.length - selectedCount;
     const lines = [
       renderMemoryPanelSeparator(this.theme, boundedWidth),
-      "",
       ...renderMemoryPanelHeader(
         this.theme,
         boundedWidth,
@@ -139,7 +138,6 @@ export class PatchReviewPanel implements ComponentLike {
         ? ["EDITING", "type", "←→ move", "Ctrl+U clear", "Enter save", "Esc cancel"]
         : ["↑↓ move", "Space toggle", "e edit", "Enter apply", "Esc cancel"],
     ));
-    lines.push("");
     lines.push(renderMemoryPanelSeparator(this.theme, boundedWidth));
     return lines;
   }
