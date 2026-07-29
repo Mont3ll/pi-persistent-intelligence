@@ -80,6 +80,19 @@ describe("InteractiveBrowser", () => {
     }
   });
 
+  test("uses the shared frame and spacing pattern by default", () => {
+    const plain = browser(2, 20).render(80).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+    const separators = plain.filter((line) => /^─+$/.test(line));
+    const headerIndex = plain.findIndex((line) => /^\s*ID\s/.test(line));
+    const rowIndex = plain.findIndex((line) => line.includes("item_0"));
+    const controlsIndex = plain.findIndex((line) => line.includes("↑↓ move"));
+    expect(separators).toHaveLength(2);
+    expect(plain[0]).toMatch(/^─+$/);
+    expect(rowIndex).toBe(headerIndex + 1);
+    expect(plain[controlsIndex - 1]?.trim()).toBe("");
+    expect(plain.at(-1)).toMatch(/^─+$/);
+  });
+
   test("supports a frame with only top and bottom separators", () => {
     const panel = new InteractiveBrowser<Item>({
       title: "Memory Inbox Browser",
