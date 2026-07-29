@@ -263,7 +263,7 @@ export class InteractiveBrowser<T> {
   render(width: number): string[] {
     const state = JSON.stringify({ ...this.getState(), sortKey: this.sortKey, sortAsc: this.sortAsc });
     if (this.cachedLines && this.cachedWidth === width && this.cachedState === state) return this.cachedLines;
-    const framed = this.opts.separatorStyle === "frame";
+    const framed = this.opts.separatorStyle !== "sectioned";
     const W = framed ? Math.max(1, width || 80) : Math.max(40, width || 80);
     const th = this.theme;
     const sep = th.border("─".repeat(W));
