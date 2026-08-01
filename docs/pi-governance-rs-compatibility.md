@@ -1,12 +1,12 @@
 # pi-governance-rs Compatibility
 
-`pi-persistent-intelligence` can exchange PI memory contract bundles with `pi-governance-rs` while remaining a standalone pi-agent extension.
+`pi-persistent-intelligence` can exchange PI memory contract bundles with [`pi-governance-rs`](https://github.com/Mont3ll/pi-governance-rs) while remaining a standalone pi-agent extension.
 
 ## Relationship
 
 `pi-persistent-intelligence` is native governed memory for the pi coding agent. It does not require Rust and does not host or run an MCP server.
 
-`pi-governance-rs` is the standalone Rust CLI/MCP runtime for governed memory across Codex, Claude, OpenCode, Cursor, PI agent, and other MCP-capable tools. It remains the MCP runtime.
+[`pi-governance-rs`](https://github.com/Mont3ll/pi-governance-rs) is the standalone Rust CLI/MCP runtime for governed memory across Codex, Claude, OpenCode, Cursor, PI agent, and other MCP-capable tools. It remains the MCP runtime.
 
 Both projects can be used alone. Use both only when you want pi-agent-native memory UX and a separate global MCP governed-memory runtime.
 

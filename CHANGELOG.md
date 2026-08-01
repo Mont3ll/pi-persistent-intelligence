@@ -4,17 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-01
+
 ### Added
 
 - Added deterministic natural-language capture for direct user preferences, corrections, repository conventions, and reusable workflows.
 - Added bounded repository activity attribution, per-turn checkpoints, recurrence reinforcement, multi-project candidate groups, and positive applicability filtering.
 - Added report-only capture quality and historical audit commands plus fingerprinted, backed-up, candidate-only backfill.
+- Added redacted replay fixtures for personal preferences, task wrappers, multi-repository work, and consolidation failure.
 
 ### Changed
 
 - Direct global preferences now become review-only L2 candidates instead of depending on session-end consolidation or launch-directory scope.
+- Explicit repository language takes precedence over generic preference wording, while launch directory remains weak scope evidence.
 - Global preferences are recalled only for positively matching task contexts while the 14 KB default context budget remains unchanged.
-- Memory Inbox and Memory Curator now share restrained colors, spacing, navigation language, and width-safe rendering.
+- Grouped multi-project approvals remain resumable after partial application.
+- Memory Inbox, Memory Curator, and interactive browsers now share restrained framing, colors, spacing, navigation language, and width-safe rendering.
+
+### Fixed
+
+- Historical capture audit now excludes nested subagent sessions, generated summaries when direct indexed user turns are available, and unrelated repository activity.
+- Capture fingerprints now cover recurrence, source sessions, evidence, activity, scope, and trust metadata so approved previews fail closed on drift.
 
 ## [0.14.0] - 2026-07-24
 
