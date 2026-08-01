@@ -42,11 +42,17 @@ describe("docs contract", () => {
     expect(publicDocs).not.toContain('"meta_consolidation"');
   });
 
-  test("package identity and public install command are consistent", () => {
+  test("package identity, producer metadata, and public docs are version-consistent", () => {
     expect(readme).toContain(pkg.name);
     expect(readme).toContain(`pi install npm:${pkg.name}`);
     const changelog = readFileSync("CHANGELOG.md", "utf-8");
+    const wikiIndex = readFileSync("docs/wiki/index.md", "utf-8");
+    const exportDoc = readFileSync("docs/export-import-pi-governance.md", "utf-8");
+    const compatibilitySource = readFileSync("src/pi-governance-compat.ts", "utf-8");
     expect(changelog).toContain(pkg.version);
+    expect(wikiIndex).toContain(`v${pkg.version}`);
+    expect(exportDoc).toContain(`"version": "${pkg.version}"`);
+    expect(compatibilitySource).toContain(`const PRODUCER_VERSION = "${pkg.version}"`);
   });
 
   test("package files exclude local reports, fixtures, tests, and private memory", () => {

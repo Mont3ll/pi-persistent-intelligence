@@ -11,7 +11,7 @@ All notable changes to this project will be documented in this file.
 - Added deterministic natural-language capture for direct user preferences, corrections, repository conventions, and reusable workflows.
 - Added bounded repository activity attribution, per-turn checkpoints, recurrence reinforcement, multi-project candidate groups, and positive applicability filtering.
 - Added report-only capture quality and historical audit commands plus fingerprinted, backed-up, candidate-only backfill.
-- Added redacted replay fixtures for personal preferences, task wrappers, multi-repository work, and consolidation failure.
+- Added synthetic replay fixtures for personal preferences, task wrappers, multi-repository work, and consolidation failure.
 
 ### Changed
 
