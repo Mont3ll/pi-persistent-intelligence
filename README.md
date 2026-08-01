@@ -110,7 +110,7 @@ Global preferences use positive, context-sensitive applicability. A writing pref
 
 Use `/memory-capture-quality` for aggregate capture health, `/memory-capture-audit` for report-only historical findings, and `/memory-capture-backfill` for fingerprinted candidate-only recovery. Backfill preview is the default and does not activate memories or apply cleanup proposals.
 
-## Relationship to pi-governance-rs
+## Relationship to [pi-governance-rs](https://github.com/Mont3ll/pi-governance-rs)
 
 The ecosystem model is:
 
@@ -127,7 +127,7 @@ Shared PI memory contract
 
 `pi-persistent-intelligence` is native governed memory for the pi coding agent.
 
-`pi-governance-rs` is the standalone Rust CLI/MCP runtime for governed memory across Codex, Claude, OpenCode, Cursor, PI agent, and other MCP-capable tools.
+[`pi-governance-rs`](https://github.com/Mont3ll/pi-governance-rs) is the standalone Rust CLI/MCP runtime for governed memory across Codex, Claude, OpenCode, Cursor, PI agent, and other MCP-capable tools.
 
 Both can be used alone. Both can interoperate through the shared PI memory contract, compatible import/export, and optional bridge diagnostics.
 
