@@ -103,7 +103,7 @@ describe("pi-governance-rs compatibility bundle", () => {
 
       expect(bundle.schema_version).toBe(1);
       expect(bundle.format).toBe("pi-governance");
-      expect(bundle.producer).toEqual({ name: "pi-persistent-intelligence", version: "0.14.0" });
+      expect(bundle.producer).toEqual({ name: "pi-persistent-intelligence", version: "0.15.0" });
       expect(bundle.records.map((r) => [r.id, r.layer])).toContainEqual(["mem_l1", "l1_identity"]);
       expect(bundle.records.map((r) => [r.id, r.layer])).toContainEqual(["mem_l2", "l2_playbook"]);
       expect(bundle.records.find((r) => r.id === "mem_deleted")?.status).toBe("tombstoned");
