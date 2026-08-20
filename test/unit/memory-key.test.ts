@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createMemoryKey, getCandidateMemoryKey, getRecordMemoryKey, inferMemoryTopic, normalizeMemoryKeyInput } from "../../src/memory-key";
+import { createMemoryKey, createMemoryKeyV2, getCandidateMemoryKey, getRecordMemoryKey, inferMemoryTopic, normalizeMemoryKeyInput } from "../../src/memory-key";
 import type { CaptureCandidate, MemoryRecord } from "../../src/types";
 
 function record(overrides: Partial<MemoryRecord> = {}): MemoryRecord {
@@ -54,14 +54,82 @@ describe("memory key utilities", () => {
     expect(a).toBe("project-pi|project|pi-persistent-intelligence|canonical-jsonl|workflow");
   });
 
-  test("infers memory topic from tags before statement fallback", () => {
+  test("creates explicitly versioned v2 keys", () => {
+    expect(createMemoryKeyV2({
+      profile_id: "legacy",
+      scope_level: "global",
+      scope_ref: "global",
+      topic: "duplicate traversals",
+      ruleType: "avoid_pattern",
+    })).toBe("v2|legacy|global|global|duplicate-traversals|avoid-pattern");
+  });
+
+  test("infers memory topic from semantic tags before statement fallback", () => {
     expect(inferMemoryTopic({ tags: ["workflow", "memory-governance"], statement: "Use canonical JSONL" })).toBe("memory-governance");
     expect(inferMemoryTopic({ tags: ["workflow"], statement: "Use canonical JSONL as source" })).toBe("canonical-jsonl");
   });
 
-  test("generates runtime key for legacy records without normalized_key", () => {
+  test("excludes capture, intent, lifecycle, applicability, and provenance tags from topics", () => {
+    const cases = [
+      { tags: ["capture"], statement: "Avoid duplicate traversals.", expected: "duplicate-traversals" },
+      { tags: ["capture-backfill"], statement: "Avoid snake_case unless required.", expected: "snake-case-unless-required" },
+      { tags: ["user_preference"], statement: "Avoid promotional language.", expected: "promotional-language" },
+      { tags: ["workflow_playbook"], statement: "Run the release audit before publishing.", expected: "run-release-audit-before-publishing" },
+      { tags: ["writing"], statement: "Prefer sentence case headings.", expected: "sentence-case-headings" },
+      { tags: ["supersedes:mem_old", "capture"], statement: "Avoid duplicate traversals.", expected: "duplicate-traversals" },
+      { tags: ["legacy-evidence-backfill"], statement: "Avoid duplicate traversals.", expected: "duplicate-traversals" },
+    ];
+    for (const item of cases) {
+      expect(inferMemoryTopic({ tags: item.tags, statement: item.statement })).toBe(item.expected);
+    }
+    expect(inferMemoryTopic({
+      tags: ["capture", "user_preference", "writing", "memory-governance"],
+      statement: "Prefer explicit review.",
+    })).toBe("memory-governance");
+  });
+
+  test("gives distinct captured avoid preferences distinct v2 keys", () => {
+    const keys = [
+      "Avoid duplicate traversals.",
+      "Avoid snake_case unless the implementation requires it.",
+    ].map((statement) => getRecordMemoryKey(record({
+      scope: { type: "global" },
+      profile_id: "legacy",
+      tags: ["capture-backfill", "user_preference", "writing"],
+      statement,
+      ruleType: "avoid_pattern",
+      normalized_key: undefined,
+    })));
+    expect(new Set(keys).size).toBe(2);
+    expect(keys.every((key) => key.startsWith("v2|"))).toBe(true);
+  });
+
+  test("normalizes supported equivalent preferences to the same topic", () => {
+    const first = inferMemoryTopic({ tags: ["capture", "user_preference", "writing"], statement: "Avoid em dashes entirely." });
+    const second = inferMemoryTopic({ tags: ["capture", "user_preference", "writing"], statement: "Never use em-dashes when writing for me." });
+    expect(first).toBe("em-dash");
+    expect(second).toBe(first);
+  });
+
+  test("isolates v2 keys by profile, project, domain, and rule type", () => {
+    const base = record({ normalized_key: undefined, tags: ["capture"], statement: "Avoid duplicate traversals.", scope: { type: "global" }, profile_id: "profile:a", ruleType: "avoid_pattern" });
+    const key = getRecordMemoryKey(base);
+    expect(getRecordMemoryKey({ ...base, profile_id: "profile:b" })).not.toBe(key);
+    expect(getRecordMemoryKey({ ...base, scope: { type: "project", project: "one" } })).not.toBe(key);
+    expect(getRecordMemoryKey({ ...base, scope: { type: "project", project: "two" } })).not.toBe(getRecordMemoryKey({ ...base, scope: { type: "project", project: "one" } }));
+    expect(getRecordMemoryKey({ ...base, scope: { type: "domain", domains: ["health"] } })).not.toBe(getRecordMemoryKey({ ...base, scope: { type: "domain", domains: ["education"] } }));
+    expect(getRecordMemoryKey({ ...base, ruleType: "prefer_pattern" })).not.toBe(key);
+  });
+
+  test("canonicalizes domain ordering", () => {
+    const base = record({ normalized_key: undefined, tags: ["capture"], statement: "Avoid duplicate traversals.", profile_id: "profile:a", ruleType: "avoid_pattern" });
+    expect(getRecordMemoryKey({ ...base, scope: { type: "domain", domains: ["writing", "health", "writing"] } }))
+      .toBe(getRecordMemoryKey({ ...base, scope: { type: "domain", domains: ["health", "writing"] } }));
+  });
+
+  test("generates a v2 runtime key for legacy records without normalized_key", () => {
     const legacy = record({ normalized_key: undefined, profile_id: undefined });
-    expect(getRecordMemoryKey(legacy)).toBe("legacy|project|pi-persistent-intelligence|memory|workflow");
+    expect(getRecordMemoryKey(legacy)).toBe("v2|legacy|project|pi-persistent-intelligence|memory|workflow");
   });
 
   test("uses explicit normalized_key when present", () => {
