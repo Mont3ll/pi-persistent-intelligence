@@ -88,6 +88,14 @@ describe("memory key utilities", () => {
     })).toBe("memory-governance");
   });
 
+  test("keeps distinct long avoid preferences distinct after the readable topic prefix", () => {
+    const first = inferMemoryTopic({ tags: ["capture"], statement: "Avoid alpha beta gamma delta epsilon zeta red." });
+    const second = inferMemoryTopic({ tags: ["capture"], statement: "Avoid alpha beta gamma delta epsilon zeta blue." });
+    expect(first).not.toBe(second);
+    expect(first).toMatch(/^alpha-beta-gamma-delta-epsilon-zeta-[a-f0-9]{12}$/);
+    expect(second).toMatch(/^alpha-beta-gamma-delta-epsilon-zeta-[a-f0-9]{12}$/);
+  });
+
   test("gives distinct captured avoid preferences distinct v2 keys", () => {
     const keys = [
       "Avoid duplicate traversals.",

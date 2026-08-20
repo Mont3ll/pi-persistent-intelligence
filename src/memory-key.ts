@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { CaptureCandidate, MemoryKeyParts, MemoryRecord, MemoryRuleType, NormalizedMemoryKey } from "./types";
 
 const GENERIC_TAGS = new Set([
@@ -103,7 +104,11 @@ function topicFromStatement(statement: string): string {
   const tokens = normalized
     .split(/[^a-z0-9]+/)
     .filter((token) => (token.length > 2 || token === "em" || token === "en") && !STOPWORDS.has(token));
-  return tokens.slice(0, 6).join("-") || "general";
+  if (tokens.length === 0) return "general";
+  const prefix = tokens.slice(0, 6).join("-");
+  if (tokens.length <= 6) return prefix;
+  const digest = createHash("sha256").update(tokens.join("-")).digest("hex").slice(0, 12);
+  return `${prefix}-${digest}`;
 }
 
 /** Reproduces v1 tag-first topic inference for bounded compatibility checks. */
@@ -155,6 +160,11 @@ export function getDerivedRecordMemoryKeyV2(record: MemoryRecord): NormalizedMem
 function structuralV1Topic(key: string): string | null {
   const parts = key.split("|");
   return parts.length === 5 ? parts[3] : null;
+}
+
+export function isStructuralMemoryKey(key: string): boolean {
+  const parts = key.split("|");
+  return parts.length === 5 || (parts.length === 6 && parts[0] === "v2");
 }
 
 export function isExcludedLegacyMemoryKey(key: string): boolean {
