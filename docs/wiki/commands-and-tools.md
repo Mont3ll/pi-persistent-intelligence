@@ -351,7 +351,7 @@ Builds a deterministic candidate-only recovery preview. Apply requires the exact
 
 ### `/memory-store-quality`
 
-Shows aggregate store health across memory quality, relationship quality, recall effectiveness, governance, inbox, and runtime signals. This is report-only.
+Shows aggregate store health across memory quality, relationship quality, recall effectiveness, governance, inbox, and runtime signals. Headline memory and relationship scores measure the active operational population. The report separately exposes total, review, and historical inventory; retained history remains inspectable but does not depress current-health scores or create active recommendations. This is report-only.
 
 ```bash
 /memory-store-quality
@@ -373,7 +373,7 @@ Reviews recall telemetry: selected memories, excluded memories, never-recalled m
 
 ### `/memory-relationship-quality`
 
-Analyzes memory graph relationship health, including orphan/dead-end memories, weak evidence links, hub concentration, and useful relationship density. This is report-only.
+Analyzes memory graph relationship health, including orphan/dead-end memories, weak evidence links, hub concentration, and useful relationship density. Active relationships determine headline scores and recommendations. Historical lifecycle edges and auxiliary graph context remain visible in separately counted populations. This is report-only.
 
 ```bash
 /memory-relationship-quality
@@ -383,7 +383,7 @@ Analyzes memory graph relationship health, including orphan/dead-end memories, w
 
 ### `/memory-simulate-patch <patch-id>`
 
-Previews how applying a patch would affect memory quality, relationship quality, and store quality scores. It never calls patch application and reports `mutation_performed: false`.
+Previews how applying a patch would affect active memory quality, active relationship quality, store quality, and active/review/historical inventory. It never calls patch application and reports `mutation_performed: false`.
 
 ```bash
 /memory-simulate-patch patch_123 --plain

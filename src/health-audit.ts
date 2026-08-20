@@ -76,7 +76,7 @@ export interface MemoryHealthAuditReport {
   recommendations: HealthAuditRecommendation[];
   snapshot: HealthAuditSnapshot;
   trend?: HealthAuditTrend;
-  store_quality?: Pick<StoreQualityReport, "overall_score" | "status" | "metrics" | "recommendations" | "mutation_performed">;
+  store_quality?: Pick<StoreQualityReport, "overall_score" | "status" | "metrics" | "recommendations" | "inputs" | "mutation_performed">;
   mutation_performed: false;
 }
 
@@ -283,7 +283,7 @@ export function runMemoryHealthAudit(root: string, options: RunMemoryHealthAudit
     recommendations: findings.filter((f) => f.severity !== "info").map(recommendation),
     snapshot,
     trend: trendFor(root, snapshot),
-    store_quality: { overall_score: storeQuality.overall_score, status: storeQuality.status, metrics: storeQuality.metrics, recommendations: storeQuality.recommendations, mutation_performed: false },
+    store_quality: { overall_score: storeQuality.overall_score, status: storeQuality.status, metrics: storeQuality.metrics, recommendations: storeQuality.recommendations, inputs: storeQuality.inputs, mutation_performed: false },
     mutation_performed: false,
   };
 }

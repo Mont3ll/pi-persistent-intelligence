@@ -60,6 +60,12 @@ describe("governance simulation", () => {
     expect(report.before.store_quality).toBeGreaterThan(0);
     expect(report.after.store_quality).toBeGreaterThan(0);
     expect(report.deltas.memory_count_delta).toBe(1);
+    expect(report.before.active_memory_count).toBe(1);
+    expect(report.before.historical_memory_count).toBe(0);
+    expect(report.after.active_memory_count).toBe(1);
+    expect(report.after.historical_memory_count).toBe(1);
+    expect(report.deltas.historical_memory_count_delta).toBe(1);
+    expect(report.after.memory_quality).toBe(report.before.memory_quality);
     expect(report.affected_memory_ids).toEqual(expect.arrayContaining(["mem_old", "mem_new"]));
     expect(report.review_required).toBe(true);
     expect(report.mutation_performed).toBe(false);

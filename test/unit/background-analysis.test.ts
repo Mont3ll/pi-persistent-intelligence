@@ -53,13 +53,13 @@ describe("background analysis queue", () => {
     expect(readFileSync(auditJob.output_artifact_path!, "utf-8")).toContain("PI Memory Health Audit");
     expect(auditJob.warnings?.join(" ") ?? "").toContain("Review-only");
     const relationshipJob = completed.find((job) => job.kind === "memory_relationship_quality")!;
-    expect(readFileSync(relationshipJob.output_artifact_path!, "utf-8")).toContain("PI Relationship Quality Report");
+    expect(readFileSync(relationshipJob.output_artifact_path!, "utf-8")).toContain("Active average relationship quality");
     expect(relationshipJob.warnings?.join(" ") ?? "").toContain("Review-only");
     const recallJob = completed.find((job) => job.kind === "memory_recall_effectiveness")!;
     expect(readFileSync(recallJob.output_artifact_path!, "utf-8")).toContain("PI Recall Effectiveness Report");
     expect(recallJob.warnings?.join(" ") ?? "").toContain("Review-only");
     const storeQualityJob = completed.find((job) => job.kind === "memory_store_quality")!;
-    expect(readFileSync(storeQualityJob.output_artifact_path!, "utf-8")).toContain("PI Store Quality Dashboard");
+    expect(readFileSync(storeQualityJob.output_artifact_path!, "utf-8")).toContain("Memory inventory:");
     expect(storeQualityJob.warnings?.join(" ") ?? "").toContain("Review-only");
     expect(loadAllRecords(r)).toHaveLength(before);
     rmSync(r, { recursive: true, force: true });

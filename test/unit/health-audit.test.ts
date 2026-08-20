@@ -40,6 +40,7 @@ describe("memory health audit", () => {
   test("builds an explainable report and does not mutate durable memory", () => {
     const r = root();
     unsafeAddMemoryRecord(r, record("mem_a", "Use bun test for this repository."));
+    unsafeAddMemoryRecord(r, record("mem_deleted", "Retained historical guidance.", { status: "deleted" }));
     appendEvidenceRecord(r, { id: "ev_ok", resource_id: "res", profile_id: "default", created_at: "2026-06-01", source_kind: "conversation", source_summary: "User said to use bun test.", trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: ["mem_a"], redaction_status: "none" });
     const before = JSON.stringify(loadAllRecords(r));
 
@@ -51,6 +52,8 @@ describe("memory health audit", () => {
     expect(report.categories.map((c) => c.id)).toContain("relationship_quality");
     expect(report.snapshot.active_memories).toBe(1);
     expect(report.store_quality?.overall_score).toBeGreaterThan(0);
+    expect(report.store_quality?.inputs).toMatchObject({ total_memory_records: 2, active_memories: 1, historical_memories: 1 });
+    expect(report.store_quality?.metrics.find((metric) => metric.id === "memory_quality")?.score).toBeGreaterThan(80);
     expect(report.findings.every((finding) => finding.mutation_performed === false)).toBe(true);
     expect(JSON.stringify(loadAllRecords(r))).toBe(before);
     rmSync(r, { recursive: true, force: true });
