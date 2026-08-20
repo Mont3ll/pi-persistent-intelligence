@@ -23,6 +23,7 @@ export interface EvidenceResolutionInput {
   scopeLevel: string;
   scopeRef?: string;
   candidateText?: string;
+  candidateSourceVerified?: boolean;
   candidateTrustClass?: EvidenceTrustClass;
   candidateDurability?: DurabilitySignal;
   provenance?: "legacy_evidence_backfill_v2" | "curation_evidence_v1";
@@ -77,6 +78,9 @@ export function resolveEvidenceReference(input: EvidenceResolutionInput): Eviden
   if (session) {
     if (!input.candidateText?.trim()) return { status: "unresolved", reason: "sourceMissing" };
     return resolvedEvidence(input, input.candidateText, session[1]);
+  }
+  if (input.candidateSourceVerified && input.candidateText?.trim()) {
+    return resolvedEvidence(input, input.candidateText, undefined, input.reference);
   }
   if (!input.reference.trim() || input.reference.includes(":")) return { status: "unresolved", reason: "unsupportedReference" };
 

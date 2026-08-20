@@ -6,7 +6,7 @@ import { renderMemoryToDisk } from "./render";
 import { ensureMemoryDirs } from "./paths";
 import { writeVaultPromotionReport } from "./vaultPromotion";
 import { createDeletionTombstone, appendDeletionTombstone, isTombstonedRecord } from "./tombstones";
-import { readEvidenceRecords, redactEvidenceForMemory } from "./evidence";
+import { appendEvidenceRecordIfMissing, readEvidenceRecords, redactEvidenceForMemory } from "./evidence";
 import { collectPrivacyCandidateCorrelations, purgeCorrelatedPrivacyArtifacts, redactPrivacyPatchForExecution, redactPrivacyPatchForPersistence, validatePrivacyArtifactSet } from "./privacy-artifacts";
 import { affectedRecordIdsFromPatchOps, postMutationModeFromOps, runPostMutationChecks } from "./post-mutation-checks";
 import type { MemoryPatch, PatchOp, PatchSkip, PatchSkipReason } from "./types";
@@ -52,6 +52,16 @@ function applyDecision(root: string, op: PatchOp): ApplyDecision {
   if ((op.record || op.to_record) && hasInvalidatedEvidence(root, op)) {
     return reject("invalidated_evidence", `Operation ${op.op_id} references redacted or deleted evidence.`);
   }
+  if (op.requiresStructuredEvidence && (op.op === "add" || op.op === "supersede")) {
+    const record = op.record ?? op.to_record;
+    const validIds = new Set([
+      ...readEvidenceRecords(root).filter((item) => item.redaction_status !== "redacted" && item.redaction_status !== "deleted").map((item) => item.id),
+      ...(op.supportingEvidence ?? []).map((item) => item.id),
+    ]);
+    if (record?.evidence.length && !record.evidence.some((item) => validIds.has(item.ref))) {
+      return reject("unresolved_evidence", `Operation ${op.op_id} has no verified structured evidence.`);
+    }
+  }
 
   if (op.op === "add") {
     const id = op.record!.id;
@@ -86,6 +96,7 @@ function markCandidateIfNew(root: string, id: string, status: "patched" | "rejec
 }
 
 function applyOp(root: string, patchId: string, op: PatchOp, now: string): void {
+  for (const evidence of op.supportingEvidence ?? []) appendEvidenceRecordIfMissing(root, evidence);
   if (op.op === "add") {
     if (!op.record) throw new Error(`Patch op ${op.op_id} missing record`);
     addMemoryRecordFromPatch(root, op.record);
@@ -272,7 +283,10 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
     const appliedCount = candidateOps.filter((op) => applied_ops.includes(op.op_id)).length;
     const selectedCount = candidateOps.filter((op) => isSelected(op, options.selectedOpIds)).length;
     if (appliedCount === candidateOps.length) markCandidateIfNew(root, candidateId, "patched");
-    else if (selectedCount > 0 && appliedCount === 0) markCandidateIfNew(root, candidateId, "rejected");
+    else if (selectedCount > 0 && appliedCount === 0) {
+      const selectedSkips = skipped_ops.filter((skip) => skip.candidate_id === candidateId && candidateOps.some((op) => op.op_id === skip.op_id));
+      if (!selectedSkips.every((skip) => skip.reason === "unresolved_evidence")) markCandidateIfNew(root, candidateId, "rejected");
+    }
   }
 
   const status: MemoryPatch["status"] = applied_ops.length === 0 && skipped_ops.length > 0

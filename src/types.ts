@@ -544,6 +544,8 @@ export interface PatchOp {
   risk: "low" | "medium" | "high";
   default_selected: boolean;
   candidate_id?: string;
+  supportingEvidence?: EvidenceRecord[];
+  requiresStructuredEvidence?: boolean;
   deletion_mode?: DeletionMode;
   deletion_reason?: DeletionReason;
 }
@@ -552,6 +554,7 @@ export type PatchSkipReason =
   | "not_selected"
   | "duplicate_id"
   | "invalidated_evidence"
+  | "unresolved_evidence"
   | "tombstoned"
   | "missing_target"
   | "target_terminal"

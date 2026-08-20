@@ -78,6 +78,11 @@ export function appendEvidenceRecord(root: string, record: EvidenceRecord): Evid
   return normalized;
 }
 
+export function appendEvidenceRecordIfMissing(root: string, record: EvidenceRecord): EvidenceRecord {
+  const existing = readEvidenceRecords(root).find((item) => item.id === record.id);
+  return existing ?? appendEvidenceRecord(root, record);
+}
+
 export function readEvidenceRecords(root: string): EvidenceRecord[] {
   const paths = ensureMemoryDirs(root);
   return readJsonl<EvidenceRecord>(paths.memory.evidence);
