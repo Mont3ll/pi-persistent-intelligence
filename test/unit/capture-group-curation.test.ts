@@ -49,6 +49,24 @@ describe("capture group curation", () => {
     ]);
     expect(new Set(patch.ops.map((op) => op.candidate_id))).toEqual(new Set(["cap_grouped"]));
     expect(new Set(patch.ops.map((op) => op.record?.id)).size).toBe(2);
+    expect(patch.ops.map((op) => op.record?.normalized_key)).toEqual([
+      "v2|legacy|project|repo-a|run-release-audit-before-publishing|workflow",
+      "v2|legacy|project|repo-b|run-release-audit-before-publishing|workflow",
+    ]);
+  });
+
+  test("derives a separate normalized key for every domain target", () => {
+    const dir = root();
+    appendCandidate(dir, candidate([
+      { type: "domain", domain: "health", confidence: 0.9, basis: ["explicit_domain"] },
+      { type: "domain", domain: "education", confidence: 0.9, basis: ["explicit_domain"] },
+    ]));
+    const patch = curateInbox(dir, { now: "2026-07-26T00:00:00Z", mode: "propose", minEvidenceCount: 1 });
+
+    expect(patch.ops.map((op) => op.record?.normalized_key)).toEqual([
+      "v2|legacy|domain|health|run-release-audit-before-publishing|workflow",
+      "v2|legacy|domain|education|run-release-audit-before-publishing|workflow",
+    ]);
   });
 
   test("keeps grouped candidate pending after partial project approval", () => {

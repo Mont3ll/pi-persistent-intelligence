@@ -9,6 +9,7 @@ import { loadConfig } from "./config";
 import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
 import { createInquiryFromCandidate } from "./inquiries";
+import { getDerivedRecordMemoryKeyV2, isStructuralMemoryKey } from "./memory-key";
 import type { CaptureCandidate, CaptureScopeTarget, MemoryPatch, MemoryRecord, MemoryScope, PatchOp } from "./types";
 
 interface CurateOptions {
@@ -101,6 +102,9 @@ function candidateToRecord(candidate: CaptureCandidate, now: string, target?: Ca
   const created = dateOnly(now);
   return {
     id: memoryIdFromCandidate(candidate, target),
+    resource_id: candidate.resource_id,
+    profile_id: candidate.profile_id,
+    thread_id: candidate.thread_id,
     layer: "L2",
     scope: target ? memoryScopeFromTarget(target) : candidate.source.cwd ? inferProjectScope(candidate.source.cwd) : { type: "global" },
     tags: candidateTags(candidate),
@@ -159,7 +163,11 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
 
     return materializationTargets.map((scopeTarget) => {
       opIndex++;
-      const record = { ...candidateToRecord(candidate, options.now, scopeTarget), normalized_key: candidate.normalized_key };
+      const baseRecord = candidateToRecord(candidate, options.now, scopeTarget);
+      const normalizedKey = candidate.normalized_key && !isStructuralMemoryKey(candidate.normalized_key)
+        ? candidate.normalized_key
+        : getDerivedRecordMemoryKeyV2(baseRecord);
+      const record = { ...baseRecord, normalized_key: normalizedKey };
       const base = {
         op_id: `op_${String(opIndex).padStart(3, "0")}`,
         candidate_id: candidate.id,
