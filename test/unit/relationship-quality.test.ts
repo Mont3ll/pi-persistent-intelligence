@@ -51,7 +51,9 @@ describe("relationship quality analyzer", () => {
 
     const report = analyzeRelationshipQuality(r, { now: "2026-07-07T00:00:00Z" });
 
+    expect(report.heuristic_version).toBe("relationship-quality-v2");
     expect(report.summary.total_edges).toBeGreaterThanOrEqual(5);
+    expect(report.summary.active_edge_count + report.summary.historical_edge_count + report.summary.auxiliary_edge_count).toBe(report.summary.total_edges);
     expect(report.summary.weak_edge_count).toBeGreaterThanOrEqual(1);
     expect(report.summary.orphan_memory_count).toBe(1);
     expect(report.summary.dangling_edge_count).toBe(0);
@@ -59,6 +61,9 @@ describe("relationship quality analyzer", () => {
     expect(report.memory_nodes.find((node) => node.memory_id === "mem_orphan")?.signals).toContain("orphan_memory");
     expect(report.relationships.find((edge) => edge.to === "evidence_record:ev_redacted")?.signals).toContain("redacted_or_deleted_evidence");
     expect(report.relationships.find((edge) => edge.type === "contradicted_by")?.quality_band).toBe("weak");
+    expect(report.relationships.find((edge) => edge.type === "supersedes")?.quality_population).toBe("historical");
+    expect(report.memory_nodes.find((node) => node.memory_id === "mem_old")?.quality_population).toBe("historical");
+    expect(report.recommendations.some((rec) => rec.affected_ids.includes("mem_old"))).toBe(false);
     expect(report.recommendations.every((rec) => rec.review_required && rec.mutation_performed === false)).toBe(true);
     const contextReport = analyzeRelationshipQualityFromGraph({ generated_at: "2026-07-07T00:00:00Z", graph: exportMemoryGraph(r, "2026-07-07T00:00:00Z"), records: loadAllRecords(r), evidence: readEvidenceRecords(r) });
     expect(contextReport.summary).toEqual(report.summary);
@@ -66,5 +71,32 @@ describe("relationship quality analyzer", () => {
     expect(JSON.stringify(loadAllRecords(r))).toBe(before);
     expect(renderRelationshipQualityReport(report)).toContain("No automatic mutation performed");
     rmSync(r, { recursive: true, force: true });
+  });
+
+  test("retains broken historical edges without depressing active relationship quality", () => {
+    const active = rec("mem_active", "Current guidance.");
+    const deleted = rec("mem_deleted", "Deleted guidance.", { status: "deleted", evidence: [] });
+    const graph = {
+      generated_at: "2026-07-07T00:00:00Z",
+      nodes: [
+        { id: "memory_record:mem_active", type: "memory_record" as const, label: "active" },
+        { id: "memory_record:mem_deleted", type: "memory_record" as const, label: "deleted" },
+        { id: "evidence_record:ev_live", type: "evidence_record" as const, label: "live" },
+      ],
+      edges: [
+        { id: "active-support", type: "supported_by" as const, from: "memory_record:mem_active", to: "evidence_record:ev_live" },
+        ...Array.from({ length: 5 }, (_, index) => ({ id: `historical-${index}`, type: "supported_by" as const, from: "memory_record:mem_deleted", to: `evidence_record:missing-${index}` })),
+      ],
+    };
+    const evidence = [{ id: "ev_live", resource_id: "res", profile_id: "default", created_at: "2026-07-01", source_kind: "conversation" as const, source_summary: "support", trust_class: "direct_user_instruction" as const, polarity: "supports" as const, related_memory_ids: ["mem_active"], redaction_status: "none" as const }];
+
+    const report = analyzeRelationshipQualityFromGraph({ generated_at: graph.generated_at, graph, records: [active, deleted], evidence });
+
+    expect(report.summary.total_edges).toBe(6);
+    expect(report.summary.active_edge_count).toBe(1);
+    expect(report.summary.historical_edge_count).toBe(5);
+    expect(report.summary.average_relationship_quality).toBeGreaterThanOrEqual(90);
+    expect(report.summary.weak_edge_count).toBe(0);
+    expect(report.relationships).toHaveLength(6);
   });
 });
