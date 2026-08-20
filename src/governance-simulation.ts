@@ -13,6 +13,8 @@ export interface GovernanceSimulationScorecard {
   store_quality: number;
   memory_count: number;
   active_memory_count: number;
+  review_memory_count: number;
+  historical_memory_count: number;
 }
 
 export interface GovernanceSimulationReport {
@@ -30,6 +32,8 @@ export interface GovernanceSimulationReport {
     store_quality_delta: number;
     memory_count_delta: number;
     active_memory_count_delta: number;
+    review_memory_count_delta: number;
+    historical_memory_count_delta: number;
   };
   review_required: true;
   mutation_performed: false;
@@ -109,7 +113,9 @@ function scorecard(records: MemoryRecord[], evidence: ReturnType<typeof readEvid
     relationship_quality: relationships.summary.average_relationship_quality,
     store_quality: store.overall_score,
     memory_count: records.length,
-    active_memory_count: records.filter((record) => record.status === "active").length,
+    active_memory_count: memory.summary.active_record_count,
+    review_memory_count: memory.summary.review_record_count,
+    historical_memory_count: memory.summary.historical_record_count,
   };
 }
 
@@ -148,6 +154,8 @@ export function simulatePatchImpact(root: string, patch: MemoryPatch, options: S
       store_quality_delta: after.store_quality - before.store_quality,
       memory_count_delta: after.memory_count - before.memory_count,
       active_memory_count_delta: after.active_memory_count - before.active_memory_count,
+      review_memory_count_delta: after.review_memory_count - before.review_memory_count,
+      historical_memory_count_delta: after.historical_memory_count - before.historical_memory_count,
     },
     review_required: true,
     mutation_performed: false,
@@ -170,6 +178,9 @@ export function renderGovernanceSimulationReport(report: GovernanceSimulationRep
     `- Relationship quality: ${report.before.relationship_quality} → ${report.after.relationship_quality} (${signed(report.deltas.relationship_quality_delta)})`,
     `- Store quality: ${report.before.store_quality} → ${report.after.store_quality} (${signed(report.deltas.store_quality_delta)})`,
     `- Memory count: ${report.before.memory_count} → ${report.after.memory_count} (${signed(report.deltas.memory_count_delta)})`,
+    `- Active memories: ${report.before.active_memory_count} → ${report.after.active_memory_count} (${signed(report.deltas.active_memory_count_delta)})`,
+    `- Review memories: ${report.before.review_memory_count} → ${report.after.review_memory_count} (${signed(report.deltas.review_memory_count_delta)})`,
+    `- Historical memories: ${report.before.historical_memory_count} → ${report.after.historical_memory_count} (${signed(report.deltas.historical_memory_count_delta)})`,
     "",
     `Affected memories: ${report.affected_memory_ids.join(", ") || "none"}`,
     "Review required. No automatic mutation performed.",
