@@ -218,16 +218,16 @@ export function memoryQualityBrowserOptions(report: MemoryQualityReport): Browse
   const recommendationsByMemory = new Map(report.items.map((item) => [item.memory_id, report.recommendations.filter((rec) => rec.memory_id === item.memory_id)]));
   return {
     title: "Memory Quality Browser",
-    subtitle: `Average ${report.summary.average_quality}/100 · ${report.summary.low_quality_count} low-quality · ${report.summary.stale_count} stale · report-only`,
+    subtitle: `Active average ${report.summary.average_quality}/100 · ${report.summary.active_record_count} active · ${report.summary.historical_record_count} historical · report-only`,
     items: report.items.map((item) => {
       const recommendations = recommendationsByMemory.get(item.memory_id) ?? [];
       return {
         id: item.memory_id,
         item,
-        status: item.quality_score < 50 ? "error" : item.quality_score < 70 ? "warning" : "healthy",
-        searchText: `${item.memory_id} ${item.lifecycle_state} ${item.status} ${item.signals.join(" ")} ${item.reasons.join(" ")} ${item.statement_excerpt}`,
+        status: item.quality_population === "historical" ? "info" : item.quality_population === "review" ? "warning" : item.quality_score < 50 ? "error" : item.quality_score < 70 ? "warning" : "healthy",
+        searchText: `${item.memory_id} ${item.quality_population} ${item.lifecycle_state} ${item.status} ${item.signals.join(" ")} ${item.reasons.join(" ")} ${item.statement_excerpt}`,
         details: [
-          `Score: ${item.quality_score}/100 · lifecycle ${item.lifecycle_state} · status ${item.status}`,
+          `Score: ${item.quality_score}/100 · population ${item.quality_population} · lifecycle ${item.lifecycle_state} · status ${item.status}`,
           `Evidence: ${item.live_evidence_count}/${item.evidence_count} live · confidence ${item.confidence.toFixed(2)}`,
           `Age: ${item.age_days} days · updated ${item.days_since_update} days ago`,
           `Signals: ${item.signals.join(", ") || "healthy"}`,
@@ -242,6 +242,7 @@ export function memoryQualityBrowserOptions(report: MemoryQualityReport): Browse
     columns: [
       { key: "id", label: "Memory", width: 20, minWidth: 10, priority: 1, render: (item) => item.memory_id },
       { key: "score", label: "Score", width: 7, minWidth: 5, priority: 2, render: (item) => String(item.quality_score), sortValue: (item) => item.quality_score },
+      { key: "population", label: "Population", width: 11, minWidth: 7, priority: 3, render: (item) => item.quality_population },
       { key: "lifecycle", label: "Lifecycle", width: 12, minWidth: 8, priority: 3, render: (item) => item.lifecycle_state },
       { key: "confidence", label: "Conf", width: 6, minWidth: 5, priority: 4, render: (item) => item.confidence.toFixed(2), sortValue: (item) => item.confidence },
       { key: "signals", label: "Signals", width: 24, minWidth: 10, priority: 5, render: (item) => item.signals.join(",") || "healthy" },
@@ -253,14 +254,14 @@ export function memoryQualityBrowserOptions(report: MemoryQualityReport): Browse
 export function relationshipQualityBrowserOptions(report: RelationshipQualityReport): BrowserOptions<RelationshipQualityEdgeItem> {
   return {
     title: "Relationship Quality Browser",
-    subtitle: `Average ${report.summary.average_relationship_quality}/100 · ${report.summary.weak_edge_count} weak · ${report.summary.orphan_memory_count} orphans · report-only`,
+    subtitle: `Active average ${report.summary.average_relationship_quality}/100 · ${report.summary.active_edge_count} active · ${report.summary.historical_edge_count} historical · report-only`,
     items: report.relationships.map((edge) => ({
       id: edge.edge_id,
       item: edge,
-      status: edge.quality_band === "broken" ? "error" : edge.quality_band === "weak" ? "warning" : "healthy",
-      searchText: `${edge.edge_id} ${edge.type} ${edge.from} ${edge.to} ${edge.quality_band} ${edge.signals.join(" ")} ${edge.reasons.join(" ")}`,
+      status: edge.quality_population !== "active" ? "info" : edge.quality_band === "broken" ? "error" : edge.quality_band === "weak" ? "warning" : "healthy",
+      searchText: `${edge.edge_id} ${edge.quality_population} ${edge.type} ${edge.from} ${edge.to} ${edge.quality_band} ${edge.signals.join(" ")} ${edge.reasons.join(" ")}`,
       details: [
-        `Score: ${edge.quality_score}/100 · ${edge.quality_band}`,
+        `Score: ${edge.quality_score}/100 · ${edge.quality_band} · population ${edge.quality_population}`,
         `Type: ${edge.type}`,
         `From: ${edge.from}`,
         `To: ${edge.to}`,
@@ -274,6 +275,7 @@ export function relationshipQualityBrowserOptions(report: RelationshipQualityRep
     columns: [
       { key: "id", label: "Relationship", width: 28, minWidth: 12, priority: 1, render: (edge) => edge.edge_id },
       { key: "score", label: "Score", width: 7, minWidth: 5, priority: 2, render: (edge) => String(edge.quality_score), sortValue: (edge) => edge.quality_score },
+      { key: "population", label: "Population", width: 11, minWidth: 7, priority: 3, render: (edge) => edge.quality_population },
       { key: "band", label: "Band", width: 8, minWidth: 6, priority: 3, render: (edge) => edge.quality_band },
       { key: "type", label: "Type", width: 16, minWidth: 8, priority: 4, render: (edge) => edge.type },
       { key: "signals", label: "Signals", minWidth: 20, priority: 1, render: (edge) => edge.signals.join(",") || "healthy" },
@@ -349,7 +351,7 @@ export function storeQualityBrowserOptions(report: StoreQualityReport): BrowserO
   const recommendationsByMetric = new Map(report.metrics.map((metric) => [metric.id, report.recommendations.filter((rec) => rec.metric_id === metric.id)]));
   return {
     title: "Store Quality Dashboard",
-    subtitle: `Overall ${report.overall_score}/100 [${report.status}] · ${report.inputs.active_memories} active memories · report-only`,
+    subtitle: `Overall ${report.overall_score}/100 [${report.status}] · ${report.inputs.active_memories} active · ${report.inputs.historical_memories} historical · report-only`,
     items: report.metrics.map((metric) => {
       const recommendations = recommendationsByMetric.get(metric.id) ?? [];
       return {

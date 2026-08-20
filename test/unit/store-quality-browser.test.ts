@@ -4,11 +4,11 @@ import type { StoreQualityReport } from "../../src/store-quality";
 
 function report(): StoreQualityReport {
   return {
-    heuristic_version: "store-quality-v2",
+    heuristic_version: "store-quality-v3",
     generated_at: "2026-07-09T00:00:00Z",
     overall_score: 78,
     status: "watch",
-    inputs: { memory_quality_average: 80, relationship_quality_average: 75, recall_effectiveness_average: 68, active_memories: 10, pending_candidates: 3, runtime_warnings: 1, structured_evidence_adoption_ratio: 0.8, unresolved_legacy_evidence_count: 2, open_inquiry_age_bands: { days_0_7: 1, days_8_30: 1, days_31_90: 0, days_over_90: 0 }, reinforcement_outcome_distribution: { explicit_reinforcement: 1, implicit_success: 0, neutral_exposure: 1, explicit_correction: 0 } },
+    inputs: { memory_quality_average: 80, relationship_quality_average: 75, recall_effectiveness_average: 68, total_memory_records: 14, active_memories: 10, review_memories: 1, historical_memories: 3, pending_candidates: 3, runtime_warnings: 1, structured_evidence_adoption_ratio: 0.8, unresolved_legacy_evidence_count: 2, open_inquiry_age_bands: { days_0_7: 1, days_8_30: 1, days_31_90: 0, days_over_90: 0 }, reinforcement_outcome_distribution: { explicit_reinforcement: 1, implicit_success: 0, neutral_exposure: 1, explicit_correction: 0 } },
     metrics: [
       { id: "memory_quality", label: "Memory Quality", score: 80, status: "watch", summary: "1 low-quality memory.", signals: ["low_quality_memories"], mutation_performed: false },
       { id: "relationship_quality", label: "Relationship Quality", score: 75, status: "watch", summary: "2 weak edges.", signals: ["weak_relationships"], mutation_performed: false },
@@ -23,6 +23,8 @@ describe("store quality browser adapter", () => {
     const opts = storeQualityBrowserOptions(report());
 
     expect(opts.title).toContain("Store Quality");
+    expect(opts.subtitle).toContain("10 active");
+    expect(opts.subtitle).toContain("3 historical");
     expect(opts.subtitle).toContain("report-only");
     expect(opts.items).toHaveLength(2);
     expect(opts.items[0].details?.join("\n")).toContain("No automatic mutation performed");

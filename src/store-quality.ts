@@ -32,7 +32,7 @@ export interface StoreQualityRecommendation {
 }
 
 export interface StoreQualityReport {
-  heuristic_version: "store-quality-v2";
+  heuristic_version: "store-quality-v3";
   generated_at: string;
   overall_score: number;
   status: StoreQualityStatus;
@@ -42,7 +42,10 @@ export interface StoreQualityReport {
     memory_quality_average: number;
     relationship_quality_average: number;
     recall_effectiveness_average: number;
+    total_memory_records: number;
     active_memories: number;
+    review_memories: number;
+    historical_memories: number;
     pending_candidates: number;
     runtime_warnings: number;
     structured_evidence_adoption_ratio: number;
@@ -94,7 +97,7 @@ export function buildStoreQualityReport(input: {
       id: "memory_quality",
       label: "Memory Quality",
       score: input.memory.summary.average_quality,
-      summary: `${input.memory.summary.low_quality_count} low-quality, ${input.memory.summary.stale_count} stale, ${input.memory.summary.duplicate_signal_count} duplicate signal(s).`,
+      summary: `${input.memory.summary.low_quality_count} low-quality active, ${input.memory.summary.stale_count} stale active, ${input.memory.summary.duplicate_signal_count} active duplicate signal(s).`,
       signals: [
         ...(input.memory.summary.low_quality_count ? ["low_quality_memories"] : []),
         ...(input.memory.summary.stale_count ? ["stale_memories"] : []),
@@ -105,7 +108,7 @@ export function buildStoreQualityReport(input: {
       id: "relationship_quality",
       label: "Relationship Quality",
       score: input.relationships.summary.average_relationship_quality,
-      summary: `${input.relationships.summary.weak_edge_count} weak edge(s), ${input.relationships.summary.orphan_memory_count} orphan memory signal(s), ${input.relationships.summary.dead_end_memory_count} dead end(s).`,
+      summary: `${input.relationships.summary.weak_edge_count} weak active edge(s), ${input.relationships.summary.orphan_memory_count} active orphan signal(s), ${input.relationships.summary.dead_end_memory_count} active dead end(s).`,
       signals: [
         ...(input.relationships.summary.weak_edge_count ? ["weak_relationships"] : []),
         ...(input.relationships.summary.orphan_memory_count ? ["orphan_memories"] : []),
@@ -151,7 +154,7 @@ export function buildStoreQualityReport(input: {
     .map((item) => recommendation(item.id, `Review ${item.label.toLowerCase()}`, item.summary));
 
   return redactSecretsInObject({
-    heuristic_version: "store-quality-v2",
+    heuristic_version: "store-quality-v3",
     generated_at: input.generated_at,
     overall_score: overall,
     status: statusFor(overall),
@@ -161,7 +164,10 @@ export function buildStoreQualityReport(input: {
       memory_quality_average: input.memory.summary.average_quality,
       relationship_quality_average: input.relationships.summary.average_relationship_quality,
       recall_effectiveness_average: input.recall.summary.average_effectiveness,
+      total_memory_records: input.memory.summary.total_records,
       active_memories: input.activeMemories,
+      review_memories: input.memory.summary.review_record_count,
+      historical_memories: input.memory.summary.historical_record_count,
       pending_candidates: input.pendingCandidates,
       runtime_warnings: input.runtimeWarnings,
       structured_evidence_adoption_ratio: input.memory.summary.structured_evidence_adoption_ratio,
@@ -212,7 +218,8 @@ export function renderStoreQualityReport(report: StoreQualityReport): string {
     "",
     `Generated: ${report.generated_at}`,
     `Overall store quality: ${report.overall_score}/100 [${report.status}]`,
-    `Inputs: ${report.inputs.active_memories} active memories · ${report.inputs.pending_candidates} pending candidates · ${report.inputs.runtime_warnings} runtime warnings`,
+    `Memory inventory: ${report.inputs.total_memory_records} total · ${report.inputs.active_memories} active · ${report.inputs.review_memories} review · ${report.inputs.historical_memories} historical`,
+    `Operational inputs: ${report.inputs.pending_candidates} pending candidates · ${report.inputs.runtime_warnings} runtime warnings`,
     "",
     "## Metrics",
     ...report.metrics.map((item) => `- ${item.label}: ${item.score}/100 [${item.status}] — ${item.summary}`),
