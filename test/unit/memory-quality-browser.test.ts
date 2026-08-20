@@ -23,6 +23,7 @@ describe("memory quality browser adapter", () => {
 
     expect(opts.title).toContain("Memory Quality");
     expect(opts.subtitle).toContain("Active average");
+    expect(opts.sortBy).toBe("population");
     expect(opts.items).toHaveLength(3);
     expect(opts.items[0].searchText).toContain("low_confidence");
     expect(opts.items[0].details?.join("\n")).toContain("No automatic mutation performed");

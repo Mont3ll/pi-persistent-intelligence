@@ -238,11 +238,11 @@ export function memoryQualityBrowserOptions(report: MemoryQualityReport): Browse
       } satisfies BrowserItem<MemoryQualityItem>;
     }),
     pageSize: 20,
-    sortBy: "score",
+    sortBy: "population",
     columns: [
       { key: "id", label: "Memory", width: 20, minWidth: 10, priority: 1, render: (item) => item.memory_id },
       { key: "score", label: "Score", width: 7, minWidth: 5, priority: 2, render: (item) => String(item.quality_score), sortValue: (item) => item.quality_score },
-      { key: "population", label: "Population", width: 11, minWidth: 7, priority: 3, render: (item) => item.quality_population },
+      { key: "population", label: "Population", width: 11, minWidth: 7, priority: 3, render: (item) => item.quality_population, sortValue: (item) => ({ active: 0, review: 1, historical: 2 })[item.quality_population] },
       { key: "lifecycle", label: "Lifecycle", width: 12, minWidth: 8, priority: 3, render: (item) => item.lifecycle_state },
       { key: "confidence", label: "Conf", width: 6, minWidth: 5, priority: 4, render: (item) => item.confidence.toFixed(2), sortValue: (item) => item.confidence },
       { key: "signals", label: "Signals", width: 24, minWidth: 10, priority: 5, render: (item) => item.signals.join(",") || "healthy" },
@@ -271,11 +271,11 @@ export function relationshipQualityBrowserOptions(report: RelationshipQualityRep
       ],
     })),
     pageSize: 20,
-    sortBy: "score",
+    sortBy: "population",
     columns: [
       { key: "id", label: "Relationship", width: 28, minWidth: 12, priority: 1, render: (edge) => edge.edge_id },
       { key: "score", label: "Score", width: 7, minWidth: 5, priority: 2, render: (edge) => String(edge.quality_score), sortValue: (edge) => edge.quality_score },
-      { key: "population", label: "Population", width: 11, minWidth: 7, priority: 3, render: (edge) => edge.quality_population },
+      { key: "population", label: "Population", width: 11, minWidth: 7, priority: 3, render: (edge) => edge.quality_population, sortValue: (edge) => ({ active: 0, historical: 1, auxiliary: 2 })[edge.quality_population] },
       { key: "band", label: "Band", width: 8, minWidth: 6, priority: 3, render: (edge) => edge.quality_band },
       { key: "type", label: "Type", width: 16, minWidth: 8, priority: 4, render: (edge) => edge.type },
       { key: "signals", label: "Signals", minWidth: 20, priority: 1, render: (edge) => edge.signals.join(",") || "healthy" },

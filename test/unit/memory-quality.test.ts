@@ -67,6 +67,8 @@ describe("memory quality analyzer", () => {
     expect(report.recommendations.length).toBeGreaterThanOrEqual(2);
     expect(report.recommendations.every((rec) => rec.review_required && rec.mutation_performed === false)).toBe(true);
     expect(JSON.stringify(loadAllRecords(r))).toBe(before);
+    expect(renderMemoryQualityReport(report)).toContain("## Lowest Quality Active Memories");
+    expect(renderMemoryQualityReport(report)).toContain("## Review and Historical Inventory");
     expect(renderMemoryQualityReport(report)).toContain("No automatic mutation performed");
     rmSync(r, { recursive: true, force: true });
   });

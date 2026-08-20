@@ -74,6 +74,7 @@ describe("relationship quality browser adapter", () => {
     expect(opts.title).toContain("Relationship Quality");
     expect(opts.subtitle).toContain("Active average");
     expect(opts.subtitle).toContain("report-only");
+    expect(opts.sortBy).toBe("population");
     expect(opts.items).toHaveLength(2);
     expect(opts.items[0].status).toBe("warning");
     expect(opts.items[0].details?.join("\n")).toContain("No automatic mutation performed");
