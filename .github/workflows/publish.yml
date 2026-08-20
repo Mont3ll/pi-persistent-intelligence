@@ -14,6 +14,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - name: Verify tag matches package version
+        run: bun scripts/publish-guard.ts verify-tag "$GITHUB_REF_NAME"
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run typecheck
@@ -40,21 +42,8 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: Check whether this version is already on npm
-        id: npm-version
-        shell: bash
-        run: |
-          NAME=$(node -p "require('./package.json').name")
-          VERSION=$(node -p "require('./package.json').version")
-          if npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
-            echo "published=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "published=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Publish to npm
-        if: steps.npm-version.outputs.published != 'true'
-        run: npm publish --access public --provenance
+        run: bun scripts/publish-guard.ts publish --access public --provenance
 
   # Publish to GitHub Packages — makes the GitHub repo Packages tab show the package
   publish-github:
@@ -83,7 +72,6 @@ jobs:
             require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
       - name: Publish to GitHub Packages
-        run: npm publish
-        continue-on-error: true   # GitHub Packages rejects re-publish of existing version; treat as non-fatal
+        run: bun scripts/publish-guard.ts publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
