@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { boundSourceSummary, createEvidenceId } from "./evidence";
 import { scanSecrets, shouldBlockPersistence } from "./secret-scanner";
@@ -90,6 +90,7 @@ export function resolveEvidenceReference(input: EvidenceResolutionInput): Eviden
   if (lexicalRelative.startsWith("..") || isAbsolute(lexicalRelative)) return { status: "unresolved", reason: "sourceOutsideStore" };
   if (!existsSync(candidate)) return { status: "unresolved", reason: "sourceMissing" };
   const realCandidate = realpathSync(candidate);
+  if (!statSync(realCandidate).isFile()) return { status: "unresolved", reason: "sourceAmbiguous" };
   const realRelative = relative(rootPath, realCandidate);
   if (realRelative.startsWith("..") || isAbsolute(realRelative)) return { status: "unresolved", reason: "sourceOutsideStore" };
   return resolvedEvidence(input, readFileSync(realCandidate, "utf8"), undefined, input.reference);
