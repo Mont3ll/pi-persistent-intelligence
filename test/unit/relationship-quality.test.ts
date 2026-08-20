@@ -69,6 +69,8 @@ describe("relationship quality analyzer", () => {
     expect(contextReport.summary).toEqual(report.summary);
     expect(report.mutation_performed).toBe(false);
     expect(JSON.stringify(loadAllRecords(r))).toBe(before);
+    expect(renderRelationshipQualityReport(report)).toContain("## Weakest Active Relationships");
+    expect(renderRelationshipQualityReport(report)).toContain("## Historical and Auxiliary Relationships");
     expect(renderRelationshipQualityReport(report)).toContain("No automatic mutation performed");
     rmSync(r, { recursive: true, force: true });
   });

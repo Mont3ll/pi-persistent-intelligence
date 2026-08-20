@@ -182,6 +182,9 @@ export function analyzeMemoryQuality(root: string, options: AnalyzeMemoryQuality
 }
 
 export function renderMemoryQualityReport(report: MemoryQualityReport): string {
+  const renderItem = (item: MemoryQualityItem) => `- ${item.memory_id}: ${item.quality_score}/100 [${item.lifecycle_state}] ${item.signals.join(", ") || "healthy"} — ${item.statement_excerpt}`;
+  const activeItems = report.items.filter((item) => item.quality_population === "active").slice(0, 20);
+  const retainedItems = report.items.filter((item) => item.quality_population !== "active").slice(0, 20);
   const lines = [
     "# PI Memory Quality Report",
     "",
@@ -190,8 +193,11 @@ export function renderMemoryQualityReport(report: MemoryQualityReport): string {
     `Records: ${report.summary.total_records} total · ${report.summary.active_record_count} active · ${report.summary.review_record_count} review · ${report.summary.historical_record_count} historical`,
     `Active signals: ${report.summary.low_quality_count} low quality · ${report.summary.stale_count} stale · ${report.summary.duplicate_signal_count} duplicate`,
     "",
-    "## Lowest Quality Memories",
-    ...report.items.slice(0, 20).map((item) => `- ${item.memory_id}: ${item.quality_score}/100 [${item.lifecycle_state}] ${item.signals.join(", ") || "healthy"} — ${item.statement_excerpt}`),
+    "## Lowest Quality Active Memories",
+    ...(activeItems.length ? activeItems.map(renderItem) : ["- No active memories."]),
+    "",
+    "## Review and Historical Inventory",
+    ...(retainedItems.length ? retainedItems.map(renderItem) : ["- No review or historical memories."]),
     "",
     "## Recommendations",
     ...(report.recommendations.length ? report.recommendations.map((rec) => `- ${rec.summary}: ${rec.reason}. Review required; No automatic mutation performed.`) : ["- No review recommendations. No automatic mutation performed."]),

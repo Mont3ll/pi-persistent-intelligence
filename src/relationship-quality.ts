@@ -290,6 +290,10 @@ export function analyzeRelationshipQuality(root: string, options: AnalyzeRelatio
 }
 
 export function renderRelationshipQualityReport(report: RelationshipQualityReport): string {
+  const renderEdge = (edge: RelationshipQualityEdgeItem) => `- ${edge.edge_id}: ${edge.quality_score}/100 [${edge.quality_band}] ${edge.signals.join(", ") || "healthy"}`;
+  const activeRelationships = report.relationships.filter((edge) => edge.quality_population === "active").slice(0, 20);
+  const retainedRelationships = report.relationships.filter((edge) => edge.quality_population !== "active").slice(0, 20);
+  const activeNodeSignals = report.memory_nodes.filter((node) => node.quality_population === "active" && node.signals.length).slice(0, 20);
   return redactSecrets([
     "# PI Relationship Quality Report",
     "",
@@ -298,11 +302,14 @@ export function renderRelationshipQualityReport(report: RelationshipQualityRepor
     `Edges: ${report.summary.total_edges} total · ${report.summary.active_edge_count} active · ${report.summary.historical_edge_count} historical · ${report.summary.auxiliary_edge_count} auxiliary`,
     `Active signals: ${report.summary.weak_edge_count} weak · ${report.summary.orphan_memory_count} orphans · ${report.summary.dead_end_memory_count} dead ends · ${report.summary.high_value_hub_count} hubs`,
     "",
-    "## Weakest Relationships",
-    ...(report.relationships.slice(0, 20).map((edge) => `- ${edge.edge_id}: ${edge.quality_score}/100 [${edge.quality_band}] ${edge.signals.join(", ") || "healthy"}`)),
+    "## Weakest Active Relationships",
+    ...(activeRelationships.length ? activeRelationships.map(renderEdge) : ["- No active relationships."]),
     "",
-    "## Memory Node Signals",
-    ...(report.memory_nodes.filter((node) => node.signals.length).slice(0, 20).map((node) => `- ${node.memory_id}: degree ${node.degree}; ${node.signals.join(", ")} — ${node.reasons.join("; ")}`) || ["- No memory node relationship signals."]),
+    "## Historical and Auxiliary Relationships",
+    ...(retainedRelationships.length ? retainedRelationships.map(renderEdge) : ["- No historical or auxiliary relationships."]),
+    "",
+    "## Active Memory Node Signals",
+    ...(activeNodeSignals.length ? activeNodeSignals.map((node) => `- ${node.memory_id}: degree ${node.degree}; ${node.signals.join(", ")} — ${node.reasons.join("; ")}`) : ["- No active memory node relationship signals."]),
     "",
     "## Recommendations",
     ...(report.recommendations.length ? report.recommendations.map((rec) => `- ${rec.summary}: ${rec.reason} Review required; No automatic mutation performed.`) : ["- No review recommendations. No automatic mutation performed."]),
