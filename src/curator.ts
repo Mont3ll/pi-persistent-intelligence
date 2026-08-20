@@ -14,6 +14,8 @@ import { resolveEvidenceReference } from "./evidence-resolution";
 import { getDerivedRecordMemoryKeyV2, isStructuralMemoryKey } from "./memory-key";
 import type { CaptureCandidate, CaptureScopeTarget, MemoryPatch, MemoryRecord, MemoryScope, PatchOp } from "./types";
 
+const CANDIDATE_BACKED_SOURCE_TYPES = new Set(["daily", "manual", "conversation", "direct_user_instruction", "user_preference", "user_correction", "historical_session_audit", "session_capture"]);
+
 interface CurateOptions {
   now: string;
   mode: "propose" | "supervised" | "auto";
@@ -170,7 +172,9 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       const normalizedKey = candidate.normalized_key && !isStructuralMemoryKey(candidate.normalized_key)
         ? candidate.normalized_key
         : getDerivedRecordMemoryKeyV2(baseRecord);
-      const resolutions = candidate.evidence_refs.map((reference) => resolveEvidenceReference({
+      const candidateBackedSource = CANDIDATE_BACKED_SOURCE_TYPES.has(candidate.source.type);
+      const evidenceReferences = [...new Set([...candidate.evidence_refs, ...(candidateBackedSource ? [candidate.source.ref] : [])])];
+      const resolutions = evidenceReferences.map((reference) => resolveEvidenceReference({
         root,
         reference,
         existingEvidence,
@@ -181,7 +185,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
         scopeLevel: baseRecord.scope.type,
         scopeRef: baseRecord.scope.type === "project" ? baseRecord.scope.project : baseRecord.scope.type === "domain" ? baseRecord.scope.domains?.join(",") : undefined,
         candidateText: candidate.text,
-        candidateSourceVerified: candidate.source.ref === reference && new Set(["daily", "conversation", "direct_user_instruction", "user_preference", "user_correction", "historical_session_audit", "session_capture"]).has(candidate.source.type),
+        candidateSourceVerified: candidate.source.ref === reference && candidateBackedSource,
         candidateTrustClass: candidate.primary_trust_class,
         candidateDurability: candidate.durability_signal,
         provenance: "curation_evidence_v1",

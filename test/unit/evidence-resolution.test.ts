@@ -47,6 +47,7 @@ describe("evidence resolution", () => {
     writeFileSync(join(dir, "daily/secret.md"), "token=ghp_abcdefghijklmnopqrstuvwxyz1234567890");
     const redacted: EvidenceRecord = { id: "ev_redacted", resource_id: "r", profile_id: "p", created_at: "n", source_kind: "conversation", source_summary: "[redacted]", trust_class: "unknown", polarity: "supports", related_memory_ids: [], redaction_status: "redacted" };
     expect(resolveEvidenceReference({ root: dir, reference: "missing.md", existingEvidence: [], ...base })).toMatchObject({ status: "unresolved", reason: "sourceMissing" });
+    expect(resolveEvidenceReference({ root: dir, reference: "daily", existingEvidence: [], ...base })).toMatchObject({ status: "unresolved", reason: "sourceAmbiguous" });
     expect(resolveEvidenceReference({ root: dir, reference: "external:unknown", existingEvidence: [], ...base })).toMatchObject({ status: "unresolved", reason: "unsupportedReference" });
     expect(resolveEvidenceReference({ root: dir, reference: redacted.id, existingEvidence: [redacted], ...base })).toMatchObject({ status: "unresolved", reason: "sourceRedacted" });
     expect(resolveEvidenceReference({ root: dir, reference: "daily/secret.md", existingEvidence: [], ...base })).toMatchObject({ status: "unresolved", reason: "secretDetected" });

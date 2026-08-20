@@ -121,10 +121,10 @@ export function runPostMutationChecks(input: PostMutationCheckInput): PostMutati
 
       for (const id of affectedIds) {
         const record = byId.get(id);
-        if (record && activeIds.has(id) && record.evidence.length > 0 && !record.evidence.some((item) => validEvidenceIds.has(item.ref))) {
+        const relatedOps = input.ops.filter((op) => opRecordId(op) === id || op.to_record?.id === id);
+        if (record && activeIds.has(id) && relatedOps.some((op) => op.requiresStructuredEvidence) && record.evidence.length > 0 && !record.evidence.some((item) => validEvidenceIds.has(item.ref))) {
           add({ severity: "error", code: "unresolved_evidence_only", message: `Newly affected active record has no valid structured evidence (${input.phase ?? "post_patch"}).`, record_id: id });
         }
-        const relatedOps = input.ops.filter((op) => opRecordId(op) === id || op.to_record?.id === id);
         const isDestructive = relatedOps.some((op) => destructiveMode(op, input.mode));
         if (!record && relatedOps.some(expectsRecordAfter)) {
           add({ severity: "error", code: "affected_record_missing", message: `Affected record is missing after mutation (${input.phase ?? "post_patch"}).`, record_id: id });

@@ -72,7 +72,7 @@ describe("post-mutation integrity checks", () => {
   test("flags a newly affected active record with only unresolved evidence", () => {
     const r = root();
     unsafeAddMemoryRecord(r, record({ id: "mem_unresolved", evidence: [{ type: "manual", ref: "daily/missing.md", note: "legacy" }] }));
-    const findings = runPostMutationChecks({ root: r, patchId: "p", ops: [{ op_id: "op", op: "add", record: record({ id: "mem_unresolved", evidence: [{ type: "manual", ref: "daily/missing.md", note: "legacy" }] }), risk: "low", default_selected: true }], affectedRecordIds: ["mem_unresolved"], mode: "normal", phase: "post_patch" });
+    const findings = runPostMutationChecks({ root: r, patchId: "p", ops: [{ op_id: "op", op: "add", record: record({ id: "mem_unresolved", evidence: [{ type: "manual", ref: "daily/missing.md", note: "legacy" }] }), risk: "low", default_selected: true, requiresStructuredEvidence: true }], affectedRecordIds: ["mem_unresolved"], mode: "normal", phase: "post_patch" });
     expect(findings).toContainEqual(expect.objectContaining({ code: "unresolved_evidence_only", record_id: "mem_unresolved" }));
   });
 
