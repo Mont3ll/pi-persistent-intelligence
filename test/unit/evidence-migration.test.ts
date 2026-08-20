@@ -68,6 +68,23 @@ describe("legacy evidence migration planner", () => {
     expect(plan.proposals.every((item) => item.evidence.trust_class === "unknown" && item.evidence.durability_signal === "unknown")).toBe(true);
   });
 
+  test("links an existing derived evidence record without duplicating it", () => {
+    const dir = root();
+    const paths = ensureMemoryDirs(dir);
+    const source = "Verified existing source.";
+    writeFileSync(join(dir, "daily/existing.md"), `${source}\n`);
+    const evidenceId = createEvidenceId({ profile_id: "profile-a", source_kind: "conversation", source_ref: "daily/existing.md", source_summary: source });
+    const existing: EvidenceRecord = { id: evidenceId, resource_id: "resource-a", profile_id: "profile-a", created_at: "2026-07-01", source_kind: "conversation", source_ref: "daily/existing.md", source_summary: source, trust_class: "unknown", polarity: "supports", related_memory_ids: ["mem_existing_link"] };
+    writeFileSync(paths.memory.evidence, `${JSON.stringify(existing)}\n`);
+    writeFileSync(paths.memory.L2, `${JSON.stringify(record("mem_existing_link", ["daily/existing.md"]))}\n`);
+    const preview = scanLegacyEvidenceMigration(dir);
+    expect(preview).toMatchObject({ evidence_to_create: 0, links_to_add: [{ memory_id: "mem_existing_link", original_ref: "daily/existing.md", evidence_id: evidenceId }] });
+    const result = applyLegacyEvidenceMigration(dir, preview.fingerprint, "2026-07-18T11:00:00Z");
+    expect(result).toMatchObject({ mutation_performed: true, evidence_created: 0, records_updated: 1 });
+    expect(readEvidenceRecords(dir)).toHaveLength(1);
+    expect(loadAllRecords(dir)[0].evidence.map((item) => item.ref)).toContain(evidenceId);
+  });
+
   test("applies only a reviewed unchanged plan with backup, audit, and idempotency", () => {
     const dir = root();
     const paths = ensureMemoryDirs(dir);
@@ -81,7 +98,7 @@ describe("legacy evidence migration planner", () => {
     expect(readFileSync(paths.memory.evidence, "utf-8")).toBe(beforeEvidence);
 
     const applied = applyLegacyEvidenceMigration(dir, preview.fingerprint, "2026-07-18T12:00:00.000Z");
-    expect(applied).toMatchObject({ dry_run: false, mutation_performed: true, evidence_created: 1, records_updated: 1 });
+    expect(applied).toMatchObject({ dry_run: false, mutation_performed: true, evidence_created: 1, records_updated: 1, post_apply_evidence_to_create: 0 });
     expect(existsSync(applied.backup_path!)).toBe(true);
     expect(existsSync(applied.report_path!)).toBe(true);
     expect(readFileSync(join(applied.backup_path!, "memory", "evidence.jsonl"), "utf-8")).toBe(beforeEvidence);
@@ -90,6 +107,17 @@ describe("legacy evidence migration planner", () => {
     expect(afterRecord.evidence.map((item) => item.ref)).toContain("daily/2026-07-03.md");
     expect(afterRecord.evidence.map((item) => item.ref)).toContain(readEvidenceRecords(dir)[0].id);
     expect(scanLegacyEvidenceMigration(dir).evidence_to_create).toBe(0);
+  });
+
+  test("fingerprint covers the complete source record", () => {
+    const dir = root();
+    writeFileSync(join(dir, "daily/source.md"), "Verified source.\n");
+    const original = record("mem_hash", ["daily/source.md"]);
+    const changed = { ...original, statement: "Changed after preview." };
+    const first = planLegacyEvidenceMigration(dir, [original], []);
+    const second = planLegacyEvidenceMigration(dir, [changed], []);
+    expect(first.record_hashes).toHaveLength(1);
+    expect(first.fingerprint).not.toBe(second.fingerprint);
   });
 
   test("rolls back every target when a multi-file commit fails", () => {

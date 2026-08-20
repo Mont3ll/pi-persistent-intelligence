@@ -24,6 +24,7 @@ export interface LegacyEvidenceMigrationApplyResult {
   fingerprint: string;
   evidence_created: number;
   records_updated: number;
+  post_apply_evidence_to_create: number;
   backup_path?: string;
   report_path?: string;
 }
@@ -39,6 +40,8 @@ export interface LegacyEvidenceMigrationPlan {
   unresolved_references: number;
   blocked_secret_references: number;
   unresolved_reason_counts: Partial<Record<EvidenceResolutionReason, number>>;
+  record_hashes: Array<{ id: string; sha256: string }>;
+  links_to_add: Array<{ memory_id: string; original_ref: string; evidence_id: string }>;
   proposals: LegacyEvidenceProposal[];
   findings: LegacyEvidenceFinding[];
 }
@@ -54,6 +57,7 @@ export function planLegacyEvidenceMigration(
 ): LegacyEvidenceMigrationPlan {
   const existingIds = new Set(existingEvidence.map((evidence) => evidence.id));
   const proposals = new Map<string, LegacyEvidenceProposal>();
+  const linksToAdd: Array<{ memory_id: string; original_ref: string; evidence_id: string }> = [];
   const findings: LegacyEvidenceFinding[] = [];
   let referencesScanned = 0;
   let existingEvidenceSkipped = 0;
@@ -81,6 +85,9 @@ export function planLegacyEvidenceMigration(
       });
       if (resolution.status === "alreadyStructured") {
         existingEvidenceSkipped++;
+        if (inline.ref !== resolution.evidenceId && !record.evidence.some((item) => item.ref === resolution.evidenceId)) {
+          linksToAdd.push({ memory_id: record.id, original_ref: inline.ref, evidence_id: resolution.evidenceId });
+        }
         continue;
       }
       if (resolution.status === "unresolved") {
@@ -89,6 +96,7 @@ export function planLegacyEvidenceMigration(
         continue;
       }
       const evidenceId = resolution.evidence.id;
+      if (!record.evidence.some((item) => item.ref === evidenceId)) linksToAdd.push({ memory_id: record.id, original_ref: inline.ref, evidence_id: evidenceId });
       const current = proposals.get(evidenceId);
       if (current) {
         if (!current.evidence.related_memory_ids.includes(record.id)) current.evidence.related_memory_ids.push(record.id);
@@ -104,10 +112,12 @@ export function planLegacyEvidenceMigration(
   }
 
   const ordered = [...proposals.values()].sort((a, b) => a.evidence.id.localeCompare(b.evidence.id));
+  const recordHashes = records.map((record) => ({ id: record.id, sha256: sha256(JSON.stringify(record)) })).sort((a, b) => a.id.localeCompare(b.id));
   const fingerprint = sha256(JSON.stringify({
-    records: records.map((record) => ({ id: record.id, status: record.status, evidence: record.evidence })),
+    records: recordHashes,
     existing_ids: [...existingIds].sort(),
     proposals: ordered,
+    links: linksToAdd,
     findings,
   }));
   const unresolvedReasonCounts = findings.reduce<Partial<Record<EvidenceResolutionReason, number>>>((counts, finding) => {
@@ -125,6 +135,8 @@ export function planLegacyEvidenceMigration(
     unresolved_references: findings.filter((finding) => finding.reason !== "secretDetected").length,
     blocked_secret_references: blockedSecretReferences,
     unresolved_reason_counts: unresolvedReasonCounts,
+    record_hashes: recordHashes,
+    links_to_add: linksToAdd,
     proposals: ordered,
     findings,
   };
@@ -305,19 +317,15 @@ export function applyLegacyEvidenceMigration(
       fingerprint: plan.fingerprint,
       evidence_created: 0,
       records_updated: 0,
+      post_apply_evidence_to_create: 0,
     };
-    if (plan.proposals.length === 0) return base;
-  const evidenceByReference = new Map<string, string>();
-  for (const proposal of plan.proposals) {
-    for (const reference of proposal.record_references) {
-      evidenceByReference.set(`${reference.memory_id}\n${reference.original_ref}`, proposal.evidence.id);
-    }
-  }
+    if (plan.proposals.length === 0 && plan.links_to_add.length === 0) return base;
+  const evidenceByReference = new Map(plan.links_to_add.map((link) => [`${link.memory_id}\n${link.original_ref}`, link.evidence_id]));
   const updatedRows = rows.map((row) => {
     const additions = row.record.evidence.flatMap((inline) => {
       const id = evidenceByReference.get(`${row.record.id}\n${inline.ref}`);
       if (!id || row.record.evidence.some((item) => item.ref === id)) return [];
-      return [{ type: "source" as const, ref: id, note: "Structured evidence created by legacy_evidence_backfill_v1." }];
+      return [{ type: "source" as const, ref: id, note: "Structured evidence created by legacy_evidence_backfill_v2." }];
     });
     return additions.length > 0
       ? { ...row, record: { ...row.record, evidence: [...row.record.evidence, ...additions] } }
@@ -329,7 +337,7 @@ export function applyLegacyEvidenceMigration(
   const slug = timestampSlug(now);
   const backupPath = join(root, "backups", `legacy-evidence-backfill-v1-${slug}`);
   const backupSnapshots = new Map<string, Buffer>();
-  if (evidenceSnapshot) backupSnapshots.set(paths.memory.evidence, evidenceSnapshot);
+  if (evidenceSnapshot && plan.proposals.length > 0) backupSnapshots.set(paths.memory.evidence, evidenceSnapshot);
   for (const file of affectedFiles) backupSnapshots.set(file, memorySnapshots.get(file)!);
   for (const [file, snapshot] of backupSnapshots) {
     const destination = join(backupPath, relative(root, file));
@@ -341,13 +349,13 @@ export function applyLegacyEvidenceMigration(
       ...base,
       mutation_performed: true,
       evidence_created: plan.proposals.length,
-      records_updated: new Set(plan.proposals.flatMap((proposal) => proposal.evidence.related_memory_ids)).size,
+      records_updated: new Set(plan.links_to_add.map((link) => link.memory_id)).size,
       backup_path: backupPath,
       report_path: join(root, "reports", `legacy-evidence-backfill-${slug}.json`),
     };
     mkdirSync(dirname(result.report_path!), { recursive: true });
     const changes: MigrationFileChange[] = [
-      { file: paths.memory.evidence, expected: evidenceSnapshot, next: jsonlBuffer([...existingEvidence, ...plan.proposals.map((proposal) => proposal.evidence)]) },
+      ...(plan.proposals.length > 0 ? [{ file: paths.memory.evidence, expected: evidenceSnapshot, next: jsonlBuffer([...existingEvidence, ...plan.proposals.map((proposal) => proposal.evidence)]) }] : []),
       ...affectedFiles.map((file) => ({ file, expected: memorySnapshots.get(file)!, next: jsonlBuffer(updatedRows.filter((row) => row.file === file).map((row) => row.record)) })),
     ];
     const transactionPath = join(backupPath, "transaction.json");
@@ -359,9 +367,12 @@ export function applyLegacyEvidenceMigration(
     writeFileSync(transactionPath, `${JSON.stringify({ state: "prepared", targets: transactionTargets, plan_fingerprint: plan.fingerprint }, null, 2)}\n`, "utf-8");
     writeFileSync(result.report_path!, `${JSON.stringify({ ...result, mutation_performed: false, state: "prepared", plan }, null, 2)}\n`, "utf-8");
     commitMigrationFileSet(changes);
+    const postApplyPlan = scanLegacyEvidenceMigration(root);
+    if (postApplyPlan.evidence_to_create !== 0 || postApplyPlan.links_to_add.length !== 0) throw new Error("Legacy evidence migration post-apply preview is not idempotent.");
+    const finalResult = { ...result, post_apply_evidence_to_create: postApplyPlan.evidence_to_create };
     writeFileSync(transactionPath, `${JSON.stringify({ state: "committed", targets: transactionTargets, plan_fingerprint: plan.fingerprint }, null, 2)}\n`, "utf-8");
-    writeFileSync(result.report_path!, `${JSON.stringify({ ...result, state: "committed", plan }, null, 2)}\n`, "utf-8");
-    return result;
+    writeFileSync(result.report_path!, `${JSON.stringify({ ...finalResult, state: "committed", plan, post_apply_plan: postApplyPlan }, null, 2)}\n`, "utf-8");
+    return finalResult;
   } finally {
     closeSync(lock);
     if (existsSync(lockPath)) unlinkSync(lockPath);

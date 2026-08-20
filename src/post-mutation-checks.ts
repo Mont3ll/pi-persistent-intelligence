@@ -23,6 +23,7 @@ export interface PostMutationFinding {
   severity: "info" | "warning" | "error";
   code:
     | "affected_record_missing"
+    | "unresolved_evidence_only"
     | "deleted_record_still_active"
     | "privacy_purge_statement_not_redacted"
     | "privacy_purge_evidence_not_redacted"
@@ -102,6 +103,7 @@ export function runPostMutationChecks(input: PostMutationCheckInput): PostMutati
     const tombstones = readDeletionTombstones(input.root);
     const tombstonedIds = new Set(tombstones.map((t) => t.deleted_record_id));
     const evidence = readEvidenceRecords(input.root);
+    const validEvidenceIds = new Set(evidence.filter((item) => item.redaction_status !== "redacted" && item.redaction_status !== "deleted").map((item) => item.id));
     const opIds = new Set(input.ops.map(opRecordId).filter((id): id is string => Boolean(id)));
     const affectedIds = [...new Set([...input.affectedRecordIds, ...opIds])];
 
@@ -119,6 +121,9 @@ export function runPostMutationChecks(input: PostMutationCheckInput): PostMutati
 
       for (const id of affectedIds) {
         const record = byId.get(id);
+        if (record && activeIds.has(id) && record.evidence.length > 0 && !record.evidence.some((item) => validEvidenceIds.has(item.ref))) {
+          add({ severity: "error", code: "unresolved_evidence_only", message: `Newly affected active record has no valid structured evidence (${input.phase ?? "post_patch"}).`, record_id: id });
+        }
         const relatedOps = input.ops.filter((op) => opRecordId(op) === id || op.to_record?.id === id);
         const isDestructive = relatedOps.some((op) => destructiveMode(op, input.mode));
         if (!record && relatedOps.some(expectsRecordAfter)) {
