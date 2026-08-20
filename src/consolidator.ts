@@ -185,7 +185,7 @@ export interface ConsolidationRunner {
 }
 
 export function buildConsolidationCommandArgs(prompt: string, model?: string | null): string[] {
-  const args = ["-p", prompt, "--print", "--no-extensions"];
+  const args = ["-p", prompt, "--print", "--no-extensions", "--no-session"];
   if (model?.trim()) args.push("--model", model.trim());
   return args;
 }

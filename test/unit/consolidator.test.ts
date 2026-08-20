@@ -67,9 +67,13 @@ describe("parseConsolidationResponse", () => {
 });
 
 describe("runConsolidation", () => {
-  test("omits --model when no preferred or observed model is supplied", async () => {
-    expect(buildConsolidationCommandArgs("prompt", null)).toEqual(["-p", "prompt", "--print", "--no-extensions"]);
-    expect(buildConsolidationCommandArgs("prompt", "openai/gpt-5")).toEqual(["-p", "prompt", "--print", "--no-extensions", "--model", "openai/gpt-5"]);
+  test("runs consolidation without persisting an internal PI session", async () => {
+    expect(buildConsolidationCommandArgs("prompt", null)).toEqual([
+      "-p", "prompt", "--print", "--no-extensions", "--no-session",
+    ]);
+    expect(buildConsolidationCommandArgs("prompt", "openai/gpt-5")).toEqual([
+      "-p", "prompt", "--print", "--no-extensions", "--no-session", "--model", "openai/gpt-5",
+    ]);
   });
 
   test("returns visible failure metadata for consolidation CLI failure", async () => {
