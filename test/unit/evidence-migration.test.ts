@@ -57,12 +57,13 @@ describe("legacy evidence migration planner", () => {
       existing_evidence_skipped: 1,
       unresolved_references: 1,
       blocked_secret_references: 0,
+      unresolved_reason_counts: { sourceMissing: 1 },
     });
     expect(plan.proposals.map((item) => item.evidence.source_ref).sort()).toEqual([
       "daily/2026-07-01.md",
       "daily/2026-07-02.md",
     ]);
-    expect(plan.proposals.every((item) => item.evidence.notes === "legacy_evidence_backfill_v1")).toBe(true);
+    expect(plan.proposals.every((item) => item.evidence.notes === "legacy_evidence_backfill_v2")).toBe(true);
     expect(plan.proposals.every((item) => item.evidence.source_excerpt === undefined)).toBe(true);
     expect(plan.proposals.every((item) => item.evidence.trust_class === "unknown" && item.evidence.durability_signal === "unknown")).toBe(true);
   });
