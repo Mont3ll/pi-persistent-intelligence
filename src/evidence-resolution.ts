@@ -23,7 +23,6 @@ export interface EvidenceResolutionInput {
   scopeLevel: string;
   scopeRef?: string;
   candidateText?: string;
-  candidateSourceVerified?: boolean;
   candidateTrustClass?: EvidenceTrustClass;
   candidateDurability?: DurabilitySignal;
   provenance?: "legacy_evidence_backfill_v2" | "curation_evidence_v1";
@@ -39,9 +38,10 @@ function resolvedEvidence(input: EvidenceResolutionInput, sourceText: string, se
   const sourceSummary = boundSourceSummary(sourceText.trim().replace(/\s+/g, " ") || `Legacy source ${input.reference}`);
   const id = createEvidenceId({ profile_id: input.profileId, source_kind: sourceKind, source_ref: input.reference, source_summary: sourceSummary });
   const existing = input.existingEvidence.find((item) => item.id === id);
-  if (existing) return existing.redaction_status === "redacted" || existing.redaction_status === "deleted"
-    ? { status: "unresolved", reason: "sourceRedacted" }
-    : { status: "alreadyStructured", evidenceId: id };
+  if (existing) {
+    if (existing.redaction_status === "redacted" || existing.redaction_status === "deleted") return { status: "unresolved", reason: "sourceRedacted" };
+    return compatibleEvidence(existing, input) ? { status: "alreadyStructured", evidenceId: id } : { status: "unresolved", reason: "sourceAmbiguous" };
+  }
   const provenance = input.provenance ?? "legacy_evidence_backfill_v2";
   return {
     status: "resolved",
@@ -68,20 +68,20 @@ function resolvedEvidence(input: EvidenceResolutionInput, sourceText: string, se
   };
 }
 
+function compatibleEvidence(evidence: EvidenceRecord, input: EvidenceResolutionInput): boolean {
+  return evidence.profile_id === input.profileId
+    && evidence.resource_id === input.resourceId
+    && evidence.polarity === "supports";
+}
+
 export function resolveEvidenceReference(input: EvidenceResolutionInput): EvidenceResolution {
   const existing = input.existingEvidence.find((item) => item.id === input.reference);
-  if (existing) return existing.redaction_status === "redacted" || existing.redaction_status === "deleted"
-    ? { status: "unresolved", reason: "sourceRedacted" }
-    : { status: "alreadyStructured", evidenceId: existing.id };
+  if (existing) {
+    if (existing.redaction_status === "redacted" || existing.redaction_status === "deleted") return { status: "unresolved", reason: "sourceRedacted" };
+    return compatibleEvidence(existing, input) ? { status: "alreadyStructured", evidenceId: existing.id } : { status: "unresolved", reason: "sourceAmbiguous" };
+  }
 
-  const session = /^session:([^:]+):turn:([^:]+)$/.exec(input.reference);
-  if (session) {
-    if (!input.candidateText?.trim()) return { status: "unresolved", reason: "sourceMissing" };
-    return resolvedEvidence(input, input.candidateText, session[1]);
-  }
-  if (input.candidateSourceVerified && input.candidateText?.trim()) {
-    return resolvedEvidence(input, input.candidateText, undefined, input.reference);
-  }
+  if (/^session:[^:]+:turn:[^:]+$/.test(input.reference)) return { status: "unresolved", reason: "sourceMissing" };
   if (!input.reference.trim() || input.reference.includes(":")) return { status: "unresolved", reason: "unsupportedReference" };
 
   const rootPath = realpathSync(input.root);

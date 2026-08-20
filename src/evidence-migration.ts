@@ -176,6 +176,7 @@ function assertMigrationTargetUnchanged(change: MigrationFileChange): void {
 export function commitMigrationFileSet(
   changes: MigrationFileChange[],
   beforeRename?: (file: string, index: number) => void,
+  afterCommit?: () => void,
 ): void {
   for (const change of changes) assertMigrationTargetUnchanged(change);
   const staged = changes.map((change, index) => {
@@ -193,6 +194,7 @@ export function commitMigrationFileSet(
       renameSync(staged[index], changes[index].file);
       committed++;
     }
+    afterCommit?.();
   } catch (error) {
     for (let index = committed - 1; index >= 0; index--) {
       const original = changes[index].expected;
@@ -366,12 +368,19 @@ export function applyLegacyEvidenceMigration(
     }));
     writeFileSync(transactionPath, `${JSON.stringify({ state: "prepared", targets: transactionTargets, plan_fingerprint: plan.fingerprint }, null, 2)}\n`, "utf-8");
     writeFileSync(result.report_path!, `${JSON.stringify({ ...result, mutation_performed: false, state: "prepared", plan }, null, 2)}\n`, "utf-8");
-    commitMigrationFileSet(changes);
-    const postApplyPlan = scanLegacyEvidenceMigration(root);
-    if (postApplyPlan.evidence_to_create !== 0 || postApplyPlan.links_to_add.length !== 0) throw new Error("Legacy evidence migration post-apply preview is not idempotent.");
-    const finalResult = { ...result, post_apply_evidence_to_create: postApplyPlan.evidence_to_create };
-    writeFileSync(transactionPath, `${JSON.stringify({ state: "committed", targets: transactionTargets, plan_fingerprint: plan.fingerprint }, null, 2)}\n`, "utf-8");
-    writeFileSync(result.report_path!, `${JSON.stringify({ ...finalResult, state: "committed", plan, post_apply_plan: postApplyPlan }, null, 2)}\n`, "utf-8");
+    let finalResult = result;
+    try {
+      commitMigrationFileSet(changes, undefined, () => {
+        const postApplyPlan = scanLegacyEvidenceMigration(root);
+        if (postApplyPlan.evidence_to_create !== 0 || postApplyPlan.links_to_add.length !== 0) throw new Error("Legacy evidence migration post-apply preview is not idempotent.");
+        finalResult = { ...result, post_apply_evidence_to_create: postApplyPlan.evidence_to_create };
+        writeFileSync(transactionPath, `${JSON.stringify({ state: "committed", targets: transactionTargets, plan_fingerprint: plan.fingerprint }, null, 2)}\n`, "utf-8");
+        writeFileSync(result.report_path!, `${JSON.stringify({ ...finalResult, state: "committed", plan, post_apply_plan: postApplyPlan }, null, 2)}\n`, "utf-8");
+      });
+    } catch (error) {
+      writeFileSync(transactionPath, `${JSON.stringify({ state: "rolled_back", targets: transactionTargets, plan_fingerprint: plan.fingerprint, recovered_at: new Date().toISOString() }, null, 2)}\n`, "utf-8");
+      throw error;
+    }
     return finalResult;
   } finally {
     closeSync(lock);

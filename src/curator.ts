@@ -12,9 +12,9 @@ import { createInquiryFromCandidate } from "./inquiries";
 import { readEvidenceRecords } from "./evidence";
 import { resolveEvidenceReference } from "./evidence-resolution";
 import { getDerivedRecordMemoryKeyV2, isStructuralMemoryKey } from "./memory-key";
-import type { CaptureCandidate, CaptureScopeTarget, MemoryPatch, MemoryRecord, MemoryScope, PatchOp } from "./types";
+import type { CaptureCandidate, CaptureScopeTarget, EvidenceRecord, MemoryPatch, MemoryRecord, MemoryScope, PatchOp } from "./types";
 
-const CANDIDATE_BACKED_SOURCE_TYPES = new Set(["daily", "manual", "conversation", "direct_user_instruction", "user_preference", "user_correction", "historical_session_audit", "session_capture"]);
+const STRUCTURED_EVIDENCE_REQUIRED_SOURCE_TYPES = new Set(["conversation", "direct_user_instruction", "user_preference", "user_correction", "historical_session_audit", "session_capture"]);
 
 interface CurateOptions {
   now: string;
@@ -172,9 +172,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       const normalizedKey = candidate.normalized_key && !isStructuralMemoryKey(candidate.normalized_key)
         ? candidate.normalized_key
         : getDerivedRecordMemoryKeyV2(baseRecord);
-      const candidateBackedSource = CANDIDATE_BACKED_SOURCE_TYPES.has(candidate.source.type);
-      const evidenceReferences = [...new Set([...candidate.evidence_refs, ...(candidateBackedSource ? [candidate.source.ref] : [])])];
-      const resolutions = evidenceReferences.map((reference) => resolveEvidenceReference({
+      const resolutions = candidate.evidence_refs.map((reference) => resolveEvidenceReference({
         root,
         reference,
         existingEvidence,
@@ -184,13 +182,19 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
         createdAt: candidate.created_at,
         scopeLevel: baseRecord.scope.type,
         scopeRef: baseRecord.scope.type === "project" ? baseRecord.scope.project : baseRecord.scope.type === "domain" ? baseRecord.scope.domains?.join(",") : undefined,
-        candidateText: candidate.text,
-        candidateSourceVerified: candidate.source.ref === reference && candidateBackedSource,
         candidateTrustClass: candidate.primary_trust_class,
         candidateDurability: candidate.durability_signal,
         provenance: "curation_evidence_v1",
       }));
-      const supportingEvidence = [...new Map(resolutions.flatMap((resolution) => resolution.status === "resolved" ? [[resolution.evidence.id, resolution.evidence] as const] : [])).values()];
+      const supportingEvidenceById = new Map<string, EvidenceRecord>();
+      for (const resolution of resolutions) {
+        if (resolution.status === "resolved") supportingEvidenceById.set(resolution.evidence.id, resolution.evidence);
+        if (resolution.status === "alreadyStructured") {
+          const evidence = existingEvidence.find((item) => item.id === resolution.evidenceId);
+          if (evidence) supportingEvidenceById.set(evidence.id, { ...evidence, related_memory_ids: [...new Set([...evidence.related_memory_ids, baseRecord.id])] });
+        }
+      }
+      const supportingEvidence = [...supportingEvidenceById.values()];
       const structuredIds = [...new Set(resolutions.flatMap((resolution) => resolution.status === "alreadyStructured" ? [resolution.evidenceId] : resolution.status === "resolved" ? [resolution.evidence.id] : []))];
       const record = {
         ...baseRecord,
@@ -204,7 +208,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
         op_id: `op_${String(opIndex).padStart(3, "0")}`,
         candidate_id: candidate.id,
         supportingEvidence,
-        requiresStructuredEvidence: true,
+        requiresStructuredEvidence: STRUCTURED_EVIDENCE_REQUIRED_SOURCE_TYPES.has(candidate.source.type),
       };
 
     if (targetId && activeIds.has(targetId) && requestedTargets.length === 1) {

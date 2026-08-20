@@ -134,6 +134,16 @@ describe("legacy evidence migration planner", () => {
     expect(readFileSync(second, "utf-8")).toBe("second-before\n");
   });
 
+  test("rolls back committed targets when post-commit validation fails", () => {
+    const dir = root();
+    const file = join(dir, "post-commit.jsonl");
+    writeFileSync(file, "before\n");
+    expect(() => commitMigrationFileSet([
+      { file, expected: Buffer.from("before\n"), next: Buffer.from("after\n") },
+    ], undefined, () => { throw new Error("post-commit validation failed"); })).toThrow("post-commit validation failed");
+    expect(readFileSync(file, "utf8")).toBe("before\n");
+  });
+
   test("revalidates each target immediately before rename", () => {
     const dir = root();
     const first = join(dir, "first.jsonl");

@@ -21,7 +21,7 @@ const base = {
 
 describe("evidence resolution", () => {
   test("reuses an existing valid structured evidence record", () => {
-    const existing: EvidenceRecord = { id: "ev_existing", resource_id: "r", profile_id: "p", created_at: "n", source_kind: "conversation", source_summary: "verified", trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: ["mem_1"], redaction_status: "none" };
+    const existing: EvidenceRecord = { id: "ev_existing", resource_id: "resource", profile_id: "profile", created_at: "n", source_kind: "conversation", source_summary: "verified", trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: ["mem_1"], redaction_status: "none" };
     expect(resolveEvidenceReference({ root: root(), reference: existing.id, existingEvidence: [existing], ...base })).toEqual({ status: "alreadyStructured", evidenceId: existing.id });
   });
 
@@ -36,10 +36,9 @@ describe("evidence resolution", () => {
     if (first.status === "resolved") expect(first.evidence).toMatchObject({ source_ref: input.reference, trust_class: "unknown", notes: "legacy_evidence_backfill_v2" });
   });
 
-  test("resolves a capture-backed session reference without inventing source text", () => {
+  test("does not treat candidate text as verified session evidence", () => {
     const result = resolveEvidenceReference({ root: root(), reference: "session:s1:turn:t1", existingEvidence: [], candidateText: "Avoid promotional language.", candidateTrustClass: "direct_user_instruction", ...base });
-    expect(result.status).toBe("resolved");
-    if (result.status === "resolved") expect(result.evidence).toMatchObject({ source_session_id: "s1", source_ref: "session:s1:turn:t1", source_summary: "Avoid promotional language.", trust_class: "direct_user_instruction" });
+    expect(result).toEqual({ status: "unresolved", reason: "sourceMissing" });
   });
 
   test("does not fabricate unsupported, missing, redacted, or secret-bearing evidence", () => {
