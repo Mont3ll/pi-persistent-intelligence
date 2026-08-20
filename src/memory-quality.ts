@@ -1,15 +1,17 @@
 import { readEvidenceRecords } from "./evidence";
+import { memoryQualityPopulation, type MemoryQualityPopulation } from "./quality-population";
 import { redactSecrets, redactSecretsInObject } from "./secret-scanner";
 import { loadAllRecords } from "./store";
 import type { EvidenceRecord, MemoryRecord } from "./types";
 
-export type MemoryLifecycleState = "active" | "stale" | "dormant" | "contested" | "superseded" | "deleted";
+export type MemoryLifecycleState = "active" | "stale" | "dormant" | "contested" | "deprecated" | "superseded" | "promoted" | "deleted";
 
 export interface MemoryQualityItem {
   memory_id: string;
   layer: MemoryRecord["layer"];
   status: MemoryRecord["status"];
   lifecycle_state: MemoryLifecycleState;
+  quality_population: MemoryQualityPopulation;
   quality_score: number;
   confidence: number;
   evidence_count: number;
@@ -32,10 +34,13 @@ export interface MemoryQualityRecommendation {
 }
 
 export interface MemoryQualityReport {
-  heuristic_version: "memory-quality-v2";
+  heuristic_version: "memory-quality-v3";
   generated_at: string;
   summary: {
     total_records: number;
+    active_record_count: number;
+    review_record_count: number;
+    historical_record_count: number;
     low_quality_count: number;
     stale_count: number;
     duplicate_signal_count: number;
@@ -63,6 +68,8 @@ function daysBetween(start: string | undefined, end: string): number {
 function lifecycleFor(record: MemoryRecord, daysSinceUpdate: number): MemoryLifecycleState {
   if (record.status === "deleted") return "deleted";
   if (record.status === "superseded" || record.superseded_by.length > 0) return "superseded";
+  if (record.status === "deprecated") return "deprecated";
+  if (record.status === "promoted") return "promoted";
   if (record.status === "contested") return "contested";
   if (daysSinceUpdate > 180) return "stale";
   if (daysSinceUpdate > 90) return "dormant";
@@ -102,6 +109,7 @@ export function analyzeMemoryQualityFromRecords(records: MemoryRecord[], evidenc
     const ageDays = daysBetween(record.created_at, now);
     const daysSinceUpdate = daysBetween(record.updated_at, now);
     const lifecycle = lifecycleFor(record, daysSinceUpdate);
+    const population = memoryQualityPopulation(record.status);
     const signals: string[] = [];
     const reasons: string[] = [];
     let score = 100;
@@ -122,6 +130,7 @@ export function analyzeMemoryQualityFromRecords(records: MemoryRecord[], evidenc
       layer: record.layer,
       status: record.status,
       lifecycle_state: lifecycle,
+      quality_population: population,
       quality_score: Math.max(0, Math.min(100, Math.round(score))),
       confidence: record.confidence,
       evidence_count: refs.length,
@@ -135,20 +144,26 @@ export function analyzeMemoryQualityFromRecords(records: MemoryRecord[], evidenc
     };
   }).sort((a, b) => a.quality_score - b.quality_score || a.memory_id.localeCompare(b.memory_id));
 
-  const recommendations = items.flatMap((item) => recommendationFor(item) ? [recommendationFor(item)!] : []);
+  const activeItems = items.filter((item) => item.quality_population === "active");
+  const reviewItems = items.filter((item) => item.quality_population === "review");
+  const historicalItems = items.filter((item) => item.quality_population === "historical");
+  const recommendations = [...activeItems, ...reviewItems].flatMap((item) => recommendationFor(item) ? [recommendationFor(item)!] : []);
   const activeRecords = records.filter((record) => record.status === "active");
   const structuredAdopted = activeRecords.filter((record) => record.evidence.some((inline) => evidenceById.has(inline.ref))).length;
   const unresolvedLegacy = activeRecords.filter((record) => record.evidence.length > 0 && record.evidence.every((inline) => !evidenceById.has(inline.ref))).length;
   const adoptionRatio = activeRecords.length ? Number((structuredAdopted / activeRecords.length).toFixed(3)) : 1;
-  const average = items.length ? Math.round(items.reduce((sum, item) => sum + item.quality_score, 0) / items.length) : 100;
+  const average = activeItems.length ? Math.round(activeItems.reduce((sum, item) => sum + item.quality_score, 0) / activeItems.length) : 100;
   return redactSecretsInObject({
-    heuristic_version: "memory-quality-v2",
+    heuristic_version: "memory-quality-v3",
     generated_at: now,
     summary: {
       total_records: records.length,
-      low_quality_count: items.filter((item) => item.quality_score < 70).length,
-      stale_count: items.filter((item) => item.lifecycle_state === "stale").length,
-      duplicate_signal_count: items.filter((item) => item.signals.includes("duplicate_normalized_key")).length,
+      active_record_count: activeItems.length,
+      review_record_count: reviewItems.length,
+      historical_record_count: historicalItems.length,
+      low_quality_count: activeItems.filter((item) => item.quality_score < 70).length,
+      stale_count: activeItems.filter((item) => item.lifecycle_state === "stale").length,
+      duplicate_signal_count: activeItems.filter((item) => item.signals.includes("duplicate_normalized_key")).length,
       contested_count: items.filter((item) => item.lifecycle_state === "contested").length,
       superseded_count: items.filter((item) => item.lifecycle_state === "superseded").length,
       average_quality: average,
@@ -171,8 +186,9 @@ export function renderMemoryQualityReport(report: MemoryQualityReport): string {
     "# PI Memory Quality Report",
     "",
     `Generated: ${report.generated_at}`,
-    `Average quality: ${report.summary.average_quality}/100`,
-    `Records: ${report.summary.total_records} · Low quality: ${report.summary.low_quality_count} · Stale: ${report.summary.stale_count} · Duplicate signals: ${report.summary.duplicate_signal_count}`,
+    `Active average quality: ${report.summary.average_quality}/100`,
+    `Records: ${report.summary.total_records} total · ${report.summary.active_record_count} active · ${report.summary.review_record_count} review · ${report.summary.historical_record_count} historical`,
+    `Active signals: ${report.summary.low_quality_count} low quality · ${report.summary.stale_count} stale · ${report.summary.duplicate_signal_count} duplicate`,
     "",
     "## Lowest Quality Memories",
     ...report.items.slice(0, 20).map((item) => `- ${item.memory_id}: ${item.quality_score}/100 [${item.lifecycle_state}] ${item.signals.join(", ") || "healthy"} — ${item.statement_excerpt}`),
