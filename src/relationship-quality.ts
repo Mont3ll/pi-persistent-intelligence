@@ -1,5 +1,6 @@
 import { readEvidenceRecords } from "./evidence";
 import { exportMemoryGraph, type MemoryGraphEdge, type MemoryGraphEdgeType, type MemoryGraphExport } from "./memory-graph";
+import { memoryQualityPopulation, relationshipQualityPopulation, type RelationshipQualityPopulation } from "./quality-population";
 import { redactSecrets, redactSecretsInObject } from "./secret-scanner";
 import { loadAllRecords } from "./store";
 import type { EvidenceRecord, MemoryRecord } from "./types";
@@ -13,6 +14,7 @@ export interface RelationshipQualityEdgeItem {
   to: string;
   quality_score: number;
   quality_band: RelationshipQualityBand;
+  quality_population: RelationshipQualityPopulation;
   signals: string[];
   reasons: string[];
   mutation_performed: false;
@@ -20,6 +22,7 @@ export interface RelationshipQualityEdgeItem {
 
 export interface RelationshipQualityMemoryNode {
   memory_id: string;
+  quality_population: Exclude<RelationshipQualityPopulation, "auxiliary">;
   degree: number;
   live_evidence_edges: number;
   weak_edges: number;
@@ -41,9 +44,13 @@ export interface RelationshipQualityRecommendation {
 }
 
 export interface RelationshipQualityReport {
+  heuristic_version: "relationship-quality-v2";
   generated_at: string;
   summary: {
     total_edges: number;
+    active_edge_count: number;
+    historical_edge_count: number;
+    auxiliary_edge_count: number;
     weak_edge_count: number;
     dangling_edge_count: number;
     orphan_memory_count: number;
@@ -89,7 +96,7 @@ function evidenceStatus(edge: MemoryGraphEdge, evidenceById: Map<string, { redac
   return ev.redaction_status === "deleted" || ev.redaction_status === "redacted" ? "redacted_or_deleted" : "live";
 }
 
-function scoreEdge(edge: MemoryGraphEdge, nodeIds: Set<string>, evidenceById: Map<string, { redaction_status?: string }>): RelationshipQualityEdgeItem {
+function scoreEdge(edge: MemoryGraphEdge, nodeIds: Set<string>, evidenceById: Map<string, { redaction_status?: string }>, population: RelationshipQualityPopulation): RelationshipQualityEdgeItem {
   const signals: string[] = [];
   const reasons: string[] = [];
   let score = 70;
@@ -142,6 +149,7 @@ function scoreEdge(edge: MemoryGraphEdge, nodeIds: Set<string>, evidenceById: Ma
     to: edge.to,
     quality_score: Math.max(0, Math.min(100, Math.round(score))),
     quality_band: bandFor(score),
+    quality_population: population,
     signals,
     reasons,
     mutation_performed: false,
@@ -195,6 +203,7 @@ function nodeItem(record: MemoryRecord, touching: RelationshipQualityEdgeItem[],
 
   return {
     memory_id: id,
+    quality_population: record.status === "active" ? "active" : "historical",
     degree: touching.length,
     live_evidence_edges: liveEvidenceEdges,
     weak_edges: weakEdges,
@@ -223,36 +232,48 @@ export function analyzeRelationshipQualityFromGraph(input: { generated_at: strin
   const { generated_at: now, graph, records, evidence } = input;
   const nodeIds = new Set(graph.nodes.map((node) => node.id));
   const evidenceById = new Map(evidence.map((ev) => [ev.id, ev]));
-  const relationships = graph.edges.map((edge) => scoreEdge(edge, nodeIds, evidenceById)).sort((a, b) => a.quality_score - b.quality_score || a.edge_id.localeCompare(b.edge_id));
+  const populationByMemoryId = new Map(records.map((record) => [record.id, memoryQualityPopulation(record.status)]));
+  const populationForEdge = (edge: Pick<MemoryGraphEdge, "from" | "to">): RelationshipQualityPopulation => relationshipQualityPopulation(
+    [memoryIdFromNode(edge.from), memoryIdFromNode(edge.to)].filter(Boolean) as string[],
+    populationByMemoryId,
+  );
+  const relationships = graph.edges.map((edge) => scoreEdge(edge, nodeIds, evidenceById, populationForEdge(edge))).sort((a, b) => a.quality_score - b.quality_score || a.edge_id.localeCompare(b.edge_id));
   const relationshipEdgesByMemory = new Map<string, RelationshipQualityEdgeItem[]>();
   const rawEdgesByMemory = new Map<string, MemoryGraphEdge[]>();
   for (const edge of relationships) addEdgeForMemory(relationshipEdgesByMemory, edge);
   for (const edge of graph.edges) addEdgeForMemory(rawEdgesByMemory, edge);
   const memoryNodes = records.map((record) => nodeItem(record, relationshipEdgesByMemory.get(record.id) ?? [], (rawEdgesByMemory.get(record.id) ?? []).length > 0)).sort((a, b) => b.weak_edges - a.weak_edges || a.memory_id.localeCompare(b.memory_id));
+  const activeRelationships = relationships.filter((edge) => edge.quality_population === "active");
+  const activeMemoryNodes = memoryNodes.filter((node) => node.quality_population === "active");
+  const activeEdgeIds = new Set(activeRelationships.map((edge) => edge.edge_id));
   const reciprocalPairs = new Map<string, Set<string>>();
-  for (const edge of graph.edges) {
+  for (const edge of graph.edges.filter((item) => activeEdgeIds.has(item.id))) {
     const key = reciprocalMemoryPairKey(edge);
     if (!key) continue;
     reciprocalPairs.set(key, new Set([...(reciprocalPairs.get(key) ?? new Set<string>()), `${edge.type}:${edge.from}->${edge.to}`]));
   }
   const cyclicPairCount = [...reciprocalPairs.values()].filter((directions) => directions.size > 1).length;
-  const avg = relationships.length ? Math.round(relationships.reduce((sum, edge) => sum + edge.quality_score, 0) / relationships.length) : 100;
+  const avg = activeRelationships.length ? Math.round(activeRelationships.reduce((sum, edge) => sum + edge.quality_score, 0) / activeRelationships.length) : 100;
 
   return redactSecretsInObject({
+    heuristic_version: "relationship-quality-v2",
     generated_at: now,
     summary: {
       total_edges: relationships.length,
-      weak_edge_count: relationships.filter((edge) => edge.quality_band === "weak" || edge.quality_band === "broken").length,
-      dangling_edge_count: relationships.filter((edge) => edge.signals.includes("dangling_endpoint")).length,
-      orphan_memory_count: memoryNodes.filter((node) => node.signals.includes("orphan_memory")).length,
-      dead_end_memory_count: memoryNodes.filter((node) => node.signals.includes("dead_end_memory")).length,
-      high_value_hub_count: memoryNodes.filter((node) => node.signals.includes("high_value_hub")).length,
+      active_edge_count: activeRelationships.length,
+      historical_edge_count: relationships.filter((edge) => edge.quality_population === "historical").length,
+      auxiliary_edge_count: relationships.filter((edge) => edge.quality_population === "auxiliary").length,
+      weak_edge_count: activeRelationships.filter((edge) => edge.quality_band === "weak" || edge.quality_band === "broken").length,
+      dangling_edge_count: activeRelationships.filter((edge) => edge.signals.includes("dangling_endpoint")).length,
+      orphan_memory_count: activeMemoryNodes.filter((node) => node.signals.includes("orphan_memory")).length,
+      dead_end_memory_count: activeMemoryNodes.filter((node) => node.signals.includes("dead_end_memory")).length,
+      high_value_hub_count: activeMemoryNodes.filter((node) => node.signals.includes("high_value_hub")).length,
       cyclic_memory_pair_count: cyclicPairCount,
       average_relationship_quality: avg,
     },
     relationships,
     memory_nodes: memoryNodes,
-    recommendations: recommendationsFor(relationships, memoryNodes, cyclicPairCount),
+    recommendations: recommendationsFor(activeRelationships, activeMemoryNodes, cyclicPairCount),
     mutation_performed: false,
   }) as RelationshipQualityReport;
 }
@@ -272,8 +293,9 @@ export function renderRelationshipQualityReport(report: RelationshipQualityRepor
     "# PI Relationship Quality Report",
     "",
     `Generated: ${report.generated_at}`,
-    `Average relationship quality: ${report.summary.average_relationship_quality}/100`,
-    `Edges: ${report.summary.total_edges} · Weak: ${report.summary.weak_edge_count} · Orphans: ${report.summary.orphan_memory_count} · Dead ends: ${report.summary.dead_end_memory_count} · Hubs: ${report.summary.high_value_hub_count}`,
+    `Active average relationship quality: ${report.summary.average_relationship_quality}/100`,
+    `Edges: ${report.summary.total_edges} total · ${report.summary.active_edge_count} active · ${report.summary.historical_edge_count} historical · ${report.summary.auxiliary_edge_count} auxiliary`,
+    `Active signals: ${report.summary.weak_edge_count} weak · ${report.summary.orphan_memory_count} orphans · ${report.summary.dead_end_memory_count} dead ends · ${report.summary.high_value_hub_count} hubs`,
     "",
     "## Weakest Relationships",
     ...(report.relationships.slice(0, 20).map((edge) => `- ${edge.edge_id}: ${edge.quality_score}/100 [${edge.quality_band}] ${edge.signals.join(", ") || "healthy"}`)),
