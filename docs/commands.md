@@ -31,6 +31,7 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 | `/memory-health-audit [--save] [--plain\|--json]` | Run a report-only health audit with category scores, trends, and review recommendations; never mutates memory. |
 | `/memory-diagnostics [--profile] [--save] [--plain\|--json]` | Run integrity, secret, provenance, and re-verification checks in a dashboard; `--profile` adds stage timings and `--save` writes a diagnostics report. |
 | `/memory-store-integrity [--apply --fingerprint <sha256>] [--json]` | Preview duplicate-ID/self-supersession repair. Applying requires the reviewed preview fingerprint and always creates a backup and audit report. |
+| `/memory-key-repair [--apply --fingerprint <sha256>] [--json]` | Preview versioned normalized-key changes with exact IDs, old/new keys, record/file hashes, collisions, and a deterministic fingerprint. Apply requires that reviewed fingerprint, creates a byte-exact backup and audit report, and never merges records. Live apply requires explicit human approval. |
 | `/memory-recall-xray <query> [--profile] [--plain\|--json]` | Browse included/excluded memories, scores, evidence, and selection reasons; `--profile` adds stage timings. Read-only and redacted. |
 | `/memory-export --format pi-governance [--redacted] [--output bundle.json]` | Export a pi-governance-compatible PI memory contract bundle. |
 | `/memory-import --format pi-governance <bundle.json> [--apply] [--backup] [--redacted-aware]` | Preview or apply a pi-governance-compatible bundle import. By default this is a dry-run import. |
@@ -112,6 +113,8 @@ Use `--plain` for text output or `--json` for machine-readable output on command
 /memory-diagnostics --save
 /memory-store-integrity --json
 /memory-store-integrity --apply --fingerprint <fingerprint-from-preview> --json
+/memory-key-repair --json
+/memory-key-repair --apply --fingerprint <fingerprint-from-preview> --json
 /memory-health-audit --save
 /memory-capture-quality
 /memory-capture-audit --since 2026-05-01 --json

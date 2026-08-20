@@ -40,6 +40,7 @@ import { readReinforcementEventsForMemory, recordExplicitReinforcement, summariz
 import { runMetaConsolidation, generateHandoffSnapshot, generateGoalHandoffSnapshot, DEFAULT_META_CONSOLIDATION_CONFIG } from "./src/meta-consolidation";
 import { runMemoryDiagnostics, renderDiagnosticsReport, saveDiagnosticsReport } from "./src/diagnostics";
 import { applyStoreIntegrityPlan, scanStoreIntegrity } from "./src/store-integrity";
+import { applyMemoryKeyRepair, scanMemoryKeyRepair } from "./src/memory-key-repair";
 import { applyPatch, readPatchFile } from "./src/patch";
 import { buildRetrievalContext, syncFtsIndex } from "./src/retriever";
 import { renderMemoryToDisk } from "./src/render";
@@ -867,6 +868,36 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
         notifyStructured(ctx, args, result, text, result.mutation_performed ? "success" : "info");
       } catch (error) {
         ctx.ui.notify(`Store integrity failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("memory-key-repair", {
+    description: "Preview or apply versioned normalized-memory-key repairs. Usage: /memory-key-repair [--apply --fingerprint <sha256>] [--json]",
+    handler: async (args, ctx) => {
+      try {
+        const parsed = parseCommandArgs(args);
+        const apply = parsed.flags.apply === true;
+        if (!apply) {
+          const plan = scanMemoryKeyRepair(root);
+          const text = plan.targetCount > 0
+            ? `Normalized key repair preview: ${plan.targetCount} target(s), ${plan.collisions.length} collision(s), fingerprint ${plan.fingerprint}. Review the JSON before apply.`
+            : "No active normalized-memory-key repairs are needed.";
+          notifyStructured(ctx, args, plan, text, plan.targetCount > 0 ? "warning" : "success");
+          return;
+        }
+        const expectedFingerprint = typeof parsed.flags.fingerprint === "string" ? parsed.flags.fingerprint : "";
+        if (!expectedFingerprint) {
+          ctx.ui.notify("Apply requires the reviewed preview fingerprint. Run /memory-key-repair --json, then use --apply --fingerprint <sha256>.", "warning");
+          return;
+        }
+        const result = applyMemoryKeyRepair(root, expectedFingerprint, nowIso());
+        const text = result.mutationPerformed
+          ? `Normalized key repair applied. Backup: ${result.backupPath}; report: ${result.reportPath}.`
+          : "Normalized key repair apply made no changes.";
+        notifyStructured(ctx, args, result, text, result.mutationPerformed ? "success" : "info");
+      } catch (error) {
+        ctx.ui.notify(`Normalized key repair failed: ${error instanceof Error ? error.message : String(error)}`, "error");
       }
     },
   });
