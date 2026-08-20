@@ -14,6 +14,9 @@ export function relationshipQualityPopulation(
   populationByMemoryId: ReadonlyMap<string, MemoryQualityPopulation>,
 ): RelationshipQualityPopulation {
   if (memoryEndpointIds.length === 0) return "auxiliary";
-  const populations = memoryEndpointIds.map((id) => populationByMemoryId.get(id) ?? "historical");
-  return populations.every((population) => population === "active") ? "active" : "historical";
+  const knownPopulations = memoryEndpointIds.flatMap((id) => {
+    const population = populationByMemoryId.get(id);
+    return population ? [population] : [];
+  });
+  return knownPopulations.includes("active") && knownPopulations.every((population) => population === "active") ? "active" : "historical";
 }

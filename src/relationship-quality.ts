@@ -140,6 +140,7 @@ function scoreEdge(edge: MemoryGraphEdge, nodeIds: Set<string>, evidenceById: Ma
     reasons.push("relationship is supported by a reinforcement event");
   }
 
+  if (signals.includes("dangling_endpoint")) score = 0;
   if (!reasons.length) reasons.push("relationship has no obvious structural weakness");
 
   return {
