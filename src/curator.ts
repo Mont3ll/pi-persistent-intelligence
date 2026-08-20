@@ -9,6 +9,8 @@ import { loadConfig } from "./config";
 import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
 import { createInquiryFromCandidate } from "./inquiries";
+import { readEvidenceRecords } from "./evidence";
+import { resolveEvidenceReference } from "./evidence-resolution";
 import { getDerivedRecordMemoryKeyV2, isStructuralMemoryKey } from "./memory-key";
 import type { CaptureCandidate, CaptureScopeTarget, MemoryPatch, MemoryRecord, MemoryScope, PatchOp } from "./types";
 
@@ -147,6 +149,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
   const eligible = eligibleCandidates(root, options);
   const activeRecords = loadActiveRecords(root);
   const activeIds = new Set(activeRecords.map((record) => record.id));
+  const existingEvidence = readEvidenceRecords(root);
 
   let opIndex = 0;
   const ops: PatchOp[] = eligible.flatMap((rawCandidate) => {
@@ -167,10 +170,37 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       const normalizedKey = candidate.normalized_key && !isStructuralMemoryKey(candidate.normalized_key)
         ? candidate.normalized_key
         : getDerivedRecordMemoryKeyV2(baseRecord);
-      const record = { ...baseRecord, normalized_key: normalizedKey };
+      const resolutions = candidate.evidence_refs.map((reference) => resolveEvidenceReference({
+        root,
+        reference,
+        existingEvidence,
+        memoryId: baseRecord.id,
+        resourceId: candidate.resource_id ?? "curation",
+        profileId: candidate.profile_id ?? "legacy-default",
+        createdAt: candidate.created_at,
+        scopeLevel: baseRecord.scope.type,
+        scopeRef: baseRecord.scope.type === "project" ? baseRecord.scope.project : baseRecord.scope.type === "domain" ? baseRecord.scope.domains?.join(",") : undefined,
+        candidateText: candidate.text,
+        candidateSourceVerified: candidate.source.ref === reference && new Set(["daily", "conversation", "direct_user_instruction", "user_preference", "user_correction", "historical_session_audit", "session_capture"]).has(candidate.source.type),
+        candidateTrustClass: candidate.primary_trust_class,
+        candidateDurability: candidate.durability_signal,
+        provenance: "curation_evidence_v1",
+      }));
+      const supportingEvidence = [...new Map(resolutions.flatMap((resolution) => resolution.status === "resolved" ? [[resolution.evidence.id, resolution.evidence] as const] : [])).values()];
+      const structuredIds = [...new Set(resolutions.flatMap((resolution) => resolution.status === "alreadyStructured" ? [resolution.evidenceId] : resolution.status === "resolved" ? [resolution.evidence.id] : []))];
+      const record = {
+        ...baseRecord,
+        normalized_key: normalizedKey,
+        evidence: [
+          ...baseRecord.evidence,
+          ...structuredIds.filter((id) => !baseRecord.evidence.some((item) => item.ref === id)).map((ref) => ({ type: "source" as const, ref, note: "Structured evidence resolved during curation." })),
+        ],
+      };
       const base = {
         op_id: `op_${String(opIndex).padStart(3, "0")}`,
         candidate_id: candidate.id,
+        supportingEvidence,
+        requiresStructuredEvidence: true,
       };
 
     if (targetId && activeIds.has(targetId) && requestedTargets.length === 1) {
