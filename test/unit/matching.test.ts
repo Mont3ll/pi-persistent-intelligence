@@ -90,6 +90,49 @@ describe("candidate matching", () => {
     expect(match.matched_memory_ids).toEqual([]);
   });
 
+  test("matches a new v2 candidate to a meaningful structural v1 key", () => {
+    const existing = record("mem_v1", "Use canonical JSONL as the source of truth.");
+    const incoming = candidate("Use canonical JSONL as the source of truth.", {
+      normalized_key: undefined,
+      scope_targets: [{ type: "project", project: "pi", confidence: 1, basis: ["test"] }],
+    });
+
+    expect(matchCandidateToRecords(incoming, [existing])).toMatchObject({
+      match_kind: "duplicate",
+      matched_memory_ids: ["mem_v1"],
+    });
+  });
+
+  test("does not treat an old generic capture key as a shared semantic key", () => {
+    const genericKey = "legacy|global|global|capture-backfill|avoid-pattern";
+    const records = [
+      record("mem_duplicate_traversals", "Avoid duplicate traversals.", {
+        scope: { type: "global" }, profile_id: "legacy", tags: ["capture-backfill", "user_preference", "writing"], ruleType: "avoid_pattern", normalized_key: genericKey,
+      }),
+      record("mem_snake_case", "Avoid snake_case unless required.", {
+        scope: { type: "global" }, profile_id: "legacy", tags: ["capture-backfill", "user_preference", "writing"], ruleType: "avoid_pattern", normalized_key: genericKey,
+      }),
+    ];
+    const incoming = candidate("Avoid duplicate traversals.", {
+      profile_id: "legacy",
+      scope_targets: [{ type: "global", confidence: 1, basis: ["test"] }],
+      tags: ["capture", "user_preference", "writing"],
+      ruleType: "avoid_pattern",
+      normalized_key: undefined,
+    });
+
+    expect(matchCandidateToRecords(incoming, records)).toMatchObject({
+      match_kind: "duplicate",
+      matched_memory_ids: ["mem_duplicate_traversals"],
+    });
+  });
+
+  test("keeps non-structural custom keys exact-only", () => {
+    const existing = record("mem_custom", "Use canonical JSONL.", { normalized_key: "custom|key" });
+    expect(matchCandidateToRecords(candidate("Use canonical JSONL.", { normalized_key: "custom|key" }), [existing]).match_kind).toBe("duplicate");
+    expect(matchCandidateToRecords(candidate("Use canonical JSONL.", { normalized_key: undefined }), [existing]).match_kind).toBe("new");
+  });
+
   test("marks multiple same-key matches as ambiguous and blocks auto-apply", () => {
     const a = record("mem_a", "Use canonical JSONL for memory.");
     const b = record("mem_b", "Use JSONL as canonical memory storage.");

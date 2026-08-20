@@ -152,6 +152,26 @@ export function getDerivedRecordMemoryKeyV2(record: MemoryRecord): NormalizedMem
   });
 }
 
+function structuralV1Topic(key: string): string | null {
+  const parts = key.split("|");
+  return parts.length === 5 ? parts[3] : null;
+}
+
+export function isExcludedLegacyMemoryKey(key: string): boolean {
+  const topic = structuralV1Topic(key);
+  return topic !== null && isExcludedTopicTag(topic);
+}
+
+export function getRecordMemoryKeys(record: MemoryRecord): NormalizedMemoryKey[] {
+  if (!record.normalized_key) return [getDerivedRecordMemoryKeyV2(record)];
+  const topic = structuralV1Topic(record.normalized_key);
+  if (topic === null) return [record.normalized_key];
+  const derived = getDerivedRecordMemoryKeyV2(record);
+  return isExcludedTopicTag(topic)
+    ? [derived]
+    : [...new Set([record.normalized_key, derived])];
+}
+
 export function memoryIdFromCandidateId(candidateId: string): string {
   if (candidateId.startsWith("cap_")) return `mem_${candidateId.slice(4)}`;
   if (candidateId === "cap") return "mem";
@@ -169,8 +189,7 @@ function candidateScope(candidate: CaptureCandidate, fallbackScope?: MemoryRecor
     : { type: "global" };
 }
 
-export function getCandidateMemoryKey(candidate: CaptureCandidate, fallbackScope?: MemoryRecord["scope"]): NormalizedMemoryKey {
-  if (candidate.normalized_key) return candidate.normalized_key;
+function getDerivedCandidateMemoryKeyV2(candidate: CaptureCandidate, fallbackScope?: MemoryRecord["scope"]): NormalizedMemoryKey {
   const scope = scopeParts(candidateScope(candidate, fallbackScope));
   return createMemoryKeyV2({
     profile_id: candidate.profile_id ?? "legacy",
@@ -179,4 +198,18 @@ export function getCandidateMemoryKey(candidate: CaptureCandidate, fallbackScope
     topic: inferMemoryTopic({ tags: candidate.tags, statement: candidate.text }),
     ruleType: candidate.ruleType as MemoryRuleType | undefined,
   });
+}
+
+export function getCandidateMemoryKey(candidate: CaptureCandidate, fallbackScope?: MemoryRecord["scope"]): NormalizedMemoryKey {
+  return candidate.normalized_key ?? getDerivedCandidateMemoryKeyV2(candidate, fallbackScope);
+}
+
+export function getCandidateMemoryKeys(candidate: CaptureCandidate, fallbackScope?: MemoryRecord["scope"]): NormalizedMemoryKey[] {
+  if (!candidate.normalized_key) return [getDerivedCandidateMemoryKeyV2(candidate, fallbackScope)];
+  const topic = structuralV1Topic(candidate.normalized_key);
+  if (topic === null) return [candidate.normalized_key];
+  const derived = getDerivedCandidateMemoryKeyV2(candidate, fallbackScope);
+  return isExcludedTopicTag(topic)
+    ? [derived]
+    : [...new Set([candidate.normalized_key, derived])];
 }

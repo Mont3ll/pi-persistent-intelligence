@@ -1,4 +1,4 @@
-import { getCandidateMemoryKey, getRecordMemoryKey } from "./memory-key";
+import { getCandidateMemoryKey, getCandidateMemoryKeys, getRecordMemoryKeys } from "./memory-key";
 import type { CandidateMatchKind, CaptureCandidate, MemoryRecord } from "./types";
 
 export interface CandidateMatchResult {
@@ -57,7 +57,12 @@ export function matchCandidateToRecords(candidate: CaptureCandidate, records: Me
     }
   }
 
-  const sameKey = records.filter((record) => record.status === "active" && sameProfile(candidate, record) && getRecordMemoryKey(record) === normalizedKey);
+  const candidateKeys = new Set(getCandidateMemoryKeys(candidate));
+  const sameKey = records.filter((record) =>
+    record.status === "active"
+    && sameProfile(candidate, record)
+    && getRecordMemoryKeys(record).some((key) => candidateKeys.has(key))
+  );
   if (sameKey.length === 0) {
     return { match_kind: "new", matched_memory_ids: [], match_reasons: ["no active memory with same normalized key"], normalized_key: normalizedKey };
   }
