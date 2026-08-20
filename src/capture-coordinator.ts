@@ -6,6 +6,7 @@ import { appendOrReinforceCandidate, normalizedPreferenceKey } from "./capture-r
 import { resolveCaptureScopes } from "./capture-scope";
 import { loadConfig } from "./config";
 import { appendDailyLog } from "./daily";
+import { appendEvidenceRecord } from "./evidence";
 import { readJsonl, writeJsonl } from "./jsonl";
 import { scoreMemoryWorth } from "./memory-worth";
 import { ensureMemoryDirs } from "./paths";
@@ -132,13 +133,32 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
     });
     const key = normalizedPreferenceKey(input.message, intent.intent);
     const groupHash = hash(`${messageHash}:${input.session_id}`).slice(0, 20);
+    const sourceRef = `session:${input.session_id}:turn:${input.turn_id}`;
+    const evidence = appendEvidenceRecord(root, {
+      id: "",
+      resource_id: "curation",
+      profile_id: "legacy-default",
+      created_at: now,
+      source_kind: "conversation",
+      source_session_id: input.session_id,
+      source_ref: sourceRef,
+      source_summary: input.message.trim().slice(0, 300).replace(/\s+/g, " "),
+      trust_class: trustClass,
+      polarity: "supports",
+      durability_signal: durability,
+      related_memory_ids: [],
+      scope_level: scopes.length === 1 ? scopes[0].type : "multi",
+      tags: ["capture-evidence"],
+      notes: "capture_evidence_v1",
+    });
     const candidate: CaptureCandidate = {
       id: `cap_pref_${groupHash}`,
       created_at: now,
-      source: { type: trustClass, ref: `session:${input.session_id}:turn:${input.turn_id}` },
+      source: { type: trustClass, ref: sourceRef },
       text: input.message.trim().slice(0, 300).replace(/\s+/g, " "),
       tags: [...new Set(["capture", intent.intent, ...intent.applicability])],
-      evidence_refs: [`session:${input.session_id}:turn:${input.turn_id}`],
+      evidence_refs: [evidence.id],
+      evidence_ids: [evidence.id],
       confidence: intent.confidence,
       status: "new",
       ruleType: candidateRuleType(intent.intent, input.message),

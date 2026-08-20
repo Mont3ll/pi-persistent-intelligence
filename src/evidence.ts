@@ -79,8 +79,20 @@ export function appendEvidenceRecord(root: string, record: EvidenceRecord): Evid
 }
 
 export function appendEvidenceRecordIfMissing(root: string, record: EvidenceRecord): EvidenceRecord {
-  const existing = readEvidenceRecords(root).find((item) => item.id === record.id);
-  return existing ?? appendEvidenceRecord(root, record);
+  const paths = ensureMemoryDirs(root);
+  const records = readEvidenceRecords(root);
+  const index = records.findIndex((item) => item.id === record.id);
+  if (index < 0) return appendEvidenceRecord(root, record);
+  const existing = records[index];
+  if (existing.profile_id !== record.profile_id || existing.resource_id !== record.resource_id || existing.polarity !== record.polarity) {
+    throw new Error(`Evidence identity mismatch for ${record.id}.`);
+  }
+  const related_memory_ids = [...new Set([...existing.related_memory_ids, ...record.related_memory_ids])];
+  if (related_memory_ids.length === existing.related_memory_ids.length) return existing;
+  const updated = { ...existing, related_memory_ids };
+  records[index] = updated;
+  writeJsonl(paths.memory.evidence, records);
+  return updated;
 }
 
 export function readEvidenceRecords(root: string): EvidenceRecord[] {

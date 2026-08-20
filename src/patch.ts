@@ -9,7 +9,7 @@ import { createDeletionTombstone, appendDeletionTombstone, isTombstonedRecord } 
 import { appendEvidenceRecordIfMissing, readEvidenceRecords, redactEvidenceForMemory } from "./evidence";
 import { collectPrivacyCandidateCorrelations, purgeCorrelatedPrivacyArtifacts, redactPrivacyPatchForExecution, redactPrivacyPatchForPersistence, validatePrivacyArtifactSet } from "./privacy-artifacts";
 import { affectedRecordIdsFromPatchOps, postMutationModeFromOps, runPostMutationChecks } from "./post-mutation-checks";
-import type { MemoryPatch, PatchOp, PatchSkip, PatchSkipReason } from "./types";
+import type { EvidenceRecord, MemoryPatch, MemoryRecord, PatchOp, PatchSkip, PatchSkipReason } from "./types";
 
 export interface ApplyPatchOptions {
   selectedOpIds?: string[];
@@ -23,6 +23,15 @@ function isSelected(op: PatchOp, selected?: string[]): boolean {
 function mergeUnique(existing: string[] | undefined, incoming: string[] | undefined): string[] | undefined {
   const merged = [...new Set([...(existing ?? []), ...(incoming ?? [])])];
   return merged.length ? merged : undefined;
+}
+
+function evidenceSupportsRecord(evidence: EvidenceRecord, record: MemoryRecord): boolean {
+  return evidence.redaction_status !== "redacted"
+    && evidence.redaction_status !== "deleted"
+    && evidence.polarity === "supports"
+    && evidence.profile_id === (record.profile_id ?? "legacy-default")
+    && evidence.resource_id === (record.resource_id ?? "curation")
+    && evidence.related_memory_ids.includes(record.id);
 }
 
 function hasInvalidatedEvidence(root: string, op: PatchOp): boolean {
@@ -55,8 +64,8 @@ function applyDecision(root: string, op: PatchOp): ApplyDecision {
   if (op.requiresStructuredEvidence && (op.op === "add" || op.op === "supersede")) {
     const record = op.record ?? op.to_record;
     const validIds = new Set([
-      ...readEvidenceRecords(root).filter((item) => item.redaction_status !== "redacted" && item.redaction_status !== "deleted").map((item) => item.id),
-      ...(op.supportingEvidence ?? []).map((item) => item.id),
+      ...readEvidenceRecords(root).filter((item) => record && evidenceSupportsRecord(item, record)).map((item) => item.id),
+      ...(op.supportingEvidence ?? []).filter((item) => record && evidenceSupportsRecord(item, record)).map((item) => item.id),
     ]);
     if (record?.evidence.length && !record.evidence.some((item) => validIds.has(item.ref))) {
       return reject("unresolved_evidence", `Operation ${op.op_id} has no verified structured evidence.`);

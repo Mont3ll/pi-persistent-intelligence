@@ -7,7 +7,7 @@ import { appendCandidate, listCandidates } from "../../src/inbox";
 import { curateInbox } from "../../src/curator";
 import { applyPatch } from "../../src/patch";
 import { loadActiveRecords } from "../../src/store";
-import { readEvidenceRecords } from "../../src/evidence";
+import { appendEvidenceRecord, readEvidenceRecords } from "../../src/evidence";
 
 let tempDirs: string[] = [];
 function tempRoot() {
@@ -47,15 +47,17 @@ describe("curator and patch applier", () => {
   test("materializes capture evidence through the governed add operation", () => {
     const root = tempRoot();
     ensureMemoryDirs(root);
+    appendEvidenceRecord(root, { id: "ev_capture", resource_id: "curation", profile_id: "legacy-default", created_at: "2026-05-08T00:00:00Z", source_kind: "conversation", source_ref: "session:s1:turn:t1", source_summary: "Use patch files before canonical writes.", trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: [] });
     appendCandidate(root, {
       id: "cap_evidence", created_at: "2026-05-08T00:00:00Z",
-      source: { type: "session_capture", ref: "session:s1:turn:t1" },
+      source: { type: "direct_user_instruction", ref: "session:s1:turn:t1" },
       text: "Use patch files before canonical writes.", tags: ["workflow"],
-      evidence_refs: ["session:s1:turn:t1"], confidence: 0.9, status: "new",
+      evidence_refs: ["ev_capture"], confidence: 0.9, status: "new",
       primary_trust_class: "direct_user_instruction", durability_signal: "project",
     });
     const patch = curateInbox(root, { now: "2026-05-08T01:00:00Z", mode: "propose", minEvidenceCount: 1 });
     expect(patch.ops[0].supportingEvidence).toHaveLength(1);
+    expect(patch.ops[0].supportingEvidence?.[0].related_memory_ids).toEqual([patch.ops[0].record!.id]);
     expect(patch.ops[0].record?.evidence.map((item) => item.ref)).toContain(patch.ops[0].supportingEvidence?.[0].id);
 
     const result = applyPatch(root, patch, { selectedOpIds: [patch.ops[0].op_id], now: "2026-05-08T02:00:00Z" });
@@ -67,14 +69,25 @@ describe("curator and patch applier", () => {
   test("keeps unresolved evidence-only candidates reviewable while applying unrelated ops", () => {
     const root = tempRoot();
     ensureMemoryDirs(root);
-    appendCandidate(root, { id: "cap_unresolved", created_at: "2026-05-08T00:00:00Z", source: { type: "import", ref: "external:unknown" }, text: "Unverified preference.", tags: ["preference"], evidence_refs: ["external:unknown"], confidence: 0.9, status: "new" });
-    appendCandidate(root, { id: "cap_resolved", created_at: "2026-05-08T00:00:00Z", source: { type: "session_capture", ref: "session:s2:turn:t2" }, text: "Run checks before release.", tags: ["workflow"], evidence_refs: ["session:s2:turn:t2"], confidence: 0.9, status: "new", primary_trust_class: "direct_user_instruction" });
+    appendEvidenceRecord(root, { id: "ev_resolved", resource_id: "curation", profile_id: "legacy-default", created_at: "2026-05-08T00:00:00Z", source_kind: "conversation", source_ref: "session:s2:turn:t2", source_summary: "Run checks before release.", trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: [] });
+    appendCandidate(root, { id: "cap_unresolved", created_at: "2026-05-08T00:00:00Z", source: { type: "direct_user_instruction", ref: "external:unknown" }, text: "Unverified preference.", tags: ["preference"], evidence_refs: ["external:unknown"], confidence: 0.9, status: "new" });
+    appendCandidate(root, { id: "cap_resolved", created_at: "2026-05-08T00:00:00Z", source: { type: "direct_user_instruction", ref: "session:s2:turn:t2" }, text: "Run checks before release.", tags: ["workflow"], evidence_refs: ["ev_resolved"], confidence: 0.9, status: "new", primary_trust_class: "direct_user_instruction" });
     const patch = curateInbox(root, { now: "2026-05-08T01:00:00Z", mode: "propose", minEvidenceCount: 1 });
     const result = applyPatch(root, patch, { selectedOpIds: patch.ops.map((op) => op.op_id), now: "2026-05-08T02:00:00Z" });
     expect(result.applied_ops).toHaveLength(1);
     expect(result.skipped_ops).toContainEqual(expect.objectContaining({ candidate_id: "cap_unresolved", reason: "unresolved_evidence" }));
     expect(listCandidates(root).find((item) => item.id === "cap_unresolved")?.status).toBe("new");
     expect(listCandidates(root).find((item) => item.id === "cap_resolved")?.status).toBe("patched");
+  });
+
+  test("rejects cross-profile evidence as unrelated", () => {
+    const root = tempRoot();
+    ensureMemoryDirs(root);
+    appendEvidenceRecord(root, { id: "ev_other", resource_id: "other-resource", profile_id: "other-profile", created_at: "2026-05-08", source_kind: "conversation", source_summary: "Other claim.", trust_class: "direct_user_instruction", polarity: "supports", related_memory_ids: ["other-memory"] });
+    appendCandidate(root, { id: "cap_cross", created_at: "2026-05-08", resource_id: "resource", profile_id: "profile", source: { type: "direct_user_instruction", ref: "session:s3:turn:t3" }, text: "Claim without its own evidence.", tags: ["workflow"], evidence_refs: ["ev_other"], confidence: 0.9, status: "new" });
+    const patch = curateInbox(root, { now: "2026-05-08T01:00:00Z", mode: "propose", minEvidenceCount: 1 });
+    const result = applyPatch(root, patch, { selectedOpIds: patch.ops.map((op) => op.op_id), now: "2026-05-08T02:00:00Z" });
+    expect(result.skipped_ops).toContainEqual(expect.objectContaining({ candidate_id: "cap_cross", reason: "unresolved_evidence" }));
   });
 
   test("leaves weak candidates in the inbox", () => {

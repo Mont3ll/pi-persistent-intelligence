@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { processCaptureTurn } from "../../src/capture-coordinator";
 import { listCandidates } from "../../src/inbox";
+import { readEvidenceRecords } from "../../src/evidence";
 import type { ProjectIdentity } from "../../src/types";
 
 const dirs: string[] = [];
@@ -35,6 +36,9 @@ describe("capture coordinator", () => {
     expect(listCandidates(dir)).toHaveLength(1);
     expect(listCandidates(dir)[0].scope_targets).toEqual([{ type: "global", confidence: 0.95, basis: ["explicit_user_global"] }]);
     expect(listCandidates(dir)[0].proposed_applies_when).toContain("writing");
+    expect(readEvidenceRecords(dir)).toHaveLength(1);
+    expect(listCandidates(dir)[0].evidence_refs).toContain(readEvidenceRecords(dir)[0].id);
+    expect(readEvidenceRecords(dir)[0]).toMatchObject({ source_ref: "session:s1:turn:t1", trust_class: "direct_user_instruction" });
   });
 
   test("reinforces the same preference when repeated in a later turn", () => {
