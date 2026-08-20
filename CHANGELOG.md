@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-08-20
+
+### Fixed
+
+- Prevented one-shot memory consolidation subprocesses from creating persistent PI session-history files by running them with documented ephemeral session mode.
+
 ## [0.15.0] - 2026-08-01
 
 ### Added
