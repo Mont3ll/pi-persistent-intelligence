@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { scanMemoryKeyRepair } from "../../src/memory-key-repair";
+import { applyMemoryKeyRepair, scanMemoryKeyRepair } from "../../src/memory-key-repair";
 import { ensureMemoryDirs } from "../../src/paths";
 import type { MemoryRecord } from "../../src/types";
 
@@ -128,5 +128,86 @@ describe("memory key repair planner", () => {
       normalizedKey: "v2|legacy|global|global|duplicate-traversals|avoid-pattern",
       memoryIds: ["mem_existing", "mem_target"],
     }]);
+  });
+});
+
+describe("memory key repair apply", () => {
+  test("requires a reviewed fingerprint before any filesystem mutation", () => {
+    const root = fixtureRoot([record("mem_target", "Avoid duplicate traversals.")]);
+    const before = snapshot(root);
+
+    expect(() => applyMemoryKeyRepair(root, "")).toThrow("reviewed 64-character fingerprint");
+    expect(snapshot(root)).toEqual(before);
+  });
+
+  test("rejects source drift before backup or canonical mutation", () => {
+    const root = fixtureRoot([record("mem_target", "Avoid duplicate traversals.")]);
+    const plan = scanMemoryKeyRepair(root);
+    const path = join(root, "memory", "L2.playbooks.jsonl");
+    writeFileSync(path, `${readFileSync(path, "utf8")}${JSON.stringify(record("mem_drift", "Avoid unrelated drift."))}\n`, "utf8");
+    const before = snapshot(root);
+
+    expect(() => applyMemoryKeyRepair(root, plan.fingerprint)).toThrow("stale");
+    expect(snapshot(root)).toEqual(before);
+    expect(existsSync(join(root, "backups"))).toBe(false);
+  });
+
+  test("rejects collision-bearing plans before backup or mutation", () => {
+    const root = fixtureRoot([
+      record("mem_a", "Avoid duplicate traversals."),
+      record("mem_b", "Never use duplicate traversals."),
+    ]);
+    const plan = scanMemoryKeyRepair(root);
+    const before = snapshot(root);
+
+    expect(() => applyMemoryKeyRepair(root, plan.fingerprint)).toThrow("collisions");
+    expect(snapshot(root)).toEqual(before);
+    expect(existsSync(join(root, "backups"))).toBe(false);
+  });
+
+  test("creates a byte-exact backup and changes only reviewed keys without merging", () => {
+    const original = [
+      record("mem_duplicate", "Avoid duplicate traversals."),
+      record("mem_snake_case", "Avoid snake_case unless required."),
+      record("mem_meaningful", "Avoid unrelated changes.", {
+        tags: ["memory-governance"],
+        normalized_key: "legacy|global|global|memory-governance|avoid-pattern",
+      }),
+    ];
+    const root = fixtureRoot(original);
+    const canonicalPath = join(root, "memory", "L2.playbooks.jsonl");
+    const beforeBytes = readFileSync(canonicalPath);
+    const plan = scanMemoryKeyRepair(root);
+
+    const result = applyMemoryKeyRepair(root, plan.fingerprint, "2026-08-20T12:00:00.000Z");
+
+    expect(result).toMatchObject({
+      version: 2,
+      dryRun: false,
+      mutationPerformed: true,
+      fingerprint: plan.fingerprint,
+      targetCount: 2,
+      postApplyTargetCount: 0,
+    });
+    expect(result.changes).toEqual(plan.targets);
+    expect(readFileSync(join(result.backupPath!, "memory", "L2.playbooks.jsonl"))).toEqual(beforeBytes);
+    expect(JSON.parse(readFileSync(join(result.backupPath!, "transaction.json"), "utf8"))).toMatchObject({
+      version: 2,
+      previewFingerprint: plan.fingerprint,
+    });
+    expect(JSON.parse(readFileSync(result.reportPath!, "utf8"))).toMatchObject({ mutationPerformed: true, targetCount: 2 });
+
+    const repaired = readFileSync(canonicalPath, "utf8").trim().split("\n").map((line) => JSON.parse(line) as MemoryRecord);
+    expect(repaired).toHaveLength(original.length);
+    for (const originalRecord of original) {
+      const updated = repaired.find((item) => item.id === originalRecord.id)!;
+      const { normalized_key: _oldKey, ...beforeWithoutKey } = originalRecord;
+      const { normalized_key: _newKey, ...afterWithoutKey } = updated;
+      expect(afterWithoutKey).toEqual(beforeWithoutKey);
+    }
+    expect(repaired.find((item) => item.id === "mem_duplicate")?.normalized_key).toBe("v2|legacy|global|global|duplicate-traversals|avoid-pattern");
+    expect(repaired.find((item) => item.id === "mem_snake_case")?.normalized_key).toBe("v2|legacy|global|global|snake-case-unless-required|avoid-pattern");
+    expect(repaired.find((item) => item.id === "mem_meaningful")).toEqual(original[2]);
+    expect(scanMemoryKeyRepair(root).targetCount).toBe(0);
   });
 });
