@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { boundSourceSummary, createEvidenceId } from "./evidence";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import { resolveEvidenceReference, type EvidenceResolutionReason } from "./evidence-resolution";
 import { readJsonl } from "./jsonl";
 import { resolvePaths } from "./paths";
-import { scanSecrets, shouldBlockPersistence } from "./secret-scanner";
-import type { EvidenceRecord, EvidenceSourceKind, MemoryRecord } from "./types";
+import type { EvidenceRecord, MemoryRecord } from "./types";
 
 export interface LegacyEvidenceProposal {
   evidence: EvidenceRecord;
@@ -16,7 +15,7 @@ export interface LegacyEvidenceProposal {
 export interface LegacyEvidenceFinding {
   memory_id: string;
   reference: string;
-  reason: "missing" | "outside_store" | "secret_blocked";
+  reason: EvidenceResolutionReason;
 }
 
 export interface LegacyEvidenceMigrationApplyResult {
@@ -39,25 +38,13 @@ export interface LegacyEvidenceMigrationPlan {
   existing_evidence_skipped: number;
   unresolved_references: number;
   blocked_secret_references: number;
+  unresolved_reason_counts: Partial<Record<EvidenceResolutionReason, number>>;
   proposals: LegacyEvidenceProposal[];
   findings: LegacyEvidenceFinding[];
 }
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function sourceKind(reference: string): EvidenceSourceKind {
-  return reference.replaceAll("\\", "/").startsWith("daily/") ? "conversation" : "file";
-}
-
-function resolveReference(root: string, reference: string): { path?: string; reason?: "missing" | "outside_store" } {
-  const rootPath = realpathSync(root);
-  const candidate = isAbsolute(reference) ? resolve(reference) : resolve(root, reference);
-  const rel = relative(rootPath, candidate);
-  if (rel.startsWith("..") || isAbsolute(rel)) return { reason: "outside_store" };
-  if (!existsSync(candidate)) return { reason: "missing" };
-  return { path: candidate };
 }
 
 export function planLegacyEvidenceMigration(
@@ -80,30 +67,28 @@ export function planLegacyEvidenceMigration(
         existingEvidenceSkipped++;
         continue;
       }
-      const resolved = resolveReference(root, inline.ref);
-      if (!resolved.path) {
-        findings.push({ memory_id: record.id, reference: inline.ref, reason: resolved.reason! });
-        continue;
-      }
-      const sourceText = readFileSync(resolved.path, "utf-8");
-      if (shouldBlockPersistence(scanSecrets(sourceText))) {
-        blockedSecretReferences++;
-        findings.push({ memory_id: record.id, reference: inline.ref, reason: "secret_blocked" });
-        continue;
-      }
-      const source_kind = sourceKind(inline.ref);
-      const source_summary = boundSourceSummary(sourceText.trim().replace(/\s+/g, " ") || `Legacy source ${inline.ref}`);
-      const profile_id = record.profile_id ?? "legacy-default";
-      const evidenceId = createEvidenceId({
-        profile_id,
-        source_kind,
-        source_ref: inline.ref,
-        source_summary,
+      const resolution = resolveEvidenceReference({
+        root,
+        reference: inline.ref,
+        existingEvidence,
+        memoryId: record.id,
+        resourceId: record.resource_id ?? "legacy-migration",
+        profileId: record.profile_id ?? "legacy-default",
+        createdAt: record.created_at,
+        scopeLevel: record.scope.type,
+        scopeRef: record.scope.type === "project" ? record.scope.project : record.scope.type === "domain" ? record.scope.domains?.join(",") : undefined,
+        provenance: "legacy_evidence_backfill_v2",
       });
-      if (existingIds.has(evidenceId)) {
+      if (resolution.status === "alreadyStructured") {
         existingEvidenceSkipped++;
         continue;
       }
+      if (resolution.status === "unresolved") {
+        if (resolution.reason === "secretDetected") blockedSecretReferences++;
+        findings.push({ memory_id: record.id, reference: inline.ref, reason: resolution.reason });
+        continue;
+      }
+      const evidenceId = resolution.evidence.id;
       const current = proposals.get(evidenceId);
       if (current) {
         if (!current.evidence.related_memory_ids.includes(record.id)) current.evidence.related_memory_ids.push(record.id);
@@ -111,26 +96,9 @@ export function planLegacyEvidenceMigration(
         continue;
       }
       proposals.set(evidenceId, {
-        evidence: {
-          id: evidenceId,
-          resource_id: record.resource_id ?? "legacy-migration",
-          profile_id,
-          created_at: record.created_at,
-          source_kind,
-          source_file: inline.ref,
-          source_ref: inline.ref,
-          source_summary,
-          trust_class: "unknown",
-          polarity: "supports",
-          durability_signal: "unknown",
-          related_memory_ids: [record.id],
-          scope_level: record.scope.type,
-          scope_ref: record.scope.type === "project" ? record.scope.project : record.scope.type === "domain" ? record.scope.domains?.join(",") : undefined,
-          tags: ["legacy-evidence-backfill"],
-          notes: "legacy_evidence_backfill_v1",
-        },
+        evidence: resolution.evidence,
         record_references: [{ memory_id: record.id, original_ref: inline.ref }],
-        source_sha256: sha256(sourceText),
+        source_sha256: resolution.sourceSha256,
       });
     }
   }
@@ -142,6 +110,10 @@ export function planLegacyEvidenceMigration(
     proposals: ordered,
     findings,
   }));
+  const unresolvedReasonCounts = findings.reduce<Partial<Record<EvidenceResolutionReason, number>>>((counts, finding) => {
+    counts[finding.reason] = (counts[finding.reason] ?? 0) + 1;
+    return counts;
+  }, {});
   return {
     dry_run: true,
     mutation_performed: false,
@@ -150,8 +122,9 @@ export function planLegacyEvidenceMigration(
     references_scanned: referencesScanned,
     evidence_to_create: ordered.length,
     existing_evidence_skipped: existingEvidenceSkipped,
-    unresolved_references: findings.filter((finding) => finding.reason !== "secret_blocked").length,
+    unresolved_references: findings.filter((finding) => finding.reason !== "secretDetected").length,
     blocked_secret_references: blockedSecretReferences,
+    unresolved_reason_counts: unresolvedReasonCounts,
     proposals: ordered,
     findings,
   };
