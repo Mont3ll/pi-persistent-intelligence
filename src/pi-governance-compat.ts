@@ -343,7 +343,11 @@ export function exportToPiGovernanceBundle(root: string, options: PiGovernanceEx
     target_id: candidate.matched_memory_ids?.[0],
   }));
 
-  const evidence = selection.evidence.map((record) => options.redacted ? redactEvidence(record, redaction) : { ...record });
+  const evidence = selection.evidence.map((record) => {
+    if (options.redacted) return redactEvidence(record, redaction);
+    if (record.notes !== "capture_evidence_v1") return { ...record };
+    return { ...record, source_session_id: undefined, source_ref: `capture-evidence:${record.id}` };
+  });
   const events = options.redacted ? [] : selection.events;
   const warnings = [...selection.warnings];
   if (options.redacted) {
