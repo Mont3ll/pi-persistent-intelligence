@@ -73,7 +73,7 @@ describe("relationship quality analyzer", () => {
     rmSync(r, { recursive: true, force: true });
   });
 
-  test("retains broken historical edges without depressing active relationship quality", () => {
+  test("retains broken historical edges while measuring active dangling relationships", () => {
     const active = rec("mem_active", "Current guidance.");
     const deleted = rec("mem_deleted", "Deleted guidance.", { status: "deleted", evidence: [] });
     const graph = {
@@ -85,6 +85,7 @@ describe("relationship quality analyzer", () => {
       ],
       edges: [
         { id: "active-support", type: "supported_by" as const, from: "memory_record:mem_active", to: "evidence_record:ev_live" },
+        { id: "active-dangling-supersession", type: "supersedes" as const, from: "memory_record:mem_active", to: "memory_record:mem_removed" },
         ...Array.from({ length: 5 }, (_, index) => ({ id: `historical-${index}`, type: "supported_by" as const, from: "memory_record:mem_deleted", to: `evidence_record:missing-${index}` })),
       ],
     };
@@ -92,11 +93,14 @@ describe("relationship quality analyzer", () => {
 
     const report = analyzeRelationshipQualityFromGraph({ generated_at: graph.generated_at, graph, records: [active, deleted], evidence });
 
-    expect(report.summary.total_edges).toBe(6);
-    expect(report.summary.active_edge_count).toBe(1);
+    expect(report.summary.total_edges).toBe(7);
+    expect(report.summary.active_edge_count).toBe(2);
     expect(report.summary.historical_edge_count).toBe(5);
-    expect(report.summary.average_relationship_quality).toBeGreaterThanOrEqual(90);
-    expect(report.summary.weak_edge_count).toBe(0);
-    expect(report.relationships).toHaveLength(6);
+    expect(report.summary.average_relationship_quality).toBe(45);
+    expect(report.summary.weak_edge_count).toBe(1);
+    expect(report.summary.dangling_edge_count).toBe(1);
+    expect(report.relationships.find((edge) => edge.edge_id === "active-dangling-supersession")?.quality_band).toBe("broken");
+    expect(report.recommendations.some((rec) => rec.affected_ids.includes("active-dangling-supersession"))).toBe(true);
+    expect(report.relationships).toHaveLength(7);
   });
 });

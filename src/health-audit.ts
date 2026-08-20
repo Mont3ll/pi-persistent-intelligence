@@ -160,7 +160,7 @@ const qualityModule: MemoryHealthAuditModule = {
     const conflicts = ctx.records.filter((record) => record.status === "contested");
     if (conflicts.length) findings.push(finding({ code: "contested_memory_active_review", category: "memory_quality", severity: "warning", reason: `${conflicts.length} contested memory record(s) remain unresolved.`, affected_ids: conflicts.map((r) => r.id), evidence_ids: [] }));
     const quality = analyzeMemoryQuality(ctx.root, { now: ctx.now });
-    const lowQuality = quality.items.filter((item) => item.quality_score < 70);
+    const lowQuality = quality.items.filter((item) => item.quality_population === "active" && item.quality_score < 70);
     if (lowQuality.length) findings.push(finding({ code: "low_quality_memory", category: "memory_quality", severity: "warning", reason: `${lowQuality.length} memory record(s) have quality score below 70 and should be reviewed.`, affected_ids: lowQuality.map((item) => item.memory_id), evidence_ids: [] }));
     return findings;
   },
@@ -177,9 +177,9 @@ const relationshipQualityModule: MemoryHealthAuditModule = {
       evidence: ctx.evidence,
     });
     const findings: HealthAuditFinding[] = [];
-    const weak = quality.relationships.filter((edge) => edge.quality_band === "weak" || edge.quality_band === "broken");
+    const weak = quality.relationships.filter((edge) => edge.quality_population === "active" && (edge.quality_band === "weak" || edge.quality_band === "broken"));
     if (weak.length) findings.push(finding({ code: "weak_memory_relationship", category: "relationship_quality", severity: "warning", reason: `${weak.length} relationship edge(s) are weak or broken and should be reviewed.`, affected_ids: weak.map((edge) => edge.edge_id), evidence_ids: [] }));
-    const orphans = quality.memory_nodes.filter((node) => node.signals.includes("orphan_memory"));
+    const orphans = quality.memory_nodes.filter((node) => node.quality_population === "active" && node.signals.includes("orphan_memory"));
     if (orphans.length) findings.push(finding({ code: "orphan_memory_relationship", category: "relationship_quality", severity: "warning", reason: `${orphans.length} memory record(s) have no live evidence or useful relationship context.`, affected_ids: orphans.map((node) => node.memory_id), evidence_ids: [] }));
     if (quality.summary.cyclic_memory_pair_count > 0) findings.push(finding({ code: "cyclic_memory_relationship", category: "relationship_quality", severity: "warning", reason: `${quality.summary.cyclic_memory_pair_count} reciprocal memory relationship pair(s) may need lifecycle review.`, affected_ids: [], evidence_ids: [] }));
     return findings;
