@@ -15,7 +15,7 @@ function candidate(scopes: CaptureScopeTarget[], global = false): CaptureCandida
   return {
     id: global ? "cap_global" : "cap_grouped",
     created_at: "2026-07-26T00:00:00Z",
-    source: { type: "direct_user_instruction", ref: "session:s1:t1", cwd: "/vault" },
+    source: { type: "manual", ref: "session:s1:t1", cwd: "/vault" },
     text: global ? "Avoid em dashes in public writing." : "Run release audit before publishing.",
     tags: ["capture", global ? "user_preference" : "workflow_playbook"],
     evidence_refs: ["session:s1:t1"],
