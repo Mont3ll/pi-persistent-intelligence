@@ -16,6 +16,7 @@ export interface ExternalBenchmarkAdapter {
 }
 export interface AdapterConfig {
   upstreamUrl: string; upstreamCommit: string; datasetUrl: string; datasetRevision: string; smokeCases: string[];
+  datasetFiles: Array<{ path: string; sha256: string }>;
   models: Array<{ role: ModelRole; id: string; provider: string; baseUrl?: string }>; estimatedCostPerCaseUsd: number | null;
 }
 export function loadAdapterConfig(repoRoot: string, name: BenchmarkName): AdapterConfig { return JSON.parse(readFileSync(join(repoRoot, "eval", "external", "configs", `${name}.json`), "utf8")) as AdapterConfig; }
@@ -23,17 +24,23 @@ function git(repoRoot: string, args: string[]): string { const result = spawnSyn
 export async function buildBaseManifest(name: BenchmarkName, input: PrepareInput): Promise<BenchmarkManifest> {
   const config = loadAdapterConfig(input.repoRoot, name); const commit = git(input.repoRoot, ["rev-parse", "HEAD"]); const status = git(input.repoRoot, ["status", "--porcelain", "--untracked-files=no"]); const diff = git(input.repoRoot, ["diff", "--binary", "HEAD"]);
   const contract = input.preset === "contract"; const fixture = join(input.repoRoot, "eval", "external", "fixtures", "synthetic-cases.jsonl");
-  if (!contract) throw new Error(`${name} public dataset is unavailable in the local benchmark cache; preparation fails closed`);
-  const models = [{ role: "reader" as const, id: "fake-reader", provider: "local" }, { role: "judge" as const, id: "fake-judge", provider: "local" }];
+  if (input.preset === "pilot" || input.preset === "full") throw new Error(`${name} ${input.preset} case selection is not configured; preparation fails closed`);
+  const models = contract
+    ? [{ role: "reader" as const, id: "fake-reader", provider: "local" }, { role: "judge" as const, id: "fake-judge", provider: "local" }]
+    : config.models;
+  const cases = contract ? ["synthetic-1"] : config.smokeCases;
+  const dataset = contract
+    ? { url: "repository:eval/external/fixtures", revision: commit, files: [{ path: "eval/external/fixtures/synthetic-cases.jsonl", sha256: await sha256File(fixture) }] }
+    : { url: config.datasetUrl, revision: config.datasetRevision, files: config.datasetFiles };
+  const estimatedCostUsd = contract || config.estimatedCostPerCaseUsd === 0 ? 0 : config.estimatedCostPerCaseUsd === null ? null : config.estimatedCostPerCaseUsd * cases.length * input.tracks.length;
   return {
     schemaVersion: 1, benchmark: name, preset: input.preset, tracks: input.tracks,
     pi: { commit, clean: status === "", sourceHash: sha256Text(`${commit}\n${diff}`) },
-    upstream: { url: config.upstreamUrl, commit: config.upstreamCommit },
-    dataset: { url: "repository:eval/external/fixtures", revision: commit, files: [{ path: "eval/external/fixtures/synthetic-cases.jsonl", sha256: await sha256File(fixture) }] },
-    cases: ["synthetic-1"], models, promptHashes: { reader: sha256Text("fake-reader-v1"), judge: sha256Text("fake-judge-v1") },
-    context: { maxTokens: 14000, maxRecords: 12 }, curationPolicy: "pi-default-high-only-v1", seeds: [0], retry: { maxAttempts: 1, baseDelayMs: 0 },
+    upstream: { url: config.upstreamUrl, commit: config.upstreamCommit }, dataset, cases, models,
+    promptHashes: Object.fromEntries(models.map((model) => [model.role, sha256Text(`${name}:${model.role}:${model.id}:v1`)])),
+    context: { maxTokens: 14000, maxRecords: 12 }, curationPolicy: "pi-default-high-only-v1", seeds: [0], retry: { maxAttempts: contract ? 1 : 2, baseDelayMs: contract ? 0 : 1000 },
     environment: { bun: Bun.version, python: "3.11", platform: `${process.platform}-${process.arch}` },
-    expected: { cases: 1, modelCalls: 0, estimatedCostUsd: 0 }, outputRoot: "reports/benchmarks/runs",
+    expected: { cases: cases.length, modelCalls: contract ? 0 : cases.length * input.tracks.length * models.filter((model) => model.role === "reader" || model.role === "judge" || model.role === "controller").length, estimatedCostUsd }, outputRoot: "reports/benchmarks/runs",
   };
 }
 export function genericSanitizedCase(value: unknown): SanitizedCase {

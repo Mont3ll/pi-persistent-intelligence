@@ -2,8 +2,11 @@
   "upstreamUrl": "https://github.com/AMA-Bench/AMA-Bench",
   "upstreamCommit": "ddfd319e0be33424288c13806f1eafc63e625b59",
   "datasetUrl": "https://huggingface.co/datasets/AMA-bench/AMA-bench",
-  "datasetRevision": "main",
-  "smokeCases": ["software-smoke-1"],
+  "datasetRevision": "a5777378066f53229a94557a7b192435cd027909",
+  "datasetFiles": [
+    { "path": "test/open_end_qa_set.jsonl", "sha256": "45c36052e1520d87ad9de4114f71c9df42d4aac9cf158c0c353e800b653d65ff" }
+  ],
+  "smokeCases": ["141"],
   "models": [
     { "role": "reader", "id": "gpt-5-mini", "provider": "openai" },
     { "role": "judge", "id": "gpt-5-mini", "provider": "openai" }
