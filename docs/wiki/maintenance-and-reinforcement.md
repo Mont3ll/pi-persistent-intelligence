@@ -20,7 +20,7 @@ Stored in `memory/reinforcement.jsonl`. Each event includes:
 | Outcome | Meaning | Weight |
 |---|---|---|
 | `explicit_reinforcement` | User directly confirmed or approved the belief | +1.0 |
-| `implicit_success` | Exactly one active selected memory is linked to a recorded successful test/tool outcome | +0.2 |
+| `implicit_success` | One uniquely relevant active selected memory is deterministically attributed to a recorded successful test, typecheck, lint, build, or validation outcome | +0.2 |
 | `neutral_exposure` | Memory was injected but not exercised | 0 |
 | `explicit_correction` | User directly contradicted or rejected the belief | -1.0 |
 
@@ -30,7 +30,9 @@ One explicit correction outweighs many implicit successes. This is intentional: 
 
 Neutral exposure does not increase stability. It is disabled by default and, when enabled, is capped at one event per memory per session. A memory being injected many times without correction is not sufficient evidence that it is correct.
 
-Use `/memory-reinforce <memory-id> --note "..."` only for direct user confirmation. The command records an event but never changes confidence or stability; maintenance may later propose a governed patch.
+Implicit success also requires explicit recorded success; silence and lack of correction are not success. Attribution considers only active records in the selected-memory trace, then uses bounded command class, `applies_when`, and semantic operation overlap. Ambiguous attribution produces no event. At most one implicit-success event is recorded for a memory in one session, and persisted notes contain bounded attribution metadata rather than the raw command.
+
+Use `/memory-reinforce <memory-id> --note "..."` only for direct user confirmation. The long-term memory browser also provides `r reinforce` for the highlighted record. Both paths record an event but never change confidence or stability; maintenance may later propose a governed patch.
 
 ---
 
@@ -67,7 +69,7 @@ Stability suggestions:
 
 ### None of these mutations happen automatically
 
-All stability changes require patch application. The `/maintain-memory --report` flag shows the recommendations without generating a patch. The `/maintain-memory` command generates a patch for review.
+All stability changes require patch review and explicit selection. Generated `update_stability` operations are unselected by default, regardless of whether the proposed direction is an increase or decrease. The `/maintain-memory --report` flag shows the recommendations without generating a patch. The `/maintain-memory` command generates a patch for review.
 
 ---
 
@@ -79,13 +81,13 @@ All stability changes require patch application. The `/maintain-memory --report`
 /maintain-memory --report         # show recommendations without generating a patch
 ```
 
-The `--mode=auto` flag applies:
-- Confidence decay ops for overdue records (these are low risk)
-- Stability increase ops that do not require review (e.g. from explicit reinforcement with no corrections)
+The `--mode=auto` flag may apply confidence-decay operations for overdue records when they meet its existing low-risk rules.
 
 It does not auto-apply:
-- `decrease_stability` ops (always require review)
-- `mark_contested_suggestion` ops (always require review)
+- stability increase or decrease operations
+- `mark_contested_suggestion` operations
+
+Every stability change remains an unselected patch operation requiring explicit review.
 
 ---
 

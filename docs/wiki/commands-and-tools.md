@@ -144,7 +144,9 @@ Lists inquiries by lifecycle status and explicitly answers, withdraws, or marks 
 
 ### `/memory-reinforce <memory-id> --note "..."`
 
-Records explicit, deduplicated positive reinforcement for an active memory without changing the memory record.
+Records explicit, deduplicated positive reinforcement for an active memory without changing the memory record. The `/memory-learnings` browser provides `r reinforce` on the highlighted record when a custom note is unnecessary.
+
+Automatic implicit success is weaker: PI requires an explicitly recorded successful test, typecheck, lint, build, or validation outcome and attributes it to one uniquely relevant active selected memory. Ambiguous operations record no event, and silence is never treated as success.
 
 ---
 

@@ -86,7 +86,7 @@ export function generateMaintenanceRecommendations(
         memory_id: record.id,
         kind: "increase_stability",
         reason: `${explicit_reinforcement} explicit reinforcement(s) with no corrections; stability can increase.`,
-        requires_review: false,
+        requires_review: true,
         current_stability: record.stability,
         suggested_stability: "stable",
         reinforcement_summary: summary,
@@ -136,7 +136,7 @@ export function buildStabilityPatchFromRecommendations(
       reason: rec.reason,
       rationale: `Reinforcement-based stability ${rec.kind === "increase_stability" ? "increase" : "decrease"} from ${rec.current_stability} to ${suggested}.`,
       risk: rec.kind === "decrease_stability" ? "medium" : "low",
-      default_selected: !rec.requires_review,
+      default_selected: false,
     });
   }
 
