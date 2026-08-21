@@ -203,6 +203,10 @@ Disabled standalone mode is valid.
 - [Export/import with pi-governance-rs](docs/export-import-pi-governance.md)
 - [Wiki docs](docs/wiki/)
 
+## External evaluation
+
+The repository includes a fingerprint-gated harness for AMA-Bench, LongMemEval-V2, and MemoryArena compatibility checks. It keeps production and diagnostic tracks separate and never runs external models during ordinary release checks. See [External agent-memory benchmarks](docs/benchmarks/external-benchmarks.md).
+
 ## Development
 
 ```bash

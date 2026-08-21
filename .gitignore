@@ -14,3 +14,8 @@ reports/sprints/
 
 # Generated local verification artifacts
 reports/eval/*-eval-report.*
+
+# External benchmark dependencies and governed local run artifacts
+.benchmark-cache/
+reports/benchmarks/manifests/
+reports/benchmarks/runs/
