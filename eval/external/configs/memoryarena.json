@@ -2,8 +2,11 @@
   "upstreamUrl": "https://github.com/ZexueHe/MemoryArena",
   "upstreamCommit": "6cd9de14b71915e39ac742a20dc33785e14b6aab",
   "datasetUrl": "https://huggingface.co/datasets/ZexueHe/memoryarena",
-  "datasetRevision": "main",
-  "smokeCases": ["formal-reasoning-smoke-1"],
+  "datasetRevision": "da1a37c8b19280e18627ca01cf368195a5e1d92e",
+  "datasetFiles": [
+    { "path": "formal_reasoning_math/data.jsonl", "sha256": "ff5b0ad575847c7476a02d1e35661592a833bd0cff384cb54bc6f35b46de7803" }
+  ],
+  "smokeCases": ["formal-reasoning-math-0"],
   "models": [
     { "role": "controller", "id": "gpt-5-mini", "provider": "openai" },
     { "role": "judge", "id": "benchmark-configured", "provider": "official" }
