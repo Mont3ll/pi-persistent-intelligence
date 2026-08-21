@@ -62,6 +62,12 @@
     "test:stress": "bun test test/stress",
     "typecheck": "tsc --noEmit",
     "eval": "bun eval/run-evals.ts",
+    "benchmark:prepare": "bun eval/external/cli.ts prepare",
+    "benchmark:approve": "bun eval/external/cli.ts approve",
+    "benchmark:run": "bun eval/external/cli.ts run",
+    "benchmark:resume": "bun eval/external/cli.ts resume",
+    "benchmark:verify": "bun eval/external/cli.ts verify",
+    "benchmark:report": "bun eval/external/cli.ts report",
     "release-audit": "bun run typecheck && bun test && bun run eval && bun run test:stress && npm pack --dry-run",
     "prepublishOnly": "bun run typecheck && bun test"
   },

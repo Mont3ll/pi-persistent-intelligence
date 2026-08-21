@@ -1,0 +1,12 @@
+{
+  "upstreamUrl": "https://github.com/AMA-Bench/AMA-Bench",
+  "upstreamCommit": "ddfd319e0be33424288c13806f1eafc63e625b59",
+  "datasetUrl": "https://huggingface.co/datasets/AMA-bench/AMA-bench",
+  "datasetRevision": "main",
+  "smokeCases": ["software-smoke-1"],
+  "models": [
+    { "role": "reader", "id": "gpt-5-mini", "provider": "openai" },
+    { "role": "judge", "id": "gpt-5-mini", "provider": "openai" }
+  ],
+  "estimatedCostPerCaseUsd": null
+}
