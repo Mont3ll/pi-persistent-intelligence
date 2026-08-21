@@ -1,1 +1,1 @@
-{"caseId":"synthetic-1","history":[{"id":"turn-1","role":"user","content":"Prefer Bun for tests","at":"2026-08-01T00:00:00Z"}],"query":{"text":"Which test runner should be used?"}}
+{"caseId":"synthetic-1","history":[{"id":"turn-1","role":"user","content":"Prefer Bun for tests","at":"2026-08-01T00:00:00Z"}],"query":{"text":"What testing runner should be used according to the saved user preference?"}}
