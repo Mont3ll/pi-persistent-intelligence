@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { appendState, readStateJournal, resumeAction, type CaseStateEvent } from "../../eval/external/core/run-state";
@@ -21,6 +21,13 @@ describe("external benchmark resume", () => {
     expect(resumeAction(journal)).toBe("answer");
     expect(() => appendState(journal, event("running", 1))).toThrow("attempt must increase");
     expect(appendState(journal, event("running", 2))).toHaveLength(4);
+  });
+  test("rejects structurally invalid and fabricated journals", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-benchmark-invalid-state-")); const path = join(dir, "state.jsonl");
+    writeFileSync(path, `${JSON.stringify({ caseId: "c1", track: "production", stage: "verified", attempt: 1, at: "x" })}\n`);
+    expect(() => readStateJournal(path)).toThrow("illegal case transition");
+    writeFileSync(path, `${JSON.stringify({ caseId: "c1", track: "invalid", stage: "planned", attempt: 1, at: "x" })}\n`);
+    expect(() => readStateJournal(path)).toThrow("invalid case state event");
   });
   test("writes atomic JSON and append-only journals", () => {
     const dir = mkdtempSync(join(tmpdir(), "pi-benchmark-artifacts-")); const json = join(dir, "a.json"); const journal = join(dir, "state.jsonl");

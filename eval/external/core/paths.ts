@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { BenchmarkTrack } from "./types";
@@ -11,10 +12,10 @@ function canonicalExisting(path: string): string {
 function contains(parent: string, child: string): boolean {
   const rel = relative(parent, child); return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
 }
-function safeSegment(value: string): string {
-  const segment = value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  if (!segment || segment === "." || segment === "..") throw new Error("invalid case identifier for benchmark path");
-  return segment;
+export function casePathSegment(value: string): string {
+  const prefix = value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "case";
+  const digest = createHash("sha256").update(value, "utf8").digest("hex").slice(0, 16);
+  return `${prefix}-${digest}`;
 }
 
 export function assertBenchmarkRootIsolated(benchmarkRoot: string, liveRoot: string): void {
@@ -33,6 +34,6 @@ export function createRunPaths(repoRoot: string, outputRoot: string, fingerprint
   return {
     outputDir, runDir,
     manifest: join(runDir, "manifest.json"), approval: join(runDir, "approval.json"),
-    caseRoot(caseId: string, track: BenchmarkTrack): string { const path = join(runDir, "cases", safeSegment(caseId), track, "pi-root"); mkdirSync(path, { recursive: true }); return path; },
+    caseRoot(caseId: string, track: BenchmarkTrack): string { const path = join(runDir, "cases", casePathSegment(caseId), track, "pi-root"); mkdirSync(path, { recursive: true }); return path; },
   };
 }
