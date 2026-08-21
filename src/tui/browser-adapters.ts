@@ -29,7 +29,7 @@ export function memoryRecordBrowserOptions(records: MemoryRecord[]): BrowserOpti
   }));
   return {
     title: "Long-Term Memory Browser",
-    subtitle: "Read-only browser. Use curate/patch commands for governed mutation.",
+    subtitle: "Reinforce records an event only; deprecate changes lifecycle state.",
     items,
     pageSize: 20,
     sortBy: "confidence",
@@ -41,7 +41,10 @@ export function memoryRecordBrowserOptions(records: MemoryRecord[]): BrowserOpti
       { key: "status", label: "Status", width: 10, minWidth: 6, priority: 5, render: (r) => r.status },
       { key: "statement", label: "Statement", minWidth: 18, priority: 1, render: (r) => r.statement },
     ],
-    actions: [{ key: "d", label: "deprecate", action: "deprecate" }],
+    actions: [
+      { key: "r", label: "reinforce", action: "reinforce" },
+      { key: "d", label: "deprecate", action: "deprecate" },
+    ],
   };
 }
 

@@ -1468,7 +1468,14 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
       const result = await openBrowser(ctx, memoryRecordBrowserOptions(records), plain);
 
-      if (result?.action === "deprecate") {
+      if (result?.action === "reinforce" && result.id) {
+        try {
+          const reinforcement = recordExplicitReinforcement(root, { memory_id: result.id, note: "Confirmed from memory browser.", session_id: "current-session", now: nowIso() });
+          ctx.ui.notify(reinforcement.created ? `Recorded explicit reinforcement for ${result.id}.` : `Identical reinforcement already exists for ${result.id} in this session.`, reinforcement.created ? "success" : "info");
+        } catch (error) {
+          ctx.ui.notify(`Memory reinforcement failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+        }
+      } else if (result?.action === "deprecate") {
         const { loadLayerRecords, unsafeReplaceLayerRecords } = await import("./src/store");
         for (const layer of ["L1", "L2"] as const) {
           const layerRecords = loadLayerRecords(root, layer);
