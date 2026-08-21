@@ -21,7 +21,8 @@ describe("MemoryArena compatibility gate", () => {
     expect(() => assertMemoryArenaRunnable(compatibility, "contract")).not.toThrow();
   });
   test("bridge fails closed for execution and exposes structured probe", async () => {
-    const probe = await runProcess(["python3", "eval/external/bridges/memoryarena_bridge.py", "--probe", "--source-root", ".benchmark-cache/memoryarena", "--commit", "6cd9de14b71915e39ac742a20dc33785e14b6aab"], { timeoutMs: 10_000 });
+    const source = mkdtempSync(join(tmpdir(), "memoryarena-bridge-source-")); harness(source);
+    const probe = await runProcess(["python3", "eval/external/bridges/memoryarena_bridge.py", "--probe", "--source-root", source, "--commit", "6cd9de14b71915e39ac742a20dc33785e14b6aab"], { timeoutMs: 10_000 });
     expect(probe.code).toBe(0); expect(JSON.parse(probe.stdout).status).toBe("pi_adapter_unavailable");
     const run = await runProcess(["python3", "eval/external/bridges/memoryarena_bridge.py", "--run"], { timeoutMs: 10_000 });
     expect(run.code).toBe(2); expect(run.stderr).toContain("pi_adapter_unavailable");
