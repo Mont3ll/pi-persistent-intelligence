@@ -4,8 +4,8 @@
   "datasetUrl": "https://huggingface.co/datasets/xiaowu0162/longmemeval-v2",
   "datasetRevision": "f152293e235517d504809563c833d7190b8c713b",
   "datasetFiles": [
-    { "path": "questions.jsonl", "sha256": "0a3ae5ebea938c24d7800e1e0b0828e08ae1646f939a53853b2b8cdc08e292b7" },
-    { "path": "haystacks/lme_v2_small.json", "sha256": "9b5301defb23a088a5f06e45ff8d5f35e569d78305a66d492046a9fff9b46593" },
+    { "path": "questions.jsonl", "sha256": "0a3ae5ebea938c24d7800e1e0b0828e08ae1646f939a53853b2b8cdc08e292b7", "localPath": ".benchmark-cache/datasets/lme/questions.jsonl" },
+    { "path": "haystacks/lme_v2_small.json", "sha256": "9b5301defb23a088a5f06e45ff8d5f35e569d78305a66d492046a9fff9b46593", "localPath": ".benchmark-cache/datasets/lme/lme_v2_small.json" },
     { "path": "trajectories.jsonl", "sha256": "363cec9a8e87aa8d9101ce4e600aadbf7031d674056ebe4f969e8424abc5f3c6" }
   ],
   "smokeCases": ["00aa905a", "01307e07"],

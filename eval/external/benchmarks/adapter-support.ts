@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { sha256File, sha256Text } from "../core/fingerprint";
@@ -16,14 +16,36 @@ export interface ExternalBenchmarkAdapter {
 }
 export interface AdapterConfig {
   upstreamUrl: string; upstreamCommit: string; datasetUrl: string; datasetRevision: string; smokeCases: string[];
-  datasetFiles: Array<{ path: string; sha256: string }>;
+  datasetFiles: Array<{ path: string; sha256: string; localPath?: string }>;
   models: Array<{ role: ModelRole; id: string; provider: string; baseUrl?: string }>; estimatedCostPerCaseUsd: number | null;
 }
 export function loadAdapterConfig(repoRoot: string, name: BenchmarkName): AdapterConfig { return JSON.parse(readFileSync(join(repoRoot, "eval", "external", "configs", `${name}.json`), "utf8")) as AdapterConfig; }
 function git(repoRoot: string, args: string[]): string { const result = spawnSync("git", args, { cwd: repoRoot, encoding: "utf8" }); if (result.status !== 0) throw new Error(String(result.stderr).trim() || "git command failed"); return String(result.stdout).trim(); }
+export function verifySourcePin(config: AdapterConfig, repoRoot: string, name: BenchmarkName): void {
+  const sourceRoot = join(repoRoot, ".benchmark-cache", name); const actual = git(sourceRoot, ["rev-parse", "HEAD"]);
+  if (actual !== config.upstreamCommit) throw new Error(`${name} source commit mismatch: expected ${config.upstreamCommit}, got ${actual}`);
+}
+interface HuggingFaceTreeItem { path?: string; lfs?: { oid?: string } }
+export async function verifyDatasetPins(config: AdapterConfig, repoRoot: string, fetcher: (input: string) => Promise<Response> = (input) => fetch(input)): Promise<void> {
+  const remote = config.datasetFiles.filter((file) => !file.localPath || !existsSync(join(repoRoot, file.localPath)));
+  for (const file of config.datasetFiles.filter((item) => item.localPath && existsSync(join(repoRoot, item.localPath!)))) {
+    const actual = await sha256File(join(repoRoot, file.localPath!)); if (actual !== file.sha256) throw new Error(`dataset hash mismatch for ${file.path}`);
+  }
+  const repository = config.datasetUrl.replace(/^https:\/\/huggingface\.co\/datasets\//, "");
+  if (remote.length && repository === config.datasetUrl) throw new Error("dataset URL is not a supported Hugging Face dataset URL");
+  const parents = [...new Set(remote.map((file) => file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : ""))];
+  for (const parent of parents) {
+    const files = remote.filter((file) => (file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "") === parent);
+    const suffix = parent ? `/${parent}` : ""; const url = `https://huggingface.co/api/datasets/${repository}/tree/${config.datasetRevision}${suffix}?expand=true`;
+    const response = await fetcher(url); if (!response.ok) throw new Error(`dataset metadata request failed for ${parent || "root"}: HTTP ${response.status}`);
+    const items = await response.json() as HuggingFaceTreeItem[];
+    for (const file of files) { const item = items.find((entry) => entry.path === file.path); const actual = item?.lfs?.oid; if (!actual || actual !== file.sha256) throw new Error(`dataset hash mismatch for ${file.path}`); }
+  }
+}
 export async function buildBaseManifest(name: BenchmarkName, input: PrepareInput): Promise<BenchmarkManifest> {
   const config = loadAdapterConfig(input.repoRoot, name); const commit = git(input.repoRoot, ["rev-parse", "HEAD"]); const status = git(input.repoRoot, ["status", "--porcelain", "--untracked-files=no"]); const diff = git(input.repoRoot, ["diff", "--binary", "HEAD"]);
   const contract = input.preset === "contract"; const fixture = join(input.repoRoot, "eval", "external", "fixtures", "synthetic-cases.jsonl");
+  if (!contract) { verifySourcePin(config, input.repoRoot, name); await verifyDatasetPins(config, input.repoRoot); }
   if (input.preset === "pilot" || input.preset === "full") throw new Error(`${name} ${input.preset} case selection is not configured; preparation fails closed`);
   const models = contract
     ? [{ role: "reader" as const, id: "fake-reader", provider: "local" }, { role: "judge" as const, id: "fake-judge", provider: "local" }]
@@ -31,7 +53,7 @@ export async function buildBaseManifest(name: BenchmarkName, input: PrepareInput
   const cases = contract ? ["synthetic-1"] : config.smokeCases;
   const dataset = contract
     ? { url: "repository:eval/external/fixtures", revision: commit, files: [{ path: "eval/external/fixtures/synthetic-cases.jsonl", sha256: await sha256File(fixture) }] }
-    : { url: config.datasetUrl, revision: config.datasetRevision, files: config.datasetFiles };
+    : { url: config.datasetUrl, revision: config.datasetRevision, files: config.datasetFiles.map(({ path, sha256 }) => ({ path, sha256 })) };
   const estimatedCostUsd = contract || config.estimatedCostPerCaseUsd === 0 ? 0 : config.estimatedCostPerCaseUsd === null ? null : config.estimatedCostPerCaseUsd * cases.length * input.tracks.length;
   return {
     schemaVersion: 1, benchmark: name, preset: input.preset, tracks: input.tracks,

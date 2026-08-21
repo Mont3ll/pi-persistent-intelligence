@@ -43,6 +43,7 @@ export async function runContractBenchmark(input: RunContractInput): Promise<str
   const manifest = readManifest(input.manifestPath); if (manifest.preset !== "contract") throw new Error("network-free runner accepts contract manifests only");
   const approval = readApproval(input.approvalPath); const fingerprint = requireRunnableManifest(manifest, approval.manifestFingerprint); validateApproval(approval, fingerprint);
   const runDir = join(input.runsRoot ?? join(input.repoRoot, "reports", "benchmarks", "runs"), fingerprint); mkdirSync(runDir, { recursive: true });
+  if (existsSync(join(runDir, "run.json"))) { const existing = await verifyBenchmarkRun(runDir); if (existing.verified) return runDir; throw new Error("existing contract run is incomplete; use resume rather than replacing completed answers"); }
   writeManifest(join(runDir, "manifest.json"), manifest); writeApproval(join(runDir, "approval.json"), fingerprint, approval.approvedAt);
   const cases = readFileSync(join(input.repoRoot, "eval", "external", "fixtures", "synthetic-cases.jsonl"), "utf8").split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as SyntheticCase).filter((item) => manifest.cases.includes(item.caseId));
   if (cases.length !== manifest.cases.length) throw new Error("contract fixture does not contain every selected case");
