@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added a repository-only, fingerprint-gated external agent-memory benchmark harness with isolated governed-production and diagnostic-substrate tracks, AMA-Bench and LongMemEval-V2 adapters, and a fail-closed MemoryArena integration gate.
+
 ## [0.15.1] - 2026-08-20
 
 ### Fixed
