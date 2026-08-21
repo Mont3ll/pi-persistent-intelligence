@@ -139,7 +139,7 @@ describe("reinforcement records", () => {
 
   test("implicit success is deduplicated per memory and session with bounded attribution notes", () => {
     const dir = root();
-    const selected = [record("mem_bun", "Use Bun for repository tests.")];
+    const selected = [record("mem_bun", "Run reinforcement tests with Bun.")];
     const input = { selected_memory: selected, session_id: "session-a", observable_outcome: { kind: "test" as const, success: true, command: "bun test /private/workspace/test/unit/reinforcement.test.ts" }, neutral_exposure_enabled: false };
 
     const first = captureReinforcementLink(dir, { ...input, now: "2026-07-18T00:00:00Z" });
@@ -152,6 +152,8 @@ describe("reinforcement records", () => {
     expect(readReinforcementEvents(dir)).toHaveLength(2);
     expect(first.event?.notes).toContain("deterministic_attribution_v1");
     expect(first.event?.notes).toContain("class=test");
+    expect(first.event?.notes).toContain("signals=command_class|term_overlap");
+    expect(first.event?.notes).not.toContain("reinforcement");
     expect(first.event?.notes).not.toContain("/private/workspace");
   });
 
