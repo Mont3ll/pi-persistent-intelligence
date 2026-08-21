@@ -128,6 +128,7 @@ export function classifyReinforcementCommand(outcome: ReinforcementObservableOut
 }
 
 function attributionCandidate(memory: MemoryRecord, outcome: ReinforcementObservableOutcome, commandClass: ReinforcementCommandClass): { memory: MemoryRecord; score: number; signals: string[] } | null {
+  if (memory.ruleType === "avoid_pattern" || /\b(avoid|never|do not|don't)\b/i.test(memory.statement)) return null;
   const aliases = new Set(COMMAND_CLASS_ALIASES[commandClass]);
   const applicabilityTerms = semanticTerms((memory.applies_when ?? []).join(" "));
   const classTerms = semanticTerms(`${memory.statement} ${(memory.applies_when ?? []).join(" ")}`);

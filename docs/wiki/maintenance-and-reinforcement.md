@@ -30,7 +30,7 @@ One explicit correction outweighs many implicit successes. This is intentional: 
 
 Neutral exposure does not increase stability. It is disabled by default and, when enabled, is capped at one event per memory per session. A memory being injected many times without correction is not sufficient evidence that it is correct.
 
-Implicit success also requires explicit recorded success; silence and lack of correction are not success. Attribution considers only active records in the selected-memory trace, then uses bounded command class, `applies_when`, and semantic operation overlap. Ambiguous attribution produces no event. At most one implicit-success event is recorded for a memory in one session, and persisted notes contain bounded attribution metadata rather than the raw command.
+Implicit success also requires explicit recorded success; silence and lack of correction are not success. Attribution considers only active, non-negative records in the selected-memory trace, then uses bounded command class, `applies_when`, and semantic operation overlap. Avoid/negative instructions are excluded because a successful command alone cannot prove that the prohibited alternative was avoided. Ambiguous attribution produces no event. At most one implicit-success event is recorded for a memory in one session, and persisted notes contain bounded attribution metadata rather than the raw command.
 
 Use `/memory-reinforce <memory-id> --note "..."` only for direct user confirmation. The long-term memory browser also provides `r reinforce` for the highlighted record. Both paths record an event but never change confidence or stability; maintenance may later propose a governed patch.
 
@@ -77,7 +77,7 @@ All stability changes require patch review and explicit selection. Generated `up
 
 ```bash
 /maintain-memory                  # generate patch for review
-/maintain-memory --mode=auto      # apply decay ops and non-review stability ops automatically
+/maintain-memory --mode=auto      # apply eligible confidence-decay ops only
 /maintain-memory --report         # show recommendations without generating a patch
 ```
 

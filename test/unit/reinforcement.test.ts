@@ -130,6 +130,11 @@ describe("reinforcement records", () => {
     expect(decideReinforcementLink({ selected_memory: [record("mem_docs_only", "Keep documentation concise.")], session_id: "s", observable_outcome: { kind: "test", success: true, command: "bun test" }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "none", reason: "no_demonstrably_relevant_memory" });
   });
 
+  test("does not infer positive reinforcement for negative instructions", () => {
+    const negative = record("mem_avoid_tests", "Avoid running repository tests.", "project:test", { ruleType: "avoid_pattern" });
+    expect(decideReinforcementLink({ selected_memory: [negative], session_id: "s", observable_outcome: { kind: "test", success: true, command: "bun test" }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "none", reason: "no_demonstrably_relevant_memory" });
+  });
+
   test("never infers implicit success from failure, silence, or unsupported tools", () => {
     const selected = [record("mem_test", "Run focused tests.")];
     expect(decideReinforcementLink({ selected_memory: selected, session_id: "s", neutral_exposure_enabled: false })).toMatchObject({ outcome: "none" });
