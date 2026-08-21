@@ -501,7 +501,8 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
       } else if (msg.role === "toolResult" || msg.role === "tool") {
         const toolName = String(msg.toolName ?? msg.name ?? msg.tool_name ?? "");
         const details = msg.details ?? {};
-        const observableLabel = `${toolName} ${String(msg.input?.command ?? details.command ?? "")}`;
+        const observableCommand = String(msg.input?.command ?? details.command ?? "");
+        const observableLabel = `${toolName} ${observableCommand}`;
         if (/\b(test|typecheck|lint|check|build|playwright|vitest|tsc|cargo)\b/i.test(observableLabel)) {
           const recordedOutcome = classifyRecordedToolOutcome({ ...details, isError: msg.isError === true || details.isError === true });
           if (recordedOutcome !== "unknown") {
@@ -510,8 +511,8 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
               const selected = JSON.parse((await import("node:fs")).readFileSync(ensureMemoryDirs(root).runtime.selected, "utf-8")) as import("./src/types").MemoryRecord[];
               captureReinforcementLink(root, {
                 selected_memory: selected,
-                session_id: "current-session",
-                observable_outcome: { kind: /\b(test|playwright|vitest)\b/i.test(observableLabel) ? "test" : "tool", success: recordedOutcome === "success", tool_name: toolName },
+                session_id: captureSessionId,
+                observable_outcome: { kind: /\b(test|playwright|vitest)\b/i.test(observableLabel) ? "test" : "tool", success: recordedOutcome === "success", tool_name: toolName, command: observableCommand },
                 neutral_exposure_enabled: loadConfig(root).reinforcement.neutralExposureEnabled,
                 now: nowIso(),
               });
