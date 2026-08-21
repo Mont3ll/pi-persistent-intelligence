@@ -78,7 +78,7 @@ describe("maintenance recommendations", () => {
     ]);
     const increase = recs.find((r) => r.kind === "increase_stability" && r.memory_id === "mem_reinf");
     expect(increase?.suggested_stability).toBe("stable");
-    expect(increase?.requires_review).toBe(false);
+    expect(increase?.requires_review).toBe(true);
   });
 
   test("recommendations do not mutate durable memory without patch application", () => {
@@ -104,17 +104,24 @@ describe("maintenance recommendations", () => {
     expect(op).not.toBeUndefined();
     expect(op?.updates?.stability).toBe("stable");
     expect(op?.risk).not.toBe("high");
+    expect(op?.default_selected).toBe(false);
   });
 
-  test("decrease_stability patch op is review-required and low-confidence", () => {
+  test("every stability patch op is review-required and unselected", () => {
     const recs = generateMaintenanceRecommendations([record("mem_dec")], [
       summary("mem_dec", { counts: { explicit_correction: 1, implicit_success: 0, neutral_exposure: 0, explicit_reinforcement: 0 }, score: -1, suggested_stability: "low", review_recommended: true, reasons: [] }),
     ]);
 
-    const patch = buildStabilityPatchFromRecommendations(recs, new Date().toISOString());
-    const op = patch.ops.find((o) => o.target_id === "mem_dec");
-    expect(op?.risk).toBe("medium");
-    expect(op?.default_selected).toBe(false);
+    const positive = generateMaintenanceRecommendations([record("mem_inc")], [
+      summary("mem_inc", { counts: { explicit_reinforcement: 2, implicit_success: 0, neutral_exposure: 0, explicit_correction: 0 }, score: 2, suggested_stability: "stable", review_recommended: false, reasons: [] }),
+    ]);
+    const patch = buildStabilityPatchFromRecommendations([...recs, ...positive], new Date().toISOString());
+    const decrease = patch.ops.find((o) => o.target_id === "mem_dec");
+    const increase = patch.ops.find((o) => o.target_id === "mem_inc");
+    expect(decrease?.risk).toBe("medium");
+    expect(patch.ops).toHaveLength(2);
+    expect(decrease?.default_selected).toBe(false);
+    expect(increase?.default_selected).toBe(false);
   });
 
   test("generates readable maintenance report", () => {
