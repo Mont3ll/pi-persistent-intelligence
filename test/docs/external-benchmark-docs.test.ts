@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 
 describe("external benchmark documentation", () => {
   test("documents governance and semantic boundaries", () => {
-    const docs = readFileSync("docs/benchmarks/external-benchmarks.md", "utf8");
+    const docs = readFileSync("docs/wiki/external-benchmarks.md", "utf8");
     for (const phrase of ["governed-production", "diagnostic-substrate", "exact 64-character fingerprint", "live PI store", "model identities", "cost", "MemoryArena", "pi_adapter_unavailable"]) expect(docs).toContain(phrase);
     expect(docs).toContain("benchmark:prepare"); expect(docs).toContain("benchmark:verify");
   });
