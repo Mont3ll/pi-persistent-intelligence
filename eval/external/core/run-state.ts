@@ -60,5 +60,11 @@ export function resumeAction(journal: readonly CaseStateEvent[]): ResumeAction {
 }
 export function readStateJournal(path: string): CaseStateEvent[] {
   if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as CaseStateEvent);
+  const events = readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line) as CaseStateEvent);
+  const journals = new Map<string, CaseStateEvent[]>();
+  for (const event of events) {
+    if (!event || typeof event !== "object" || ![...ORDER, "failed"].includes(event.stage)) throw new Error("invalid case state event");
+    const key = `${event.caseId}\0${event.track}`; const current = journals.get(key) ?? []; journals.set(key, appendState(current, event));
+  }
+  return events;
 }

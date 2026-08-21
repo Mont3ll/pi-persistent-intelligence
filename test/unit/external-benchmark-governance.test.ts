@@ -19,6 +19,11 @@ describe("external benchmark governance", () => {
     expect(() => validateManifest({ ...manifest, models: [{ ...manifest.models[0], id: "" }] })).toThrow("model identifier");
     expect(() => validateManifest({ ...manifest, outputRoot: "/tmp/runs" })).toThrow("repository-relative");
     expect(() => validateManifest({ ...manifest, dataset: { ...manifest.dataset, files: [{ path: "x", sha256: "bad" }] } })).toThrow("SHA-256");
+    expect(() => validateManifest({ ...manifest, pi: { ...manifest.pi, commit: "short" } })).toThrow("PI commit");
+    expect(() => validateManifest({ ...manifest, promptHashes: { reader: "bad" } })).toThrow("prompt hash");
+    expect(() => validateManifest({ ...manifest, dataset: { ...manifest.dataset, files: [{ path: "../gold", sha256: "a".repeat(64) }] } })).toThrow("relative");
+    expect(() => validateManifest({ ...manifest, retry: { maxAttempts: 0, baseDelayMs: -1 } })).toThrow("retry");
+    expect(() => validateManifest({ ...manifest, unexpected: true })).toThrow("unknown manifest field");
   });
   test("writes canonical manifests and approvals atomically", () => {
     const dir = mkdtempSync(join(tmpdir(), "pi-benchmark-governance-")); const path = join(dir, "manifest.json");
@@ -39,5 +44,6 @@ describe("external benchmark governance", () => {
     const paths = createRunPaths(repo, "reports/benchmarks/runs", "f".repeat(64));
     const first = paths.caseRoot("c/1", "production"); const second = paths.caseRoot("c/1", "diagnostic");
     expect(first).not.toBe(second); expect(existsSync(paths.runDir)).toBe(true);
+    expect(paths.caseRoot("a/b", "production")).not.toBe(paths.caseRoot("a-b", "production"));
   });
 });

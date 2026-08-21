@@ -3,10 +3,10 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { defaultRoot } from "../../src/paths";
 import { appendJsonlAtomic, writeJsonAtomic } from "./core/artifacts";
-import { fingerprintManifest } from "./core/fingerprint";
+import { fingerprintManifest, sha256File } from "./core/fingerprint";
 import { readApproval, readManifest, validateApproval, writeApproval, writeManifest } from "./core/manifest";
-import { assertBenchmarkRootIsolated } from "./core/paths";
-import { renderPublicMarkdown, renderPublicReport, verifyBenchmarkRun } from "./core/report";
+import { assertBenchmarkRootIsolated, casePathSegment } from "./core/paths";
+import { assertPublicExportable, renderPublicMarkdown, renderPublicReport, verifyBenchmarkRun } from "./core/report";
 import { createDiagnosticTrack } from "./pi/diagnostic-track";
 import { createProductionTrack } from "./pi/production-track";
 import type { BenchmarkHistoryItem, BenchmarkQuery } from "./core/protocol";
@@ -42,6 +42,7 @@ interface SyntheticCase { caseId: string; history: BenchmarkHistoryItem[]; query
 export async function runContractBenchmark(input: RunContractInput): Promise<string> {
   const manifest = readManifest(input.manifestPath); if (manifest.preset !== "contract") throw new Error("network-free runner accepts contract manifests only");
   const approval = readApproval(input.approvalPath); const fingerprint = requireRunnableManifest(manifest, approval.manifestFingerprint); validateApproval(approval, fingerprint);
+  if (manifest.dataset.url.startsWith("repository:")) for (const file of manifest.dataset.files) { const actual = await sha256File(join(input.repoRoot, file.path)); if (actual !== file.sha256) throw new Error(`dataset drift before run: ${file.path}`); }
   const runDir = join(input.runsRoot ?? join(input.repoRoot, "reports", "benchmarks", "runs"), fingerprint); mkdirSync(runDir, { recursive: true });
   if (existsSync(join(runDir, "run.json"))) { const existing = await verifyBenchmarkRun(runDir); if (existing.verified) return runDir; throw new Error("existing contract run is incomplete; use resume rather than replacing completed answers"); }
   writeManifest(join(runDir, "manifest.json"), manifest); writeApproval(join(runDir, "approval.json"), fingerprint, approval.approvedAt);
@@ -49,14 +50,14 @@ export async function runContractBenchmark(input: RunContractInput): Promise<str
   if (cases.length !== manifest.cases.length) throw new Error("contract fixture does not contain every selected case");
   const results: Array<{ caseId: string; track: BenchmarkTrack; diagnostic: boolean; latencyMs: number; contextChars: number }> = []; const scores: Record<string, number[]> = { production: [], diagnostic: [] };
   for (const fixture of cases) for (const trackName of manifest.tracks) {
-    const caseRoot = join(runDir, "cases", fixture.caseId, trackName, "pi-root"); assertBenchmarkRootIsolated(caseRoot, input.liveRoot ?? defaultRoot()); mkdirSync(caseRoot, { recursive: true });
+    const caseRoot = join(runDir, "cases", casePathSegment(fixture.caseId), trackName, "pi-root"); assertBenchmarkRootIsolated(caseRoot, input.liveRoot ?? defaultRoot()); mkdirSync(caseRoot, { recursive: true });
     const statePath = join(runDir, "state.jsonl"); const state = (stage: string) => appendJsonlAtomic(statePath, { caseId: fixture.caseId, track: trackName, stage, attempt: 1, at: "2000-01-01T00:00:00.000Z" }); state("planned"); state("running");
     const runner = trackName === "production" ? createProductionTrack(caseRoot, { maxRecords: manifest.context.maxRecords, maxChars: manifest.context.maxTokens * 4, now: "2000-01-01T00:00:00.000Z" }) : createDiagnosticTrack(caseRoot, { maxRecords: manifest.context.maxRecords, maxChars: manifest.context.maxTokens * 4, now: "2000-01-01T00:00:00.000Z" });
     await runner.insert(fixture.caseId, fixture.history); const started = performance.now(); const answer = await runner.query(fixture.caseId, fixture.query); const latencyMs = Math.max(0, performance.now() - started); state("answered");
     scores[trackName].push(/\bbun\b/i.test(answer.context) ? 1 : 0); state("evaluated"); results.push({ caseId: fixture.caseId, track: trackName, diagnostic: answer.diagnostic, latencyMs, contextChars: answer.context.length }); state("verified"); await runner.close(fixture.caseId);
   }
   const average = (values: number[]) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-  writeJsonAtomic(join(runDir, "run.json"), { manifestFingerprint: fingerprint, status: "contract", models: manifest.models.map((model) => model.id), officialMetrics: { productionExactMatch: average(scores.production), diagnosticExactMatch: average(scores.diagnostic) }, results });
+  writeJsonAtomic(join(runDir, "run.json"), { manifestFingerprint: fingerprint, status: "contract", models: manifest.models.map((model) => model.id), officialMetrics: { production: { exactMatch: average(scores.production) }, diagnostic: { exactMatch: average(scores.diagnostic) } }, results });
   return runDir;
 }
 function value(options: Record<string, string | boolean>, key: string): string { const found = options[key]; if (typeof found !== "string" || !found) throw new Error(`--${key} is required`); return found; }
@@ -64,7 +65,7 @@ function help(): string { return ["External benchmark commands:", "  prepare --b
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const parsed = parseCli(argv); if (parsed.command === "help" || parsed.options.help) { console.log(help()); return; }
   const repoRoot = resolve(import.meta.dir, "../..");
-  if (parsed.command === "prepare") { const benchmark = value(parsed.options, "benchmark") as BenchmarkName; const preset = value(parsed.options, "preset") as BenchmarkPreset; const tracks = expandTracks(value(parsed.options, "track")); const prepared = await prepareBenchmark({ repoRoot, benchmark, preset, tracks }); console.log(JSON.stringify({ manifest: prepared.path, fingerprint: prepared.fingerprint, expectedCalls: prepared.manifest.expected.modelCalls, estimatedCostUsd: prepared.manifest.expected.estimatedCostUsd, approvalCommand: `bun run benchmark:approve -- --manifest ${prepared.path} --fingerprint ${prepared.fingerprint}` }, null, 2)); return; }
+  if (parsed.command === "prepare") { const benchmark = value(parsed.options, "benchmark") as BenchmarkName; const preset = value(parsed.options, "preset") as BenchmarkPreset; const tracks = expandTracks(value(parsed.options, "track")); const prepared = await prepareBenchmark({ repoRoot, benchmark, preset, tracks }); const approvalAllowed = prepared.manifest.preset === "contract" || prepared.manifest.expected.estimatedCostUsd !== null; console.log(JSON.stringify({ manifest: prepared.path, fingerprint: prepared.fingerprint, expectedCalls: prepared.manifest.expected.modelCalls, estimatedCostUsd: prepared.manifest.expected.estimatedCostUsd, approvalCommand: approvalAllowed ? `bun run benchmark:approve -- --manifest ${prepared.path} --fingerprint ${prepared.fingerprint}` : null, approvalBlockedReason: approvalAllowed ? null : "unknown_estimated_cost" }, null, 2)); return; }
   if (parsed.command === "approve") { const path = resolve(value(parsed.options, "manifest")); const manifest = readManifest(path); assertApprovalAllowed(manifest); const fingerprint = value(parsed.options, "fingerprint"); if (fingerprintManifest(manifest) !== fingerprint) throw new Error("approval fingerprint mismatch"); const approvalPath = join(dirname(path), `${basename(path, ".json")}.approval.json`); writeApproval(approvalPath, fingerprint, new Date().toISOString()); console.log(approvalPath); return; }
   if (parsed.command === "run") {
     const path = resolve(value(parsed.options, "manifest")); const manifest = readManifest(path); const approvalPath = join(dirname(path), `${basename(path, ".json")}.approval.json`); if (!existsSync(approvalPath)) throw new Error("benchmark run requires explicit approval"); const approval = readApproval(approvalPath); validateApproval(approval, fingerprintManifest(manifest)); requireRunnableManifest(manifest, approval.manifestFingerprint);
@@ -73,7 +74,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   }
   if (parsed.command === "resume") { const runDir = resolve(value(parsed.options, "run")); const verification = await verifyBenchmarkRun(runDir); if (verification.verified) { console.log(runDir); return; } throw new Error("resume requires an interrupted case journal; automatic official reruns remain disabled"); }
   if (parsed.command === "verify") { const runDir = resolve(value(parsed.options, "run")); const verification = await verifyBenchmarkRun(runDir); writeJsonAtomic(join(runDir, "verification.json"), verification); console.log(JSON.stringify(verification, null, 2)); if (!verification.verified) process.exitCode = 1; return; }
-  if (parsed.command === "report") { const runDir = resolve(value(parsed.options, "run")); const verification = await verifyBenchmarkRun(runDir); const report = renderPublicReport(runDir, verification); writeJsonAtomic(join(runDir, "public-report.json"), report); const markdown = renderPublicMarkdown(report); await Bun.write(join(runDir, "public-report.md"), markdown); console.log(join(runDir, "public-report.md")); return; }
+  if (parsed.command === "report") { const runDir = resolve(value(parsed.options, "run")); const verification = await verifyBenchmarkRun(runDir); const report = renderPublicReport(runDir, verification); const publicExport = verification.publishable; if (publicExport) assertPublicExportable(verification); const stem = publicExport ? "public-report" : "local-diagnostic-report"; writeJsonAtomic(join(runDir, `${stem}.json`), report); const markdown = renderPublicMarkdown(report); await Bun.write(join(runDir, `${stem}.md`), markdown); console.log(join(runDir, `${stem}.md`)); return; }
   throw new Error(`unsupported benchmark command: ${parsed.command}`);
 }
 if (import.meta.main) main().catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
