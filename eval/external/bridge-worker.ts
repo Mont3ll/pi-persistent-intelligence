@@ -1,10 +1,10 @@
 import { createInterface } from "node:readline";
-import { parseBridgeRequest, RequestIdRegistry, type BenchmarkHistoryItem, type BridgeResponse, type TrackConfig } from "./core/protocol";
-import type { BenchmarkTrack } from "./core/types";
+import { parseBridgeRequest, RequestIdRegistry, type BridgeResponse } from "./core/protocol";
+import { createDiagnosticTrack } from "./pi/diagnostic-track";
+import { createProductionTrack } from "./pi/production-track";
+import type { BenchmarkTrackRunner } from "./pi/types";
 
-interface OpenState { root: string; track: BenchmarkTrack; config: TrackConfig }
-let opened: OpenState | null = null;
-const histories = new Map<string, BenchmarkHistoryItem[]>();
+let runner: BenchmarkTrackRunner | null = null;
 const ids = new RequestIdRegistry();
 
 function success(id: string, result: unknown): BridgeResponse { return { id, ok: true, result }; }
@@ -13,14 +13,15 @@ async function handle(line: string): Promise<BridgeResponse> {
   let requestId = "invalid";
   try {
     const request = parseBridgeRequest(line); requestId = request.id; ids.accept(request.id);
-    if (request.op === "open") { if (opened) throw new Error("worker already open"); opened = { root: request.root, track: request.track, config: request.config }; return success(request.id, { opened: true, track: request.track }); }
-    if (!opened) throw new Error("worker must open before insert, query, or close");
-    if (request.op === "insert") { histories.set(request.caseId, [...(histories.get(request.caseId) ?? []), ...request.items]); return success(request.id, { inserted: request.items.length }); }
-    if (request.op === "query") {
-      const items = histories.get(request.caseId) ?? []; const selected = items.slice(-opened.config.maxRecords); const context = selected.map((item) => item.content).join("\n").slice(0, opened.config.maxChars);
-      return success(request.id, { context, selectedIds: selected.map((item) => item.id), diagnostic: opened.track === "diagnostic" });
+    if (request.op === "open") {
+      if (runner) throw new Error("worker already open");
+      runner = request.track === "production" ? createProductionTrack(request.root, request.config) : createDiagnosticTrack(request.root, request.config);
+      return success(request.id, { opened: true, track: request.track });
     }
-    histories.delete(request.caseId); return success(request.id, { closed: true });
+    if (!runner) throw new Error("worker must open before insert, query, or close");
+    if (request.op === "insert") return success(request.id, await runner.insert(request.caseId, request.items));
+    if (request.op === "query") return success(request.id, await runner.query(request.caseId, request.query));
+    await runner.close(request.caseId); return success(request.id, { closed: true });
   } catch (error) { return failure(requestId, error); }
 }
 

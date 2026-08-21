@@ -9,7 +9,7 @@ proc = subprocess.Popen(shlex.split(args.worker), stdin=subprocess.PIPE, stdout=
 requests = [
     {"id":"1","op":"open","root":root,"track":"diagnostic","config":{"maxRecords":3,"maxChars":1000}},
     {"id":"2","op":"insert","caseId":"synthetic-1","items":[{"id":"turn-1","role":"user","content":"Prefer Bun for tests","at":"2026-08-01T00:00:00Z"}]},
-    {"id":"3","op":"query","caseId":"synthetic-1","query":{"text":"Which test runner?"}},
+    {"id":"3","op":"query","caseId":"synthetic-1","query":{"text":"What testing runner should be used according to the saved Bun preference?"}},
     {"id":"4","op":"close","caseId":"synthetic-1"},
 ]
 assert proc.stdin and proc.stdout
