@@ -179,14 +179,20 @@ export function captureReinforcementLink(root: string, input: ReinforcementLinkI
   const existing = input.existing_events ?? readReinforcementEvents(root);
   const decision = decideReinforcementLink({ ...input, existing_events: existing });
   if (decision.outcome === "none" || !decision.memory_id) return { decision };
+  if (decision.outcome === "implicit_success" && existing.some((event) => event.memory_id === decision.memory_id && event.outcome === "implicit_success" && event.thread_id === input.session_id)) {
+    return { decision: { outcome: "none", reason: "implicit_success_already_recorded_for_session", command_class: decision.command_class } };
+  }
   const memory = input.selected_memory.find((record) => record.id === decision.memory_id)!;
+  const attributionNotes = decision.outcome === "implicit_success"
+    ? `deterministic_attribution_v1 class=${decision.command_class ?? "unknown"} score=${decision.attribution_score ?? 0} signals=${(decision.matched_signals ?? []).join("|")}`.slice(0, 300)
+    : decision.reason;
   const event = createReinforcementEvent({
     resource_id: memory.resource_id,
     profile_id: memory.profile_id,
     thread_id: input.session_id,
     memory_id: decision.memory_id,
     outcome: decision.outcome,
-    notes: decision.reason,
+    notes: attributionNotes,
     now: input.now,
   });
   appendReinforcementEvent(root, event);

@@ -13,6 +13,7 @@ import {
   recordExplicitReinforcement,
   decideReinforcementLink,
   classifyRecordedToolOutcome,
+  captureReinforcementLink,
 } from "../../src/reinforcement";
 import { loadAllRecords, unsafeAddMemoryRecord } from "../../src/store";
 import type { MemoryRecord } from "../../src/types";
@@ -134,6 +135,24 @@ describe("reinforcement records", () => {
     expect(decideReinforcementLink({ selected_memory: selected, session_id: "s", neutral_exposure_enabled: false })).toMatchObject({ outcome: "none" });
     expect(decideReinforcementLink({ selected_memory: selected, session_id: "s", observable_outcome: { kind: "test", success: false, command: "bun test" }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "none", reason: "observable_outcome_failed" });
     expect(decideReinforcementLink({ selected_memory: selected, session_id: "s", observable_outcome: { kind: "tool", success: true, command: "echo hello" }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "none", reason: "unsupported_operation_class" });
+  });
+
+  test("implicit success is deduplicated per memory and session with bounded attribution notes", () => {
+    const dir = root();
+    const selected = [record("mem_bun", "Use Bun for repository tests.")];
+    const input = { selected_memory: selected, session_id: "session-a", observable_outcome: { kind: "test" as const, success: true, command: "bun test /private/workspace/test/unit/reinforcement.test.ts" }, neutral_exposure_enabled: false };
+
+    const first = captureReinforcementLink(dir, { ...input, now: "2026-07-18T00:00:00Z" });
+    const duplicate = captureReinforcementLink(dir, { ...input, now: "2026-07-18T00:01:00Z" });
+    const laterSession = captureReinforcementLink(dir, { ...input, session_id: "session-b", now: "2026-07-19T00:00:00Z" });
+
+    expect(first.event?.outcome).toBe("implicit_success");
+    expect(duplicate).toMatchObject({ decision: { outcome: "none", reason: "implicit_success_already_recorded_for_session" } });
+    expect(laterSession.event?.outcome).toBe("implicit_success");
+    expect(readReinforcementEvents(dir)).toHaveLength(2);
+    expect(first.event?.notes).toContain("deterministic_attribution_v1");
+    expect(first.event?.notes).toContain("class=test");
+    expect(first.event?.notes).not.toContain("/private/workspace");
   });
 
   test("neutral exposure is disabled by default and capped once per memory/session", () => {
