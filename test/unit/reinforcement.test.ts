@@ -21,7 +21,7 @@ let dirs: string[] = [];
 function root() { const dir = mkdtempSync(join(tmpdir(), "pi-reinforce-")); dirs.push(dir); ensureMemoryDirs(dir); return dir; }
 afterEach(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }); dirs = []; });
 
-function record(id: string, statement: string, profile_id = "project:test"): MemoryRecord {
+function record(id: string, statement: string, profile_id = "project:test", overrides: Partial<MemoryRecord> = {}): MemoryRecord {
   return {
     id,
     profile_id,
@@ -40,6 +40,7 @@ function record(id: string, statement: string, profile_id = "project:test"): Mem
     supersedes: [],
     superseded_by: [],
     vault_ref: null,
+    ...overrides,
   };
 }
 
@@ -93,19 +94,46 @@ describe("reinforcement records", () => {
     expect(classifyRecordedToolOutcome({})).toBe("unknown");
     expect(classifyRecordedToolOutcome({ isError: false })).toBe("unknown");
     expect(classifyRecordedToolOutcome({ exitCode: 0 })).toBe("success");
+    expect(classifyRecordedToolOutcome({ code: 0 })).toBe("success");
     expect(classifyRecordedToolOutcome({ exitCode: 0, isError: true })).toBe("failure");
     expect(classifyRecordedToolOutcome({ success: true })).toBe("success");
     expect(classifyRecordedToolOutcome({ exit_code: 1 })).toBe("failure");
     expect(classifyRecordedToolOutcome({ status: "passed" })).toBe("success");
   });
 
-  test("implicit success requires one active selected memory and an observable successful outcome", () => {
-    const one = [record("mem_one", "Run focused tests.")];
-    const two = [...one, record("mem_two", "Run typecheck.")];
-    expect(decideReinforcementLink({ selected_memory: one, session_id: "s", neutral_exposure_enabled: false })).toMatchObject({ outcome: "none" });
-    expect(decideReinforcementLink({ selected_memory: one, session_id: "s", observable_outcome: { kind: "test", success: false }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "none" });
-    expect(decideReinforcementLink({ selected_memory: two, session_id: "s", observable_outcome: { kind: "test", success: true }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "none" });
-    expect(decideReinforcementLink({ selected_memory: one, session_id: "s", observable_outcome: { kind: "test", success: true }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "implicit_success", memory_id: "mem_one" });
+  test("attributes recorded success to one uniquely relevant selected memory", () => {
+    const selected = [record("mem_bun", "Use Bun for repository tests."), record("mem_docs", "Keep public documentation concise.")];
+    const decision = decideReinforcementLink({ selected_memory: selected, session_id: "s", observable_outcome: { kind: "test", success: true, tool_name: "bash", command: "bun test test/unit/reinforcement.test.ts" }, neutral_exposure_enabled: false });
+
+    expect(decision).toMatchObject({ outcome: "implicit_success", memory_id: "mem_bun", command_class: "test" });
+    expect(decision.attribution_score).toBeGreaterThan(0);
+    expect(decision.matched_signals).toContain("command_class");
+  });
+
+  test("uses command class to distinguish multiple selected memories", () => {
+    const selected = [record("mem_test", "Run focused tests."), record("mem_typecheck", "Run TypeScript typecheck.")];
+    expect(decideReinforcementLink({ selected_memory: selected, session_id: "s", observable_outcome: { kind: "test", success: true }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "implicit_success", memory_id: "mem_test", command_class: "test" });
+  });
+
+  test("uses semantic operation terms to disambiguate class-aligned memories", () => {
+    const selected = [record("mem_reinforcement", "Run reinforcement tests."), record("mem_capture", "Run capture tests.")];
+    expect(decideReinforcementLink({ selected_memory: selected, session_id: "s", observable_outcome: { kind: "test", success: true, command: "bun test test/unit/reinforcement.test.ts" }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "implicit_success", memory_id: "mem_reinforcement" });
+  });
+
+  test("uses explicit applicability but rejects ambiguous or irrelevant success", () => {
+    const applicable = record("mem_applicable", "Follow the project verification convention.", "project:test", { applies_when: ["typecheck"] });
+    expect(decideReinforcementLink({ selected_memory: [applicable, record("mem_docs", "Keep documentation concise.")], session_id: "s", observable_outcome: { kind: "tool", success: true, command: "bun run typecheck" }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "implicit_success", memory_id: "mem_applicable", command_class: "typecheck" });
+
+    const ambiguous = [record("mem_test_a", "Run project tests."), record("mem_test_b", "Use the project test suite.")];
+    expect(decideReinforcementLink({ selected_memory: ambiguous, session_id: "s", observable_outcome: { kind: "test", success: true, command: "bun test" }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "none", reason: "ambiguous_relevant_memories" });
+    expect(decideReinforcementLink({ selected_memory: [record("mem_docs_only", "Keep documentation concise.")], session_id: "s", observable_outcome: { kind: "test", success: true, command: "bun test" }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "none", reason: "no_demonstrably_relevant_memory" });
+  });
+
+  test("never infers implicit success from failure, silence, or unsupported tools", () => {
+    const selected = [record("mem_test", "Run focused tests.")];
+    expect(decideReinforcementLink({ selected_memory: selected, session_id: "s", neutral_exposure_enabled: false })).toMatchObject({ outcome: "none" });
+    expect(decideReinforcementLink({ selected_memory: selected, session_id: "s", observable_outcome: { kind: "test", success: false, command: "bun test" }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "none", reason: "observable_outcome_failed" });
+    expect(decideReinforcementLink({ selected_memory: selected, session_id: "s", observable_outcome: { kind: "tool", success: true, command: "echo hello" }, neutral_exposure_enabled: false })).toMatchObject({ outcome: "none", reason: "unsupported_operation_class" });
   });
 
   test("neutral exposure is disabled by default and capped once per memory/session", () => {
