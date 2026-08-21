@@ -8,7 +8,7 @@ export type RecordedToolOutcome = "success" | "failure" | "unknown";
 
 export function classifyRecordedToolOutcome(value: Record<string, unknown>): RecordedToolOutcome {
   if (value.success === false || value.ok === false || value.passed === false || value.isError === true) return "failure";
-  const exitCode = value.exitCode ?? value.exit_code;
+  const exitCode = value.exitCode ?? value.exit_code ?? value.code;
   if (typeof exitCode === "number") return exitCode === 0 ? "success" : "failure";
   if (value.success === true || value.ok === true || value.passed === true) return "success";
   const status = typeof value.status === "string" ? value.status.toLowerCase() : "";
@@ -17,16 +17,28 @@ export function classifyRecordedToolOutcome(value: Record<string, unknown>): Rec
   return "unknown";
 }
 
+export type ReinforcementCommandClass = "test" | "typecheck" | "lint" | "build" | "validation";
+
 export interface ReinforcementLinkDecision {
   outcome: "implicit_success" | "neutral_exposure" | "none";
   memory_id?: string;
   reason: string;
+  command_class?: ReinforcementCommandClass;
+  attribution_score?: number;
+  matched_signals?: string[];
+}
+
+export interface ReinforcementObservableOutcome {
+  kind: "test" | "tool";
+  success: boolean;
+  tool_name?: string;
+  command?: string;
 }
 
 export interface ReinforcementLinkInput {
   selected_memory: MemoryRecord[];
   session_id: string;
-  observable_outcome?: { kind: "test" | "tool"; success: boolean; tool_name?: string };
+  observable_outcome?: ReinforcementObservableOutcome;
   neutral_exposure_enabled: boolean;
   existing_events?: ReinforcementEvent[];
 }
@@ -83,12 +95,78 @@ export function readReinforcementEventsForMemory(root: string, memoryId: string)
   return readReinforcementEvents(root).filter((event) => event.memory_id === memoryId);
 }
 
+const COMMAND_CLASS_ALIASES: Record<ReinforcementCommandClass, string[]> = {
+  test: ["test", "spec", "vitest", "jest", "pytest", "playwright"],
+  typecheck: ["typecheck", "typescript", "typing", "tsc"],
+  lint: ["lint", "eslint", "clippy"],
+  build: ["build", "compile", "bundle"],
+  validation: ["validate", "validation", "verify", "verification", "check"],
+};
+
+const GENERIC_OPERATION_TERMS = new Set(["bash", "bun", "cargo", "command", "node", "npm", "npx", "pnpm", "run", "tool", "unit", "yarn"]);
+
+function normalizeTerm(value: string): string {
+  const term = value.toLowerCase();
+  if (term === "tests" || term === "testing" || term === "tested") return "test";
+  if (term === "builds" || term === "building" || term === "built") return "build";
+  if (term === "checks" || term === "checking" || term === "checked") return "check";
+  return term;
+}
+
+function semanticTerms(value: string): Set<string> {
+  return new Set(value.split(/[^a-zA-Z0-9]+/).map(normalizeTerm).filter((term) => term.length >= 2));
+}
+
+export function classifyReinforcementCommand(outcome: ReinforcementObservableOutcome): ReinforcementCommandClass | null {
+  const label = `${outcome.kind} ${outcome.tool_name ?? ""} ${outcome.command ?? ""}`.toLowerCase();
+  if (outcome.kind === "test" || /\b(test|tests|testing|spec|vitest|jest|pytest|playwright)\b/.test(label)) return "test";
+  if (/\b(typecheck|typescript|tsc)\b/.test(label) || /\bcargo\s+check\b/.test(label)) return "typecheck";
+  if (/\b(lint|eslint|clippy)\b/.test(label)) return "lint";
+  if (/\b(build|compile|bundle)\b/.test(label)) return "build";
+  if (/\b(validate|validation|verify|verification|check)\b/.test(label)) return "validation";
+  return null;
+}
+
+function attributionCandidate(memory: MemoryRecord, outcome: ReinforcementObservableOutcome, commandClass: ReinforcementCommandClass): { memory: MemoryRecord; score: number; signals: string[] } | null {
+  const aliases = new Set(COMMAND_CLASS_ALIASES[commandClass]);
+  const applicabilityTerms = semanticTerms((memory.applies_when ?? []).join(" "));
+  const classTerms = semanticTerms(`${memory.statement} ${(memory.applies_when ?? []).join(" ")}`);
+  const classAligned = [...aliases].some((term) => classTerms.has(term));
+  if (!classAligned) return null;
+
+  const operationTerms = semanticTerms(`${outcome.tool_name ?? ""} ${outcome.command ?? ""}`);
+  const recordTerms = semanticTerms(`${memory.statement} ${memory.tags.join(" ")} ${(memory.applies_when ?? []).join(" ")}`);
+  const contextualOperationTerms = new Set([...operationTerms].filter((term) => !aliases.has(term) && !GENERIC_OPERATION_TERMS.has(term)));
+  const contextualRecordTerms = new Set([...recordTerms].filter((term) => !aliases.has(term) && !GENERIC_OPERATION_TERMS.has(term)));
+  const matchedTerms = [...contextualRecordTerms].filter((term) => contextualOperationTerms.has(term));
+  const applicabilityMatch = [...applicabilityTerms].some((term) => aliases.has(term) || operationTerms.has(term));
+  const overlapScore = matchedTerms.length / Math.max(1, Math.min(contextualRecordTerms.size, contextualOperationTerms.size));
+  const score = Math.round((1 + (applicabilityMatch ? 0.4 : 0) + Math.min(0.6, overlapScore * 0.6)) * 100) / 100;
+  const signals = ["command_class", ...(applicabilityMatch ? ["applicability"] : []), ...(matchedTerms.length ? [`term_overlap:${matchedTerms.sort().join(",")}`] : [])];
+  return { memory, score, signals };
+}
+
 export function decideReinforcementLink(input: ReinforcementLinkInput): ReinforcementLinkDecision {
   const active = input.selected_memory.filter((memory) => memory.status === "active");
   if (input.observable_outcome) {
     if (!input.observable_outcome.success) return { outcome: "none", reason: "observable_outcome_failed" };
-    if (active.length !== 1) return { outcome: "none", reason: active.length === 0 ? "no_active_selected_memory" : "ambiguous_selected_memory" };
-    return { outcome: "implicit_success", memory_id: active[0].id, reason: `unique_selected_memory_with_successful_${input.observable_outcome.kind}_outcome` };
+    if (active.length === 0) return { outcome: "none", reason: "no_active_selected_memory" };
+    const commandClass = classifyReinforcementCommand(input.observable_outcome);
+    if (!commandClass) return { outcome: "none", reason: "unsupported_operation_class" };
+    const candidates = active.flatMap((memory) => {
+      const candidate = attributionCandidate(memory, input.observable_outcome!, commandClass);
+      return candidate ? [candidate] : [];
+    }).sort((a, b) => b.score - a.score || a.memory.id.localeCompare(b.memory.id));
+    if (candidates.length === 0) return { outcome: "none", reason: "no_demonstrably_relevant_memory", command_class: commandClass };
+    if (candidates.length > 1 && candidates[0].score - candidates[1].score < 0.2) return { outcome: "none", reason: "ambiguous_relevant_memories", command_class: commandClass };
+    return {
+      outcome: "implicit_success",
+      memory_id: candidates[0].memory.id,
+      reason: `deterministic_attribution_v1:${commandClass}`,
+      command_class: commandClass,
+      attribution_score: candidates[0].score,
+      matched_signals: candidates[0].signals,
+    };
   }
   if (!input.neutral_exposure_enabled) return { outcome: "none", reason: "neutral_exposure_disabled" };
   if (active.length !== 1) return { outcome: "none", reason: active.length === 0 ? "no_active_selected_memory" : "ambiguous_selected_memory" };
