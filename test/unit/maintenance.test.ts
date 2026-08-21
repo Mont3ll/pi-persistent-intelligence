@@ -64,12 +64,14 @@ describe("maintenance recommendations", () => {
     expect(recs.filter((r) => r.kind === "increase_stability")).toHaveLength(0);
   });
 
-  test("implicit success alone cannot promote to stable", () => {
-    const recs = generateMaintenanceRecommendations([record("mem_implicit")], [
+  test("implicit success creates review-only feedback and cannot promote to stable", () => {
+    const recs = generateMaintenanceRecommendations([record("mem_implicit", "low")], [
       summary("mem_implicit", { counts: { implicit_success: 5, neutral_exposure: 0, explicit_reinforcement: 0, explicit_correction: 0 }, score: 1, suggested_stability: "semi-stable", review_recommended: false, reasons: [] }),
     ]);
-    const increase = recs.find((r) => r.memory_id === "mem_implicit" && r.kind === "increase_stability");
-    expect(increase?.suggested_stability).not.toBe("stable");
+    const flag = recs.find((r) => r.memory_id === "mem_implicit" && r.kind === "flag_for_review");
+    expect(flag).toMatchObject({ requires_review: true, suggested_stability: "semi-stable" });
+    expect(recs.some((r) => r.kind === "increase_stability")).toBe(false);
+    expect(buildStabilityPatchFromRecommendations(recs, "2026-08-21T00:00:00Z").ops).toHaveLength(0);
   });
 
   test("explicit reinforcement >= 2 with no corrections creates increase_stability recommendation", () => {

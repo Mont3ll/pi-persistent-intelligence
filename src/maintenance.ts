@@ -1,11 +1,5 @@
 import type { MaintenanceRecommendation, MaintenanceRecommendationKind, MemoryPatch, MemoryRecord, PatchOp, ReinforcementSummary, Stability } from "./types";
 
-const STABILITY_LEVELS: Record<Stability, number> = { low: 0, "semi-stable": 1, stable: 2 };
-
-function higherStability(a: Stability, b: Stability): Stability {
-  return STABILITY_LEVELS[a] >= STABILITY_LEVELS[b] ? a : b;
-}
-
 function lowerStability(a: Stability): Stability {
   if (a === "stable") return "semi-stable";
   return "low";
@@ -94,21 +88,17 @@ export function generateMaintenanceRecommendations(
       continue;
     }
 
-    // Implicit success alone: at most semi-stable (never full stable)
+    // Implicit success alone is review context, never an automatic stability change.
     if (implicit_success >= 5 && explicit_correction === 0 && explicit_reinforcement === 0 && neutral_exposure === 0) {
-      const suggested: Stability = higherStability("semi-stable", record.stability);
-      if (suggested === "stable" && record.stability !== "stable") {
-        // block implicit success from promoting to stable
-        recommendations.push({
-          memory_id: record.id,
-          kind: "flag_for_review",
-          reason: `${implicit_success} implicit success events suggest semi-stable is appropriate, but not stable without explicit reinforcement.`,
-          requires_review: false,
-          current_stability: record.stability,
-          suggested_stability: "semi-stable",
-          reinforcement_summary: summary,
-        });
-      }
+      recommendations.push({
+        memory_id: record.id,
+        kind: "flag_for_review",
+        reason: `${implicit_success} implicit success events support review, but cannot promote stability without explicit reinforcement.`,
+        requires_review: true,
+        current_stability: record.stability,
+        suggested_stability: record.stability === "low" ? "semi-stable" : undefined,
+        reinforcement_summary: summary,
+      });
     }
   }
 

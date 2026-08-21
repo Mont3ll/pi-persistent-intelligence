@@ -142,7 +142,7 @@ function attributionCandidate(memory: MemoryRecord, outcome: ReinforcementObserv
   const applicabilityMatch = [...applicabilityTerms].some((term) => aliases.has(term) || operationTerms.has(term));
   const overlapScore = matchedTerms.length / Math.max(1, Math.min(contextualRecordTerms.size, contextualOperationTerms.size));
   const score = Math.round((1 + (applicabilityMatch ? 0.4 : 0) + Math.min(0.6, overlapScore * 0.6)) * 100) / 100;
-  const signals = ["command_class", ...(applicabilityMatch ? ["applicability"] : []), ...(matchedTerms.length ? [`term_overlap:${matchedTerms.sort().join(",")}`] : [])];
+  const signals = ["command_class", ...(applicabilityMatch ? ["applicability"] : []), ...(matchedTerms.length ? ["term_overlap"] : [])];
   return { memory, score, signals };
 }
 

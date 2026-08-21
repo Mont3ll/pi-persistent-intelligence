@@ -1546,7 +1546,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
       // Sprint 10: generate reinforcement-based recommendations
       const records = loadActiveRecords(root);
-      const summaries = records.map((rec) => summarizeReinforcement(readReinforcementEventsForMemory(root, rec.id))).filter((s) => s.counts.explicit_correction > 0 || s.counts.explicit_reinforcement > 0);
+      const summaries = records.map((rec) => summarizeReinforcement(readReinforcementEventsForMemory(root, rec.id))).filter((s) => s.counts.explicit_correction > 0 || s.counts.explicit_reinforcement > 0 || s.counts.implicit_success > 0);
       const maintRecs = generateMaintenanceRecommendations(records, summaries, nowIso());
       const stabilityPatch = buildStabilityPatchFromRecommendations(maintRecs, nowIso());
 
