@@ -1,0 +1,12 @@
+{
+  "upstreamUrl": "https://github.com/xiaowu0162/LongMemEval-V2",
+  "upstreamCommit": "2cc8c540bdb87fe6761629b585e727e1c4704520",
+  "datasetUrl": "https://huggingface.co/datasets/xiaowu0162/longmemeval-v2",
+  "datasetRevision": "main",
+  "smokeCases": ["web-small-smoke-1", "enterprise-small-smoke-1"],
+  "models": [
+    { "role": "reader", "id": "official-small-reader", "provider": "official" },
+    { "role": "judge", "id": "official-small-judge", "provider": "official" }
+  ],
+  "estimatedCostPerCaseUsd": null
+}

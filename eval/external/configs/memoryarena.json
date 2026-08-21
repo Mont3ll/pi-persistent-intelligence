@@ -1,0 +1,12 @@
+{
+  "upstreamUrl": "https://github.com/ZexueHe/MemoryArena",
+  "upstreamCommit": "6cd9de14b71915e39ac742a20dc33785e14b6aab",
+  "datasetUrl": "https://huggingface.co/datasets/ZexueHe/memoryarena",
+  "datasetRevision": "main",
+  "smokeCases": ["formal-reasoning-smoke-1"],
+  "models": [
+    { "role": "controller", "id": "gpt-5-mini", "provider": "openai" },
+    { "role": "judge", "id": "benchmark-configured", "provider": "official" }
+  ],
+  "estimatedCostPerCaseUsd": null
+}
