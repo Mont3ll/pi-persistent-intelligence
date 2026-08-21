@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { manifest } from "./external-benchmark-manifest.test";
-import { expandTracks, parseCli, prepareBenchmark, requireRunnableManifest, runContractBenchmark } from "../../eval/external/cli";
+import { assertApprovalAllowed, expandTracks, parseCli, prepareBenchmark, requireRunnableManifest, runContractBenchmark } from "../../eval/external/cli";
 import { writeApproval } from "../../eval/external/core/manifest";
 import { verifyBenchmarkRun } from "../../eval/external/core/report";
 import { getBenchmarkAdapter } from "../../eval/external/benchmarks/registry";
@@ -21,6 +21,8 @@ describe("external benchmark CLI", () => {
     expect(() => requireRunnableManifest({ ...manifest, pi: { ...manifest.pi, clean: false } }, undefined)).toThrow("clean worktree");
     expect(() => requireRunnableManifest({ ...manifest, preset: "contract" }, undefined)).toThrow("approval");
     expect(() => requireRunnableManifest({ ...manifest, preset: "contract" }, "a".repeat(10))).toThrow("64-character");
+    expect(() => assertApprovalAllowed({ ...manifest, expected: { ...manifest.expected, estimatedCostUsd: null } })).toThrow("unknown estimated cost");
+    expect(() => assertApprovalAllowed({ ...manifest, preset: "contract", expected: { ...manifest.expected, estimatedCostUsd: 0 } })).not.toThrow();
   });
   test("prepares deterministic contract cases without network", async () => {
     const outputRoot = mkdtempSync(join(tmpdir(), "pi-benchmark-cli-"));

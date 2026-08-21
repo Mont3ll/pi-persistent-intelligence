@@ -24,6 +24,9 @@ export function parseCli(argv: string[]): ParsedCli {
   return { command, options };
 }
 export function expandTracks(value: string): BenchmarkTrack[] { if (value === "both") return ["production", "diagnostic"]; if (value === "production" || value === "diagnostic") return [value]; throw new Error(`invalid benchmark track: ${value}`); }
+export function assertApprovalAllowed(manifest: BenchmarkManifest): void {
+  if (manifest.preset !== "contract" && manifest.expected.estimatedCostUsd === null) throw new Error("public benchmark approval is blocked because the manifest has an unknown estimated cost");
+}
 export function requireRunnableManifest(manifest: BenchmarkManifest, approvedFingerprint?: string): string {
   if (manifest.preset !== "contract" && !manifest.pi.clean) throw new Error("public benchmark runs require a clean worktree");
   if (!approvedFingerprint) throw new Error("benchmark run requires explicit approval");
@@ -61,7 +64,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const parsed = parseCli(argv); if (parsed.command === "help" || parsed.options.help) { console.log(help()); return; }
   const repoRoot = resolve(import.meta.dir, "../..");
   if (parsed.command === "prepare") { const benchmark = value(parsed.options, "benchmark") as BenchmarkName; const preset = value(parsed.options, "preset") as BenchmarkPreset; const tracks = expandTracks(value(parsed.options, "track")); const prepared = await prepareBenchmark({ repoRoot, benchmark, preset, tracks }); console.log(JSON.stringify({ manifest: prepared.path, fingerprint: prepared.fingerprint, expectedCalls: prepared.manifest.expected.modelCalls, estimatedCostUsd: prepared.manifest.expected.estimatedCostUsd, approvalCommand: `bun run benchmark:approve -- --manifest ${prepared.path} --fingerprint ${prepared.fingerprint}` }, null, 2)); return; }
-  if (parsed.command === "approve") { const path = resolve(value(parsed.options, "manifest")); const manifest = readManifest(path); const fingerprint = value(parsed.options, "fingerprint"); if (fingerprintManifest(manifest) !== fingerprint) throw new Error("approval fingerprint mismatch"); const approvalPath = join(dirname(path), `${basename(path, ".json")}.approval.json`); writeApproval(approvalPath, fingerprint, new Date().toISOString()); console.log(approvalPath); return; }
+  if (parsed.command === "approve") { const path = resolve(value(parsed.options, "manifest")); const manifest = readManifest(path); assertApprovalAllowed(manifest); const fingerprint = value(parsed.options, "fingerprint"); if (fingerprintManifest(manifest) !== fingerprint) throw new Error("approval fingerprint mismatch"); const approvalPath = join(dirname(path), `${basename(path, ".json")}.approval.json`); writeApproval(approvalPath, fingerprint, new Date().toISOString()); console.log(approvalPath); return; }
   if (parsed.command === "run") {
     const path = resolve(value(parsed.options, "manifest")); const manifest = readManifest(path); const approvalPath = join(dirname(path), `${basename(path, ".json")}.approval.json`); if (!existsSync(approvalPath)) throw new Error("benchmark run requires explicit approval"); const approval = readApproval(approvalPath); validateApproval(approval, fingerprintManifest(manifest)); requireRunnableManifest(manifest, approval.manifestFingerprint);
     if (manifest.preset !== "contract") throw new Error("official benchmark execution is disabled until its prepared manifest and cost assumptions receive a separate run authorization");
