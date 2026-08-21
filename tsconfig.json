@@ -8,5 +8,5 @@
     "skipLibCheck": true,
     "types": ["bun-types"]
   },
-  "include": ["index.ts", "src/**/*.ts", "test/**/*.ts"]
+  "include": ["index.ts", "src/**/*.ts", "eval/external/**/*.ts", "test/**/*.ts"]
 }
