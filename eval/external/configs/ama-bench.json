@@ -4,7 +4,7 @@
   "datasetUrl": "https://huggingface.co/datasets/AMA-bench/AMA-bench",
   "datasetRevision": "a5777378066f53229a94557a7b192435cd027909",
   "datasetFiles": [
-    { "path": "test/open_end_qa_set.jsonl", "sha256": "45c36052e1520d87ad9de4114f71c9df42d4aac9cf158c0c353e800b653d65ff" }
+    { "path": "test/open_end_qa_set.jsonl", "sha256": "45c36052e1520d87ad9de4114f71c9df42d4aac9cf158c0c353e800b653d65ff", "localPath": ".benchmark-cache/datasets/ama/open_end_qa_set.jsonl" }
   ],
   "smokeCases": ["141"],
   "models": [
