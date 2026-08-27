@@ -436,6 +436,106 @@ function candidateFromPatch(patch: PiGovernancePatch, fallback: PiGovernanceImpo
   };
 }
 
+function stringField(value: Record<string, unknown>, key: string): string | undefined {
+  return typeof value[key] === "string" ? value[key] as string : undefined;
+}
+
+function stringArrayField(value: Record<string, unknown>, key: string): string[] {
+  return Array.isArray(value[key]) ? (value[key] as unknown[]).filter((item): item is string => typeof item === "string") : [];
+}
+
+function relatedMemoryIds(value: Record<string, unknown>): string[] {
+  const ids = [
+    ...stringArrayField(value, "related_memory_ids"),
+    ...stringArrayField(value, "record_ids"),
+    stringField(value, "record_id"),
+  ].filter((item): item is string => !!item);
+  return [...new Set(ids)];
+}
+
+function normalizeImportedEvidence(value: Record<string, unknown>, options: PiGovernanceImportOptions, fallbackTime?: string): EvidenceRecord | null {
+  const id = stringField(value, "id");
+  if (!id) return null;
+  if (
+    stringField(value, "resource_id")
+    && stringField(value, "profile_id")
+    && stringField(value, "source_kind")
+    && stringField(value, "trust_class")
+    && stringField(value, "polarity")
+    && Array.isArray(value.related_memory_ids)
+  ) return value as unknown as EvidenceRecord;
+
+  return {
+    id,
+    resource_id: stringField(value, "resource_id") ?? "pi-governance-import",
+    profile_id: stringField(value, "profile_id") ?? options.profile_id ?? "default",
+    created_at: normalizeTimestamp(stringField(value, "created_at") ?? fallbackTime),
+    source_kind: "external_document",
+    source_ref: stringField(value, "source_ref") ?? `pi-governance:${id}`,
+    source_summary: stringField(value, "source_summary") ?? `Imported peer evidence ${id}.`,
+    trust_class: "unknown",
+    polarity: "qualifies",
+    durability_signal: "unknown",
+    related_memory_ids: relatedMemoryIds(value),
+    scope_level: stringField(value, "scope_level"),
+    scope_ref: stringField(value, "scope_ref"),
+    tags: stringArrayField(value, "tags").length > 0 ? stringArrayField(value, "tags") : ["pi-governance-import"],
+    notes: "pi_governance_import_v1",
+  };
+}
+
+function normalizeImportedInquiry(value: Record<string, unknown>, options: PiGovernanceImportOptions, fallbackTime?: string): InquiryRecord | null {
+  const id = stringField(value, "id");
+  if (!id) return null;
+  if (
+    stringField(value, "context")
+    && Array.isArray(value.tags)
+    && Array.isArray(value.sessions_touched)
+    && stringField(value, "first_seen")
+    && stringField(value, "last_seen")
+    && stringField(value, "priority")
+  ) return value as unknown as InquiryRecord;
+
+  const timestamp = normalizeTimestamp(stringField(value, "created_at") ?? fallbackTime);
+  const status = stringField(value, "status");
+  return {
+    id,
+    resource_id: stringField(value, "resource_id"),
+    profile_id: stringField(value, "profile_id") ?? options.profile_id,
+    question: stringField(value, "question") ?? `Imported peer inquiry ${id}.`,
+    context: stringField(value, "context") ?? "Imported peer inquiry.",
+    scope_level: stringField(value, "scope_level"),
+    scope_ref: stringField(value, "scope_ref"),
+    tags: stringArrayField(value, "tags"),
+    related_memory_ids: relatedMemoryIds(value),
+    related_evidence_ids: stringArrayField(value, "related_evidence_ids"),
+    sessions_touched: stringArrayField(value, "sessions_touched"),
+    first_seen: timestamp,
+    last_seen: timestamp,
+    status: ["open", "answered", "withdrawn", "stale"].includes(status ?? "") ? status as InquiryRecord["status"] : "open",
+    priority: "low",
+    answer_memory_id: stringField(value, "answer_memory_id"),
+  };
+}
+
+function normalizeImportedReinforcement(value: Record<string, unknown>, options: PiGovernanceImportOptions, fallbackTime?: string): ReinforcementEvent | null {
+  const id = stringField(value, "id");
+  const memoryId = stringField(value, "memory_id");
+  const outcome = stringField(value, "outcome") ?? stringField(value, "signal");
+  if (!id || !memoryId || !["explicit_reinforcement", "implicit_success", "neutral_exposure", "explicit_correction"].includes(outcome ?? "")) return null;
+  return {
+    id,
+    resource_id: stringField(value, "resource_id"),
+    profile_id: stringField(value, "profile_id") ?? options.profile_id,
+    thread_id: stringField(value, "thread_id"),
+    memory_id: memoryId,
+    timestamp: normalizeTimestamp(stringField(value, "timestamp") ?? stringField(value, "created_at") ?? fallbackTime),
+    outcome: outcome as ReinforcementEvent["outcome"],
+    evidence_id: stringField(value, "evidence_id"),
+    notes: stringField(value, "notes"),
+  };
+}
+
 function selectIncomingRecords(
   sourceRecords: PiGovernanceRecord[],
   existingIds: Set<string>,
@@ -483,9 +583,15 @@ export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceB
   const existingCandidateIds = new Set(listCandidates(root).map((candidate) => candidate.id));
   const sourceRecords = bundle.records ?? [];
   const sourcePatches = bundle.patches ?? [];
-  const sourceEvidence = (bundle.evidence ?? []).filter((item) => typeof item.id === "string").map((item) => item as unknown as EvidenceRecord);
-  const sourceInquiries = bundle.inquiries ?? [];
-  const sourceReinforcement = bundle.reinforcement ?? [];
+  const sourceEvidence = (bundle.evidence ?? [])
+    .map((item) => normalizeImportedEvidence(item, options, bundle.exported_at))
+    .filter((item): item is EvidenceRecord => !!item);
+  const sourceInquiries = (bundle.inquiries ?? [])
+    .map((item) => normalizeImportedInquiry(item as unknown as Record<string, unknown>, options, bundle.exported_at))
+    .filter((item): item is InquiryRecord => !!item);
+  const sourceReinforcement = (bundle.reinforcement ?? [])
+    .map((item) => normalizeImportedReinforcement(item as unknown as Record<string, unknown>, options, bundle.exported_at))
+    .filter((item): item is ReinforcementEvent => !!item);
   const sourceTombstones = bundle.tombstones ?? [];
   const sourceEvents = bundle.events ?? [];
   const incomingRecords = selectIncomingRecords(sourceRecords, existingIds, options);
