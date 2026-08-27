@@ -436,6 +436,36 @@ function candidateFromPatch(patch: PiGovernancePatch, fallback: PiGovernanceImpo
   };
 }
 
+function selectIncomingRecords(
+  sourceRecords: PiGovernanceRecord[],
+  existingIds: Set<string>,
+  options: PiGovernanceImportOptions,
+): { records: MemoryRecord[]; warnings: string[] } {
+  const groups = new Map<string, PiGovernanceRecord[]>();
+  for (const record of sourceRecords) {
+    const group = groups.get(record.id) ?? [];
+    group.push(record);
+    groups.set(record.id, group);
+  }
+
+  const records: MemoryRecord[] = [];
+  const warnings: string[] = [];
+  for (const [id, group] of groups) {
+    if (existingIds.has(id)) continue;
+    const forms = new Set(group.map((record) => JSON.stringify(record)));
+    if (forms.size > 1) {
+      warnings.push(`Quarantined ${group.length} divergent incoming rows for record ${id}.`);
+      continue;
+    }
+    if (group.length > 1) {
+      warnings.push(`Collapsed ${group.length} equivalent incoming rows for record ${id}.`);
+    }
+    const materialized = recordFromPi(group[0], options);
+    if (materialized && materialized.status !== "deleted") records.push(materialized);
+  }
+  return { records, warnings };
+}
+
 function createImportBackup(root: string): string {
   const paths = ensureMemoryDirs(root);
   const backup = join(root, "backups", `pi-governance-import-${Date.now()}`);
@@ -458,7 +488,8 @@ export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceB
   const sourceReinforcement = bundle.reinforcement ?? [];
   const sourceTombstones = bundle.tombstones ?? [];
   const sourceEvents = bundle.events ?? [];
-  const recordsToAdd = sourceRecords.map((record) => recordFromPi(record, options)).filter((record): record is MemoryRecord => !!record && !existingIds.has(record.id) && record.status !== "deleted");
+  const incomingRecords = selectIncomingRecords(sourceRecords, existingIds, options);
+  const recordsToAdd = incomingRecords.records;
   const recordsSkipped = sourceRecords.filter((record) => existingIds.has(record.id)).length;
   const candidatesToAdd = sourcePatches.map((patch) => candidateFromPatch(patch, options)).filter((candidate): candidate is CaptureCandidate => !!candidate && !existingCandidateIds.has(candidate.id));
   const existingEvidenceIds = new Set(readEvidenceRecords(root).map((record) => record.id));
@@ -479,7 +510,7 @@ export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceB
     dry_run: dryRun,
     planned: { records_to_add: recordsToAdd.length, records_skipped_existing: recordsSkipped, candidates_to_add: candidatesToAdd.length, evidence_to_add: evidenceToAdd.length, inquiries_to_add: inquiriesToAdd.length, reinforcement_to_add: reinforcementToAdd.length, tombstones_to_add: tombstonesToAdd.length, sessions_to_add: sessionsToAdd.length, events_to_add: eventsToAdd.length },
     applied: { records_added: 0, records_skipped_existing: recordsSkipped, candidates_added: 0, evidence_added: 0, inquiries_added: 0, reinforcement_added: 0, tombstones_added: 0, sessions_added: 0, events_added: 0 },
-    warnings: [],
+    warnings: incomingRecords.warnings,
   };
   if (bundle.redaction?.enabled && !options.redactedAware) result.warnings.push("Bundle is redacted; import remains review-only unless redactedAware is set.");
   if (dryRun) return result;
