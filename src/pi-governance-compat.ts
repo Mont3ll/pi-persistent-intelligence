@@ -96,7 +96,8 @@ function importedSessionFromEvent(event: PortablePeerEvent): PiGovernanceSession
     || typeof session.text !== "string"
     || !["daily_log", "session_entry"].includes(String(session.source_kind))
   ) return null;
-  return session as unknown as PiGovernanceSessionEntry;
+  const typed = session as unknown as PiGovernanceSessionEntry;
+  return event.id === importedSessionEvent(typed).id ? typed : null;
 }
 
 export interface PiGovernanceRedactionMetadata {
@@ -232,8 +233,14 @@ function evidenceIds(record: MemoryRecord): string[] {
 }
 
 function redactEvidence(record: EvidenceRecord, metadata: PiGovernanceRedactionMetadata): Record<string, unknown> {
-  metadata.fields_checked.push("evidence.source_summary", "evidence.source_excerpt");
+  metadata.fields_checked.push("evidence.source_summary", "evidence.source_excerpt", "evidence.source_ref");
   const redacted = redactSecretsInObject(record) as Record<string, unknown>;
+  redacted.source_summary = "redacted";
+  metadata.fields_redacted.push("evidence.source_summary");
+  if ("source_ref" in redacted) {
+    redacted.source_ref = "redacted:evidence";
+    metadata.fields_redacted.push("evidence.source_ref");
+  }
   if ("source_excerpt" in redacted) {
     delete redacted.source_excerpt;
     metadata.fields_redacted.push("evidence.source_excerpt");
@@ -369,7 +376,7 @@ export function exportToPiGovernanceBundle(root: string, options: PiGovernanceEx
   }
 
   const patches = selection.candidates.map((candidate): PiGovernancePatch => ({
-    id: candidate.id,
+    id: candidate.source.type === "pi-governance" ? candidate.source.ref : candidate.id,
     status: mapCandidateStatus(candidate.status),
     operation: "propose_record",
     claim: candidate.text,
@@ -386,11 +393,47 @@ export function exportToPiGovernanceBundle(root: string, options: PiGovernanceEx
     if (record.notes !== "capture_evidence_v1") return { ...record };
     return { ...record, source_session_id: undefined, source_ref: `capture-evidence:${record.id}` };
   });
+  const inquiries = selection.inquiries.map((item) => ({ ...item }));
+  const reinforcement = selection.reinforcement.map((item) => ({ ...item }));
+  const tombstones = selection.tombstones.map((item) => ({ ...item })) as Array<DeletionTombstone & Record<string, unknown>>;
   const events = options.redacted ? [] : selection.events;
   const warnings = [...selection.warnings];
   if (options.redacted) {
     redaction.notes.push("Redacted export is best-effort and should be user-reviewed before sharing.");
-    redaction.fields_checked.push("events");
+    redaction.fields_checked.push(
+      "records.evidence", "patches.claim", "patches.evidence", "inquiries.question", "inquiries.context",
+      "reinforcement.notes", "tombstones.content", "tombstones.content_hash", "events",
+    );
+    for (const record of records) {
+      for (const item of record.evidence ?? []) {
+        item.uri = "redacted:evidence";
+        if (item.note) item.note = "redacted";
+      }
+    }
+    if (records.some((record) => (record.evidence?.length ?? 0) > 0)) redaction.fields_redacted.push("records.evidence");
+    for (const patch of patches) {
+      if (patch.claim) patch.claim = "redacted";
+      for (const item of patch.proposed_record?.evidence ?? []) {
+        item.uri = "redacted:evidence";
+        if (item.note) item.note = "redacted";
+      }
+      if (patch.proposed_record) patch.proposed_record.claim = "redacted";
+    }
+    if (patches.length > 0) redaction.fields_redacted.push("patches.claim", "patches.evidence");
+    for (const inquiry of inquiries) {
+      inquiry.question = "redacted";
+      inquiry.context = "redacted";
+    }
+    if (inquiries.length > 0) redaction.fields_redacted.push("inquiries.question", "inquiries.context");
+    for (const item of reinforcement) {
+      if (item.notes) item.notes = "redacted";
+    }
+    if (reinforcement.some((item) => !!item.notes)) redaction.fields_redacted.push("reinforcement.notes");
+    for (const tombstone of tombstones) {
+      delete tombstone.content;
+      delete tombstone.content_hash;
+    }
+    if (tombstones.length > 0) redaction.fields_redacted.push("tombstones.content", "tombstones.content_hash");
     if (selection.events.length > 0) {
       redaction.fields_redacted.push("events.omitted");
       redaction.notes.push(`${selection.events.length} opaque peer event(s) omitted because their payload schema is not governed by this runtime.`);
@@ -410,11 +453,11 @@ export function exportToPiGovernanceBundle(root: string, options: PiGovernanceEx
     records,
     patches,
     evidence,
-    inquiries: selection.inquiries,
+    inquiries,
     sessions: selection.sessions,
-    reinforcement: selection.reinforcement,
+    reinforcement,
     events,
-    tombstones: selection.tombstones,
+    tombstones,
     redaction,
     warnings,
   };
@@ -457,7 +500,7 @@ function recordFromPi(record: PiGovernanceRecord, fallback: PiGovernanceImportOp
 function candidateFromPatch(patch: PiGovernancePatch, fallback: PiGovernanceImportOptions): CaptureCandidate | null {
   const proposed = patch.proposed_record ?? undefined;
   return {
-    id: patch.candidate_id ?? patch.id,
+    id: patch.id,
     profile_id: proposed?.profile_id ?? fallback.profile_id,
     created_at: normalizeTimestamp(patch.created_at),
     source: { type: "pi-governance", ref: patch.id },
@@ -541,7 +584,9 @@ function normalizeImportedEvidence(value: Record<string, unknown>, options: PiGo
     && polarity && EVIDENCE_POLARITIES.has(polarity)
     && (!durability || DURABILITY_SIGNALS.has(durability))
     && hasOnlyStrings(value.related_memory_ids)
-  ) return value as unknown as EvidenceRecord;
+    && (value.tags === undefined || hasOnlyStrings(value.tags))
+    && (value.redaction_status === undefined || ["none", "redacted", "deleted"].includes(String(value.redaction_status)))
+  ) return { ...value, created_at: createdAt } as unknown as EvidenceRecord;
 
   return {
     id,
@@ -631,23 +676,41 @@ function canonicalPortableValue(value: unknown): unknown {
     .map(([key, child]) => [key, canonicalPortableValue(child)]));
 }
 
+const RUST_EVIDENCE_KINDS = new Set(["conversation", "file", "url", "test", "commit", "user_correction", "human_review"]);
+const RUST_EVIDENCE_TRUST_CLASSES = new Set([
+  "direct_user_instruction", "user_correction", "agent_inference", "repository_text", "generated_content",
+  "third_party_documentation", "codebase_analysis", "human_review", "unknown",
+]);
+const RUST_EVIDENCE_DURABILITY = new Set(["temporary", "task", "project", "long_term", "unknown"]);
+const RUST_EVIDENCE_SOURCE_KINDS = new Set([
+  "manual_cli", "manual_mcp", "session_text", "transcript_file", "stdin", "agent_observation",
+  "codebase_analysis", "imported_bundle", "unknown",
+]);
+
+function normalizedRustEnum(value: string | undefined, allowed: Set<string>, fallback: string): string {
+  return value && allowed.has(value) ? value : fallback;
+}
+
 function canonicalIncomingRecord(record: PiGovernanceRecord): unknown {
   const raw = record as unknown as Record<string, unknown>;
   return canonicalPortableValue({
     schema_version: typeof raw.schema_version === "number" ? raw.schema_version : 1,
     namespace: record.namespace ?? "default",
     id: record.id,
+    profile_id: record.profile_id ?? null,
+    project: record.project ?? null,
     class: record.class ?? "workflow",
     claim: record.claim,
     evidence: (record.evidence ?? []).map((item) => ({
       schema_version: item.schema_version ?? 1,
-      kind: item.kind ?? "conversation",
+      kind: normalizedRustEnum(item.kind, RUST_EVIDENCE_KINDS, "conversation"),
       uri: item.uri ?? "imported:portable-evidence",
       note: item.note ?? null,
-      trust_class: item.trust_class ?? "unknown",
-      durability: item.durability ?? "unknown",
-      source_kind: item.source_kind ?? "unknown",
+      trust_class: normalizedRustEnum(item.trust_class, RUST_EVIDENCE_TRUST_CLASSES, "unknown"),
+      durability: normalizedRustEnum(item.durability, RUST_EVIDENCE_DURABILITY, "unknown"),
+      source_kind: normalizedRustEnum(item.source_kind, RUST_EVIDENCE_SOURCE_KINDS, "unknown"),
     })),
+    evidence_ids: record.evidence_ids ?? [],
     confidence: record.confidence,
     status: record.status === "deleted" ? "tombstoned" : record.status,
     layer: record.layer,
@@ -659,6 +722,8 @@ function canonicalIncomingRecord(record: PiGovernanceRecord): unknown {
     scope: record.scope ?? { level: "global", key: null },
     tags: record.tags ?? [],
     supersedes: record.supersedes ?? [],
+    superseded_by: record.superseded_by ?? [],
+    verification: record.verification ?? null,
     created_at: normalizeTimestamp(record.created_at),
     updated_at: normalizeTimestamp(record.updated_at),
   });
@@ -695,6 +760,33 @@ function selectIncomingRecords(
   return { records, warnings };
 }
 
+function selectIncomingArtifacts<T extends { id: string }>(
+  source: T[],
+  existingIds: Set<string>,
+  label: string,
+): { items: T[]; warnings: string[] } {
+  const groups = new Map<string, T[]>();
+  for (const item of source) {
+    if (!item.id) continue;
+    const group = groups.get(item.id) ?? [];
+    group.push(item);
+    groups.set(item.id, group);
+  }
+  const items: T[] = [];
+  const warnings: string[] = [];
+  for (const [id, group] of groups) {
+    if (existingIds.has(id)) continue;
+    const forms = new Set(group.map((item) => JSON.stringify(canonicalPortableValue(item))));
+    if (forms.size > 1) {
+      warnings.push(`Quarantined ${group.length} divergent incoming ${label} rows for id ${id}.`);
+      continue;
+    }
+    if (group.length > 1) warnings.push(`Collapsed ${group.length} equivalent incoming ${label} rows for id ${id}.`);
+    items.push(group[0]);
+  }
+  return { items, warnings };
+}
+
 function createImportBackup(root: string): string {
   const paths = ensureMemoryDirs(root);
   const backup = join(root, "backups", `pi-governance-import-${Date.now()}`);
@@ -712,7 +804,8 @@ export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceB
   const dryRun = options.dryRun ?? true;
   const paths = ensureMemoryDirs(root);
   const existingIds = new Set(loadAllRecords(root).map((record) => record.id));
-  const existingCandidateIds = new Set(listCandidates(root).map((candidate) => candidate.id));
+  const existingCandidates = listCandidates(root);
+  const existingPatchIds = new Set(existingCandidates.map((candidate) => candidate.source.type === "pi-governance" ? candidate.source.ref : candidate.id));
   const sourceRecords = bundle.records ?? [];
   const sourcePatches = bundle.patches ?? [];
   const artifactWarnings: string[] = [];
@@ -737,19 +830,29 @@ export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceB
     else if (typeof raw.id === "string") artifactWarnings.push(`Skipped peer reinforcement ${raw.id} because it is invalid or has no valid timestamp.`);
   }
   const sourceTombstones = bundle.tombstones ?? [];
-  const sourceEvents = bundle.events ?? [];
+  const sourceEvents: PortablePeerEvent[] = [];
+  for (const event of bundle.events ?? []) {
+    if (event.kind === IMPORTED_SESSION_EVENT_KIND) {
+      artifactWarnings.push(`Rejected peer event ${event.id} because it uses the reserved imported-session marker.`);
+    } else {
+      sourceEvents.push(event);
+    }
+  }
   const incomingRecords = selectIncomingRecords(sourceRecords, existingIds, options);
   const recordsToAdd = incomingRecords.records;
   const recordsSkipped = sourceRecords.filter((record) => existingIds.has(record.id)).length;
-  const candidatesToAdd = sourcePatches.map((patch) => candidateFromPatch(patch, options)).filter((candidate): candidate is CaptureCandidate => !!candidate && !existingCandidateIds.has(candidate.id));
-  const existingEvidenceIds = new Set(readEvidenceRecords(root).map((record) => record.id));
-  const evidenceToAdd = sourceEvidence.filter((record) => !existingEvidenceIds.has(record.id));
-  const existingInquiryIds = new Set(readInquiryRecords(root).map((record) => record.id));
-  const inquiriesToAdd = sourceInquiries.filter((record) => !existingInquiryIds.has(record.id));
-  const existingReinforcementIds = new Set(readReinforcementEvents(root).map((event) => event.id));
-  const reinforcementToAdd = sourceReinforcement.filter((event) => !existingReinforcementIds.has(event.id));
-  const existingTombstones = new Set(readDeletionTombstones(root).map((tombstone) => tombstone.deleted_record_id));
-  const tombstonesToAdd = sourceTombstones.filter((tombstone) => !existingTombstones.has(tombstone.deleted_record_id));
+  const selectedPatches = selectIncomingArtifacts(sourcePatches, existingPatchIds, "patch");
+  const candidatesToAdd = selectedPatches.items.map((patch) => candidateFromPatch(patch, options)).filter((candidate): candidate is CaptureCandidate => !!candidate);
+  const selectedEvidence = selectIncomingArtifacts(sourceEvidence, new Set(readEvidenceRecords(root).map((record) => record.id)), "evidence");
+  const evidenceToAdd = selectedEvidence.items;
+  const selectedInquiries = selectIncomingArtifacts(sourceInquiries, new Set(readInquiryRecords(root).map((record) => record.id)), "inquiry");
+  const inquiriesToAdd = selectedInquiries.items;
+  const selectedReinforcement = selectIncomingArtifacts(sourceReinforcement, new Set(readReinforcementEvents(root).map((event) => event.id)), "reinforcement");
+  const reinforcementToAdd = selectedReinforcement.items;
+  const existingTombstones = readDeletionTombstones(root);
+  const selectedTombstones = selectIncomingArtifacts(sourceTombstones, new Set(existingTombstones.map((item) => item.id)), "tombstone");
+  const existingDeletedRecordIds = new Set(existingTombstones.map((item) => item.deleted_record_id));
+  const tombstonesToAdd = selectedTombstones.items.filter((item) => !existingDeletedRecordIds.has(item.deleted_record_id));
   const existingDailySessions = new Set(readdirSync(paths.daily).filter((name) => name.endsWith(".md")).flatMap((name) => readFileSync(join(paths.daily, name), "utf-8").split(/\n{2,}/).map((text) => `${basename(name, ".md")}:${text.trim()}`).filter((key) => !key.endsWith(":"))));
   const existingPortableSessionIds = new Set(readPortableEvents(root)
     .map(importedSessionFromEvent)
@@ -765,9 +868,16 @@ export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceB
     incomingSessionIds.add(stableId);
     return true;
   });
-  const existingEventIds = new Set(readPortableEvents(root).map((event) => event.id));
-  const incomingEventIds = new Set<string>();
-  const eventsToAdd = sourceEvents.filter((event) => !existingEventIds.has(event.id) && !incomingEventIds.has(event.id) && !!incomingEventIds.add(event.id));
+  const selectedEvents = selectIncomingArtifacts(sourceEvents, new Set(readPortableEvents(root).map((event) => event.id)), "event");
+  const eventsToAdd = selectedEvents.items;
+  artifactWarnings.push(
+    ...selectedPatches.warnings,
+    ...selectedEvidence.warnings,
+    ...selectedInquiries.warnings,
+    ...selectedReinforcement.warnings,
+    ...selectedTombstones.warnings,
+    ...selectedEvents.warnings,
+  );
 
   const result: PiGovernanceImportResult = {
     dry_run: dryRun,
