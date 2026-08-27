@@ -1,6 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { appendDailyLog } from "./daily";
 import { appendCandidate, listCandidates } from "./inbox";
 import { appendDeletionTombstone, readDeletionTombstones } from "./tombstones";
 import { appendEvidenceRecord, readEvidenceRecords } from "./evidence";
@@ -69,6 +68,35 @@ export interface PiGovernanceSessionEntry {
   text: string;
   created_at?: string;
   source_kind: "daily_log" | "session_entry";
+}
+
+const IMPORTED_SESSION_EVENT_KIND = "pi_governance_session_v1";
+
+interface ImportedSessionEvent extends PortablePeerEvent {
+  id: string;
+  kind: typeof IMPORTED_SESSION_EVENT_KIND;
+  session: PiGovernanceSessionEntry;
+}
+
+function importedSessionEvent(session: PiGovernanceSessionEntry): ImportedSessionEvent {
+  return {
+    id: `pi-governance-session:${session.namespace}:${session.id}`,
+    kind: IMPORTED_SESSION_EVENT_KIND,
+    session,
+  };
+}
+
+function importedSessionFromEvent(event: PortablePeerEvent): PiGovernanceSessionEntry | null {
+  if (event.kind !== IMPORTED_SESSION_EVENT_KIND || !event.session || typeof event.session !== "object") return null;
+  const session = event.session as Record<string, unknown>;
+  if (
+    typeof session.id !== "string"
+    || typeof session.namespace !== "string"
+    || session.layer !== "l3_session"
+    || typeof session.text !== "string"
+    || !["daily_log", "session_entry"].includes(String(session.source_kind))
+  ) return null;
+  return session as unknown as PiGovernanceSessionEntry;
 }
 
 export interface PiGovernanceRedactionMetadata {
@@ -260,7 +288,17 @@ function selectPortableArtifacts(root: string, options: PiGovernanceExportOption
   const records = loadAllRecords(root).filter((record) => recordMatchesFilters(record, options));
   const selectedIds = new Set(records.map((record) => record.id));
   const filtered = !!(options.profile_id || options.project);
-  const allSessions = readDailySessions(root, options);
+  const portableEvents = readPortableEvents(root);
+  const importedSessions: PiGovernanceSessionEntry[] = [];
+  const genericEvents: PortablePeerEvent[] = [];
+  for (const event of portableEvents) {
+    const session = importedSessionFromEvent(event);
+    if (session) importedSessions.push(session);
+    else genericEvents.push(event);
+  }
+  const allSessions = options.redacted && !options.includePrivateSessions
+    ? []
+    : [...readDailySessions(root, options), ...importedSessions];
   const sessions = filtered
     ? allSessions.filter((session) => explicitlyMatchesFilters(session, options))
     : allSessions;
@@ -287,7 +325,7 @@ function selectPortableArtifacts(root: string, options: PiGovernanceExportOption
     tombstones: readDeletionTombstones(root).filter((item) => !filtered
       || selectedIds.has(item.deleted_record_id)
       || explicitlyMatchesFilters(item, options)),
-    events: readPortableEvents(root).filter((item) => !filtered
+    events: genericEvents.filter((item) => !filtered
       || (typeof item.object_id === "string" && selectedIds.has(item.object_id))
       || explicitlyMatchesFilters(item as { profile_id?: string; project?: string; scope_level?: string; scope_ref?: string }, options)),
     warnings,
@@ -433,6 +471,7 @@ function candidateFromPatch(patch: PiGovernancePatch, fallback: PiGovernanceImpo
     primary_trust_class: "agent_inference",
     durability_signal: "project",
     verification_status: "review_required",
+    matched_memory_ids: patch.target_id ? [patch.target_id] : [],
   };
 }
 
@@ -443,6 +482,37 @@ function stringField(value: Record<string, unknown>, key: string): string | unde
 function stringArrayField(value: Record<string, unknown>, key: string): string[] {
   return Array.isArray(value[key]) ? (value[key] as unknown[]).filter((item): item is string => typeof item === "string") : [];
 }
+
+function normalizedPortableTimestamp(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    if (!value) continue;
+    try {
+      return normalizeTimestamp(value);
+    } catch {
+      // Continue to the bundle-level fallback.
+    }
+  }
+  return undefined;
+}
+
+function hasOnlyStrings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+const EVIDENCE_SOURCE_KINDS = new Set<EvidenceRecord["source_kind"]>([
+  "conversation", "tool_result", "file", "patch", "test_result", "generated_content", "external_document", "codebase_analysis",
+]);
+const EVIDENCE_TRUST_CLASSES = new Set<EvidenceRecord["trust_class"]>([
+  "direct_user_instruction", "user_correction", "repeated_user_preference", "accepted_code_review_outcome",
+  "existing_project_convention", "passing_tool_or_test_outcome", "agent_inference", "single_session_observation",
+  "repository_text", "generated_content", "third_party_documentation", "unknown",
+]);
+const EVIDENCE_POLARITIES = new Set<EvidenceRecord["polarity"]>(["supports", "contradicts", "qualifies"]);
+const DURABILITY_SIGNALS = new Set<NonNullable<EvidenceRecord["durability_signal"]>>([
+  "temporary", "session", "task", "project", "repository", "user_global", "long_term", "unknown",
+]);
+const INQUIRY_STATUSES = new Set<InquiryRecord["status"]>(["open", "answered", "withdrawn", "stale"]);
+const INQUIRY_PRIORITIES = new Set<InquiryRecord["priority"]>(["low", "medium", "high"]);
 
 function relatedMemoryIds(value: Record<string, unknown>): string[] {
   const ids = [
@@ -456,22 +526,30 @@ function relatedMemoryIds(value: Record<string, unknown>): string[] {
 function normalizeImportedEvidence(value: Record<string, unknown>, options: PiGovernanceImportOptions, fallbackTime?: string): EvidenceRecord | null {
   const id = stringField(value, "id");
   if (!id) return null;
+  const createdAt = normalizedPortableTimestamp(stringField(value, "created_at"), fallbackTime);
+  if (!createdAt) return null;
+  const sourceKind = stringField(value, "source_kind") as EvidenceRecord["source_kind"] | undefined;
+  const trustClass = stringField(value, "trust_class") as EvidenceRecord["trust_class"] | undefined;
+  const polarity = stringField(value, "polarity") as EvidenceRecord["polarity"] | undefined;
+  const durability = stringField(value, "durability_signal") as EvidenceRecord["durability_signal"] | undefined;
   if (
     stringField(value, "resource_id")
     && stringField(value, "profile_id")
-    && stringField(value, "source_kind")
-    && stringField(value, "trust_class")
-    && stringField(value, "polarity")
-    && Array.isArray(value.related_memory_ids)
+    && stringField(value, "source_summary")
+    && sourceKind && EVIDENCE_SOURCE_KINDS.has(sourceKind)
+    && trustClass && EVIDENCE_TRUST_CLASSES.has(trustClass)
+    && polarity && EVIDENCE_POLARITIES.has(polarity)
+    && (!durability || DURABILITY_SIGNALS.has(durability))
+    && hasOnlyStrings(value.related_memory_ids)
   ) return value as unknown as EvidenceRecord;
 
   return {
     id,
     resource_id: stringField(value, "resource_id") ?? "pi-governance-import",
     profile_id: stringField(value, "profile_id") ?? options.profile_id ?? "default",
-    created_at: normalizeTimestamp(stringField(value, "created_at") ?? fallbackTime),
+    created_at: createdAt,
     source_kind: "external_document",
-    source_ref: stringField(value, "source_ref") ?? `pi-governance:${id}`,
+    source_ref: `pi-governance:${id}`,
     source_summary: stringField(value, "source_summary") ?? `Imported peer evidence ${id}.`,
     trust_class: "unknown",
     polarity: "qualifies",
@@ -487,17 +565,24 @@ function normalizeImportedEvidence(value: Record<string, unknown>, options: PiGo
 function normalizeImportedInquiry(value: Record<string, unknown>, options: PiGovernanceImportOptions, fallbackTime?: string): InquiryRecord | null {
   const id = stringField(value, "id");
   if (!id) return null;
+  const firstSeen = normalizedPortableTimestamp(stringField(value, "first_seen"));
+  const lastSeen = normalizedPortableTimestamp(stringField(value, "last_seen"));
+  const status = stringField(value, "status") as InquiryRecord["status"] | undefined;
+  const priority = stringField(value, "priority") as InquiryRecord["priority"] | undefined;
   if (
-    stringField(value, "context")
-    && Array.isArray(value.tags)
-    && Array.isArray(value.sessions_touched)
-    && stringField(value, "first_seen")
-    && stringField(value, "last_seen")
-    && stringField(value, "priority")
+    stringField(value, "question")
+    && stringField(value, "context")
+    && hasOnlyStrings(value.tags)
+    && hasOnlyStrings(value.sessions_touched)
+    && firstSeen && lastSeen
+    && status && INQUIRY_STATUSES.has(status)
+    && priority && INQUIRY_PRIORITIES.has(priority)
+    && (value.related_memory_ids === undefined || hasOnlyStrings(value.related_memory_ids))
+    && (value.related_evidence_ids === undefined || hasOnlyStrings(value.related_evidence_ids))
   ) return value as unknown as InquiryRecord;
 
-  const timestamp = normalizeTimestamp(stringField(value, "created_at") ?? fallbackTime);
-  const status = stringField(value, "status");
+  const timestamp = normalizedPortableTimestamp(stringField(value, "created_at"), fallbackTime);
+  if (!timestamp) return null;
   return {
     id,
     resource_id: stringField(value, "resource_id"),
@@ -512,7 +597,7 @@ function normalizeImportedInquiry(value: Record<string, unknown>, options: PiGov
     sessions_touched: stringArrayField(value, "sessions_touched"),
     first_seen: timestamp,
     last_seen: timestamp,
-    status: ["open", "answered", "withdrawn", "stale"].includes(status ?? "") ? status as InquiryRecord["status"] : "open",
+    status: status && INQUIRY_STATUSES.has(status) ? status : "open",
     priority: "low",
     answer_memory_id: stringField(value, "answer_memory_id"),
   };
@@ -522,18 +607,61 @@ function normalizeImportedReinforcement(value: Record<string, unknown>, options:
   const id = stringField(value, "id");
   const memoryId = stringField(value, "memory_id");
   const outcome = stringField(value, "outcome") ?? stringField(value, "signal");
-  if (!id || !memoryId || !["explicit_reinforcement", "implicit_success", "neutral_exposure", "explicit_correction"].includes(outcome ?? "")) return null;
+  const timestamp = normalizedPortableTimestamp(stringField(value, "timestamp"), stringField(value, "created_at"), fallbackTime);
+  if (!id || !memoryId || !timestamp || !["explicit_reinforcement", "implicit_success", "neutral_exposure", "explicit_correction"].includes(outcome ?? "")) return null;
   return {
     id,
     resource_id: stringField(value, "resource_id"),
     profile_id: stringField(value, "profile_id") ?? options.profile_id,
     thread_id: stringField(value, "thread_id"),
     memory_id: memoryId,
-    timestamp: normalizeTimestamp(stringField(value, "timestamp") ?? stringField(value, "created_at") ?? fallbackTime),
+    timestamp,
     outcome: outcome as ReinforcementEvent["outcome"],
     evidence_id: stringField(value, "evidence_id"),
     notes: stringField(value, "notes"),
   };
+}
+
+function canonicalPortableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalPortableValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([, child]) => child !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, child]) => [key, canonicalPortableValue(child)]));
+}
+
+function canonicalIncomingRecord(record: PiGovernanceRecord): unknown {
+  const raw = record as unknown as Record<string, unknown>;
+  return canonicalPortableValue({
+    schema_version: typeof raw.schema_version === "number" ? raw.schema_version : 1,
+    namespace: record.namespace ?? "default",
+    id: record.id,
+    class: record.class ?? "workflow",
+    claim: record.claim,
+    evidence: (record.evidence ?? []).map((item) => ({
+      schema_version: item.schema_version ?? 1,
+      kind: item.kind ?? "conversation",
+      uri: item.uri ?? "imported:portable-evidence",
+      note: item.note ?? null,
+      trust_class: item.trust_class ?? "unknown",
+      durability: item.durability ?? "unknown",
+      source_kind: item.source_kind ?? "unknown",
+    })),
+    confidence: record.confidence,
+    status: record.status === "deleted" ? "tombstoned" : record.status,
+    layer: record.layer,
+    memory_kind: record.memory_kind ?? null,
+    rule_type: record.rule_type ?? null,
+    trust_class: record.trust_class ?? "unknown",
+    durability: record.durability ?? "unknown",
+    source_kind: record.source_kind ?? "unknown",
+    scope: record.scope ?? { level: "global", key: null },
+    tags: record.tags ?? [],
+    supersedes: record.supersedes ?? [],
+    created_at: normalizeTimestamp(record.created_at),
+    updated_at: normalizeTimestamp(record.updated_at),
+  });
 }
 
 function selectIncomingRecords(
@@ -552,7 +680,8 @@ function selectIncomingRecords(
   const warnings: string[] = [];
   for (const [id, group] of groups) {
     if (existingIds.has(id)) continue;
-    const forms = new Set(group.map((record) => JSON.stringify(record)));
+    const materializedGroup = group.map((record) => recordFromPi(record, options));
+    const forms = new Set(group.map((record) => JSON.stringify(canonicalIncomingRecord(record))));
     if (forms.size > 1) {
       warnings.push(`Quarantined ${group.length} divergent incoming rows for record ${id}.`);
       continue;
@@ -560,7 +689,7 @@ function selectIncomingRecords(
     if (group.length > 1) {
       warnings.push(`Collapsed ${group.length} equivalent incoming rows for record ${id}.`);
     }
-    const materialized = recordFromPi(group[0], options);
+    const materialized = materializedGroup[0];
     if (materialized && materialized.status !== "deleted") records.push(materialized);
   }
   return { records, warnings };
@@ -577,21 +706,36 @@ function createImportBackup(root: string): string {
 }
 
 export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceBundle, options: PiGovernanceImportOptions = {}): PiGovernanceImportResult {
+  if (!!bundle.redacted !== !!bundle.redaction?.enabled) {
+    throw new Error("Inconsistent bundle redaction metadata: redacted and redaction.enabled must agree.");
+  }
   const dryRun = options.dryRun ?? true;
   const paths = ensureMemoryDirs(root);
   const existingIds = new Set(loadAllRecords(root).map((record) => record.id));
   const existingCandidateIds = new Set(listCandidates(root).map((candidate) => candidate.id));
   const sourceRecords = bundle.records ?? [];
   const sourcePatches = bundle.patches ?? [];
-  const sourceEvidence = (bundle.evidence ?? [])
-    .map((item) => normalizeImportedEvidence(item, options, bundle.exported_at))
-    .filter((item): item is EvidenceRecord => !!item);
-  const sourceInquiries = (bundle.inquiries ?? [])
-    .map((item) => normalizeImportedInquiry(item as unknown as Record<string, unknown>, options, bundle.exported_at))
-    .filter((item): item is InquiryRecord => !!item);
-  const sourceReinforcement = (bundle.reinforcement ?? [])
-    .map((item) => normalizeImportedReinforcement(item as unknown as Record<string, unknown>, options, bundle.exported_at))
-    .filter((item): item is ReinforcementEvent => !!item);
+  const artifactWarnings: string[] = [];
+  const sourceEvidence: EvidenceRecord[] = [];
+  for (const item of bundle.evidence ?? []) {
+    const normalized = normalizeImportedEvidence(item, options, bundle.exported_at);
+    if (normalized) sourceEvidence.push(normalized);
+    else if (typeof item.id === "string") artifactWarnings.push(`Skipped peer evidence ${item.id} because it has no valid timestamp.`);
+  }
+  const sourceInquiries: InquiryRecord[] = [];
+  for (const item of bundle.inquiries ?? []) {
+    const raw = item as unknown as Record<string, unknown>;
+    const normalized = normalizeImportedInquiry(raw, options, bundle.exported_at);
+    if (normalized) sourceInquiries.push(normalized);
+    else if (typeof raw.id === "string") artifactWarnings.push(`Skipped peer inquiry ${raw.id} because it has no valid timestamp.`);
+  }
+  const sourceReinforcement: ReinforcementEvent[] = [];
+  for (const item of bundle.reinforcement ?? []) {
+    const raw = item as unknown as Record<string, unknown>;
+    const normalized = normalizeImportedReinforcement(raw, options, bundle.exported_at);
+    if (normalized) sourceReinforcement.push(normalized);
+    else if (typeof raw.id === "string") artifactWarnings.push(`Skipped peer reinforcement ${raw.id} because it is invalid or has no valid timestamp.`);
+  }
   const sourceTombstones = bundle.tombstones ?? [];
   const sourceEvents = bundle.events ?? [];
   const incomingRecords = selectIncomingRecords(sourceRecords, existingIds, options);
@@ -606,8 +750,21 @@ export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceB
   const reinforcementToAdd = sourceReinforcement.filter((event) => !existingReinforcementIds.has(event.id));
   const existingTombstones = new Set(readDeletionTombstones(root).map((tombstone) => tombstone.deleted_record_id));
   const tombstonesToAdd = sourceTombstones.filter((tombstone) => !existingTombstones.has(tombstone.deleted_record_id));
-  const existingSessions = new Set(readdirSync(paths.daily).filter((name) => name.endsWith(".md")).flatMap((name) => readFileSync(join(paths.daily, name), "utf-8").split(/\n{2,}/).map((text) => `${basename(name, ".md")}:${text.trim()}`).filter((key) => !key.endsWith(":"))));
-  const sessionsToAdd = (bundle.sessions ?? []).filter((session) => !existingSessions.has(`${normalizeTimestamp(session.created_at).slice(0, 10)}:${session.text.trim()}`));
+  const existingDailySessions = new Set(readdirSync(paths.daily).filter((name) => name.endsWith(".md")).flatMap((name) => readFileSync(join(paths.daily, name), "utf-8").split(/\n{2,}/).map((text) => `${basename(name, ".md")}:${text.trim()}`).filter((key) => !key.endsWith(":"))));
+  const existingPortableSessionIds = new Set(readPortableEvents(root)
+    .map(importedSessionFromEvent)
+    .filter((session): session is PiGovernanceSessionEntry => !!session)
+    .map((session) => `${session.namespace}:${session.id}`));
+  const incomingSessionIds = new Set<string>();
+  const sessionsToAdd = (bundle.sessions ?? []).filter((session) => {
+    if (!session.id || !session.namespace || !session.text.trim()) return false;
+    const stableId = `${session.namespace}:${session.id}`;
+    if (existingPortableSessionIds.has(stableId) || incomingSessionIds.has(stableId)) return false;
+    const date = normalizedPortableTimestamp(session.created_at)?.slice(0, 10);
+    if (date && existingDailySessions.has(`${date}:${session.text.trim()}`)) return false;
+    incomingSessionIds.add(stableId);
+    return true;
+  });
   const existingEventIds = new Set(readPortableEvents(root).map((event) => event.id));
   const incomingEventIds = new Set<string>();
   const eventsToAdd = sourceEvents.filter((event) => !existingEventIds.has(event.id) && !incomingEventIds.has(event.id) && !!incomingEventIds.add(event.id));
@@ -616,7 +773,7 @@ export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceB
     dry_run: dryRun,
     planned: { records_to_add: recordsToAdd.length, records_skipped_existing: recordsSkipped, candidates_to_add: candidatesToAdd.length, evidence_to_add: evidenceToAdd.length, inquiries_to_add: inquiriesToAdd.length, reinforcement_to_add: reinforcementToAdd.length, tombstones_to_add: tombstonesToAdd.length, sessions_to_add: sessionsToAdd.length, events_to_add: eventsToAdd.length },
     applied: { records_added: 0, records_skipped_existing: recordsSkipped, candidates_added: 0, evidence_added: 0, inquiries_added: 0, reinforcement_added: 0, tombstones_added: 0, sessions_added: 0, events_added: 0 },
-    warnings: incomingRecords.warnings,
+    warnings: [...incomingRecords.warnings, ...artifactWarnings],
   };
   if (bundle.redaction?.enabled && !options.redactedAware) result.warnings.push("Bundle is redacted; import remains review-only unless redactedAware is set.");
   if (dryRun) return result;
@@ -629,7 +786,7 @@ export function importFromPiGovernanceBundle(root: string, bundle: PiGovernanceB
   for (const inquiry of inquiriesToAdd) { appendInquiryRecord(root, inquiry); result.applied.inquiries_added++; }
   for (const event of reinforcementToAdd) { appendReinforcementEvent(root, event); result.applied.reinforcement_added++; }
   for (const tombstone of tombstonesToAdd) { appendDeletionTombstone(root, tombstone); result.applied.tombstones_added++; }
-  for (const session of sessionsToAdd) { appendDailyLog(root, normalizeTimestamp(session.created_at).slice(0, 10), session.text); result.applied.sessions_added++; }
+  for (const session of sessionsToAdd) { appendPortableEvent(root, importedSessionEvent(session)); result.applied.sessions_added++; }
   for (const event of eventsToAdd) { appendPortableEvent(root, event); result.applied.events_added++; }
   return result;
 }
