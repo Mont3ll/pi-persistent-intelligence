@@ -1,0 +1,49 @@
+{
+  "contractVersion": 1,
+  "format": "pi-governance",
+  "hashAlgorithm": "sha256",
+  "files": {
+    "duplicate-input.json": "ffb021de7589f0c3e11d084379543bc9b4ad136af2dd778bc0ef6ac01e87ecde",
+    "filtered-bundle.json": "bf70aa88dccf4bc80fff6a7600152f9fb40165d585b90160262af1b3f4b975c8",
+    "full-bundle.json": "128ec390dbd2da776b254f9d16d24be6d149a732f5dec1b27dad7ae794d4d251",
+    "reconciliation-expected.json": "cd61ca9fdc33adc320cfabd9450e7803957822eba663ee01cd569bd4e9ea95f6",
+    "redacted-bundle.json": "6b7257f2bec2cf1170b3bef4d51d3221af5dec2b06d704d66ae5b76ba47d7c03"
+  },
+  "expectations": {
+    "fullBundle": {
+      "records": ["rec_match", "rec_divergent", "rec_source_only", "rec_unrelated"],
+      "patches": ["patch_match", "patch_source_only"],
+      "evidence": ["evidence_match", "evidence_source_only"],
+      "inquiries": ["inquiry_match", "inquiry_source_only"],
+      "sessions": ["session_match", "session_unscoped"],
+      "reinforcement": ["reinforcement_match", "reinforcement_source_only"],
+      "events": ["event_match", "event_source_only"],
+      "tombstones": ["tombstone_match", "tombstone_source_only"]
+    },
+    "projectAlphaFromFull": {
+      "records": ["rec_divergent", "rec_match"],
+      "patches": ["patch_match"],
+      "evidence": ["evidence_match"],
+      "inquiries": ["inquiry_match"],
+      "sessions": ["session_match"],
+      "reinforcement": ["reinforcement_match"],
+      "events": ["event_match"],
+      "tombstones": ["tombstone_match"]
+    },
+    "domainScope": {
+      "recordId": "rec_source_only",
+      "key": "healthcare"
+    },
+    "duplicates": {
+      "exactIds": ["rec_exact_duplicate"],
+      "conflictingIds": ["rec_conflicting_duplicate"],
+      "safelyImportedIds": ["rec_exact_duplicate"]
+    },
+    "redactedBundle": {
+      "redacted": true,
+      "records": ["rec_match"],
+      "evidence": ["evidence_redacted"],
+      "omittedSections": ["events", "inquiries", "patches", "reinforcement", "sessions", "tombstones"]
+    }
+  }
+}
