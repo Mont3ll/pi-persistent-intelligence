@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createDiagnosticCommands } from "./src/commands/diagnostics";
 import { createGovernedRepairCommands } from "./src/commands/governed-repairs";
 import { createInteroperabilityCommands } from "./src/commands/interoperability";
+import { createQualityCommands } from "./src/commands/quality";
 import { notifyStructured, parseCommandArgs, wantsPlainOutput } from "./src/commands/output";
 import type { CommandDefinition, CommandUiContext } from "./src/commands/types";
 
@@ -48,7 +49,7 @@ import { actionsFromAgentMessages } from "./src/capture-activity";
 import { processCaptureTurn } from "./src/capture-coordinator";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
-import { backgroundBrowserOptions, candidateBrowserOptions, captureQualityBrowserOptions, evidenceBrowserOptions, inquiryBrowserOptions, memoryQualityBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallEffectivenessBrowserOptions, recallXrayBrowserOptions, relationshipQualityBrowserOptions, storeQualityBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
+import { candidateBrowserOptions, captureQualityBrowserOptions, evidenceBrowserOptions, inquiryBrowserOptions, memoryRecordBrowserOptions, openBrowser } from "./src/tui/browser-adapters";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
@@ -58,18 +59,9 @@ import { appendInquiryRecord, applyInquiryStaleness, createInquiryRecord, planIn
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
 import { appendEvidenceRecord, readEvidenceRecords } from "./src/evidence";
 import { linkEvidenceToCandidate } from "./src/evidence-link";
-import { exportMemoryGraph, renderMemoryGraphSummary, saveMemoryGraphReport } from "./src/memory-graph";
-import { buildMemoryTimeline, renderMemoryTimeline, saveMemoryTimelineReport } from "./src/timeline";
 import { generateProcedureCandidates, renderProcedureCandidateReport, saveProcedureCandidateReport } from "./src/procedure-candidates";
-import { analyzeRecallEffectiveness, renderRecallEffectivenessReport } from "./src/recall-effectiveness";
-import { buildRecallXray, renderRecallXrayReport } from "./src/recall-xray";
-import { enqueueBackgroundAnalysis, listBackgroundAnalysisJobs, runBackgroundAnalysisQueue, type BackgroundAnalysisKind } from "./src/background-analysis";
 import { appendRuntimeEvent } from "./src/runtime-events";
-import { analyzeMemoryQuality, renderMemoryQualityReport } from "./src/memory-quality";
-import { analyzeRelationshipQuality, renderRelationshipQualityReport } from "./src/relationship-quality";
-import { analyzeStoreQuality, renderStoreQualityReport } from "./src/store-quality";
-import { InvocationProfiler, renderInvocationProfileReport } from "./src/profiling";
-import { scoreMemoryWorth } from "./src/memory-worth";
+import { renderInvocationProfileReport } from "./src/profiling";
 import { buildCaptureQualityReport, renderCaptureQualityReport } from "./src/capture-quality";
 import { auditCaptureHistory, renderCaptureAuditReport } from "./src/capture-audit";
 import { applyCaptureBackfill, previewCaptureBackfill, saveCaptureBackfillPreview } from "./src/capture-backfill";
@@ -763,24 +755,8 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   pi.registerCommand("memory-reconcile", interoperabilityCommands.memoryReconcile);
   pi.registerCommand("memory-governance", interoperabilityCommands.memoryGovernance);
 
-  pi.registerCommand("memory-recall-xray", {
-    description: "Browse why memory would be included or excluded for a query (read-only). Usage: /memory-recall-xray <query> [--plain|--json]",
-    handler: async (args, ctx) => {
-      try {
-        const parsed = parseCommandArgs(args);
-        const query = parsed.positional.join(" ") || args.replace(/--(plain|json|yaml|interactive)\b/g, "").trim();
-        const profile = resolveMemoryProfile(root, sessionCwd);
-        const profiler = parsed.flags.profile === true ? new InvocationProfiler("recall_xray") : undefined;
-        const report = buildRecallXray(root, { query, profile_id: profile.profile_id, resource_id: profile.resource_id, working_directory: sessionCwd, project_root: sessionCwd, profiler });
-        const text = [renderRecallXrayReport(report), report.profile ? `\n${renderInvocationProfileReport(report.profile)}` : ""].filter(Boolean).join("\n");
-        rememberCommand("memory-recall-xray", text, `xray: ${report.summary.included_count} included, ${report.summary.excluded_count} excluded`);
-        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, "info");
-        else await openBrowser(ctx, recallXrayBrowserOptions(report), text);
-      } catch (err) {
-        ctx.ui.notify(`Recall x-ray failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-      }
-    },
-  });
+  const qualityCommands = createQualityCommands({ getRoot: () => root, getSessionCwd: () => sessionCwd, nowIso, rememberCommand });
+  pi.registerCommand("memory-recall-xray", qualityCommands.memoryRecallXray);
 
   pi.registerCommand("memory-reinforce", {
     description: "Record explicit positive reinforcement without mutating memory. Usage: /memory-reinforce <memory-id> --note \"User confirmed this remains correct.\" [--json]",
@@ -948,49 +924,9 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("memory-background", {
-    description: "Queue and run inspectable local background memory analysis. Usage: /memory-background enqueue <kind>|run|list",
-    handler: async (args, ctx) => {
-      const parts = args.trim().split(/\s+/).filter(Boolean);
-      const action = parts[0] ?? "list";
-      try {
-        if (action === "enqueue") {
-          const kind = (parts[1] ?? "diagnostics") as BackgroundAnalysisKind;
-          const profile = resolveMemoryProfile(root, sessionCwd);
-          const job = enqueueBackgroundAnalysis(root, { kind, profile_id: profile.profile_id, resource_id: profile.resource_id, input_summary: parts.slice(2).join(" ") || undefined }, nowIso());
-          ctx.ui.notify(`Queued background analysis ${job.id} (${job.kind}).`, "success");
-          return;
-        }
-        if (action === "run") {
-          const jobs = runBackgroundAnalysisQueue(root, { now: nowIso() });
-          ctx.ui.notify(jobs.map((j) => `${j.id} [${j.status}]${j.output_artifact_path ? ` ${j.output_artifact_path}` : ""}${j.error ? ` ${j.error}` : ""}`).join("\n") || "No background jobs.", "info");
-          return;
-        }
-        const jobs = listBackgroundAnalysisJobs(root);
-        const plain = jobs.map((j) => `${j.id} [${j.status}] ${j.kind}`).join("\n") || "No background jobs.";
-        rememberCommand("memory-background", plain, `background: ${jobs.length} jobs`);
-        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, jobs, plain, "info");
-        else await openBrowser(ctx, backgroundBrowserOptions(jobs), plain);
-      } catch (err) {
-        ctx.ui.notify(`Background analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("memory-background", qualityCommands.memoryBackground);
 
-  pi.registerCommand("memory-recall-effectiveness", {
-    description: "Browse report-only analytics for recalled, excluded, never-recalled, and correction-adjacent memories. Usage: /memory-recall-effectiveness [--plain|--json]",
-    handler: async (args, ctx) => {
-      try {
-        const report = analyzeRecallEffectiveness(root, { now: nowIso() });
-        const text = renderRecallEffectivenessReport(report);
-        rememberCommand("memory-recall-effectiveness", text, `recall effectiveness: avg ${report.summary.average_effectiveness}/100, ${report.recommendations.length} recommendations`);
-        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.summary.never_recalled_count || report.summary.corrected_after_recall_count ? "warning" : "success");
-        else await openBrowser(ctx, recallEffectivenessBrowserOptions(report), text);
-      } catch (err) {
-        ctx.ui.notify(`Recall effectiveness analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("memory-recall-effectiveness", qualityCommands.memoryRecallEffectiveness);
 
   pi.registerCommand("memory-capture-backfill", {
     description: "Preview or apply fingerprinted candidate-only historical preference backfill. Usage: /memory-capture-backfill [--since YYYY-MM-DD] [--output FILE] [--apply --fingerprint HASH]",
@@ -1062,97 +998,17 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("memory-store-quality", {
-    description: "Browse report-only aggregate store quality across memory, relationships, governance, inbox, and runtime. Usage: /memory-store-quality [--plain|--json]",
-    handler: async (args, ctx) => {
-      try {
-        const report = analyzeStoreQuality(root, { now: nowIso() });
-        const text = renderStoreQualityReport(report);
-        rememberCommand("memory-store-quality", text, `store quality: ${report.overall_score}/100, ${report.recommendations.length} recommendations`);
-        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.overall_score < 85 ? "warning" : "success");
-        else await openBrowser(ctx, storeQualityBrowserOptions(report), text);
-      } catch (err) {
-        ctx.ui.notify(`Store quality analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("memory-store-quality", qualityCommands.memoryStoreQuality);
 
-  pi.registerCommand("memory-quality", {
-    description: "Browse report-only per-memory quality and lifecycle analysis. Usage: /memory-quality [--plain|--json]",
-    handler: async (args, ctx) => {
-      try {
-        const report = analyzeMemoryQuality(root, { now: nowIso() });
-        const text = renderMemoryQualityReport(report);
-        rememberCommand("memory-quality", text, `memory quality: avg ${report.summary.average_quality}/100, ${report.recommendations.length} recommendations`);
-        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.summary.low_quality_count ? "warning" : "success");
-        else await openBrowser(ctx, memoryQualityBrowserOptions(report), text);
-      } catch (err) {
-        ctx.ui.notify(`Memory quality analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("memory-quality", qualityCommands.memoryQuality);
 
-  pi.registerCommand("memory-relationship-quality", {
-    description: "Browse report-only quality analysis for memory graph relationships. Usage: /memory-relationship-quality [--plain|--json]",
-    handler: async (args, ctx) => {
-      try {
-        const report = analyzeRelationshipQuality(root, { now: nowIso() });
-        const text = renderRelationshipQualityReport(report);
-        rememberCommand("memory-relationship-quality", text, `relationship quality: avg ${report.summary.average_relationship_quality}/100, ${report.recommendations.length} recommendations`);
-        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.summary.weak_edge_count || report.summary.orphan_memory_count ? "warning" : "success");
-        else await openBrowser(ctx, relationshipQualityBrowserOptions(report), text);
-      } catch (err) {
-        ctx.ui.notify(`Relationship quality analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("memory-relationship-quality", qualityCommands.memoryRelationshipQuality);
 
-  pi.registerCommand("memory-worth", {
-    description: "Score whether an observation is worth durable memory capture (read-only). Usage: /memory-worth <observation>",
-    handler: async (args, ctx) => {
-      const decision = scoreMemoryWorth({ observation: args, existingStatements: loadActiveRecords(root).map((r) => r.statement) });
-      ctx.ui.notify(JSON.stringify(decision, null, 2), decision.decision === "reject" ? "warning" : "info");
-    },
-  });
+  pi.registerCommand("memory-worth", qualityCommands.memoryWorth);
 
-  pi.registerCommand("memory-graph", {
-    description: "Export governed memory dependency graph (read-only)",
-    handler: async (args, ctx) => {
-      try {
-        const graph = exportMemoryGraph(root, nowIso());
-        const summary = renderMemoryGraphSummary(graph);
-        ctx.ui.notify(summary, "info");
-        if (args.includes("--save")) {
-          const path = saveMemoryGraphReport(root, graph);
-          ctx.ui.notify(`Memory graph saved: ${path}`, "success");
-        }
-      } catch (err) {
-        ctx.ui.notify(`Memory graph failed: ${err}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("memory-graph", qualityCommands.memoryGraph);
 
-  pi.registerCommand("memory-timeline", {
-    description: "Show memory timeline report. Usage: /memory-timeline [--memory <id>] [--save]",
-    handler: async (args, ctx) => {
-      try {
-        const parts = args.trim().split(/\s+/).filter(Boolean);
-        const memoryIndex = parts.indexOf("--memory");
-        const memoryId = memoryIndex >= 0 ? parts[memoryIndex + 1] : undefined;
-        const report = buildMemoryTimeline(root, { memoryId }, nowIso());
-        const plain = renderMemoryTimeline(report);
-        rememberCommand("memory-timeline", plain, `timeline: ${report.events.length} events`);
-        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, plain, "info");
-        else await openBrowser(ctx, timelineBrowserOptions(report), plain);
-        if (parts.includes("--save")) {
-          const path = saveMemoryTimelineReport(root, report);
-          ctx.ui.notify(`Memory timeline saved: ${path}`, "success");
-        }
-      } catch (err) {
-        ctx.ui.notify(`Memory timeline failed: ${err}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("memory-timeline", qualityCommands.memoryTimeline);
 
   pi.registerCommand("procedure-candidates", {
     description: "Generate review-only procedure candidates from repeated workflow memory",
