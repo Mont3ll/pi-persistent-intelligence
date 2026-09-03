@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { readFileSync, watch as fsWatch, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createBrowserCommands } from "./src/commands/browser";
 import { createCaptureCommands } from "./src/commands/capture";
 import { createDiagnosticCommands } from "./src/commands/diagnostics";
 import { createGovernedRepairCommands } from "./src/commands/governed-repairs";
@@ -51,7 +52,7 @@ import { actionsFromAgentMessages } from "./src/capture-activity";
 import { processCaptureTurn } from "./src/capture-coordinator";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
-import { candidateBrowserOptions, inquiryBrowserOptions, memoryRecordBrowserOptions, openBrowser } from "./src/tui/browser-adapters";
+import { inquiryBrowserOptions, openBrowser } from "./src/tui/browser-adapters";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
@@ -707,24 +708,8 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
   // ─── Commands ────────────────────────────────────────────────────────
 
-  pi.registerCommand("memory-history", {
-    description: "Browse previous PI interactive command outputs without rerunning them",
-    handler: async (args, ctx) => {
-      const plain = commandHistory.map((entry, i) => `${i + 1}. ${entry.created_at} ${entry.command} — ${entry.summary}`).join("\n") || "No PI command history in this session.";
-      if (wantsPlainOutput(args) || !ctx.ui.custom) { notifyStructured(ctx, args, commandHistory, plain, "info"); return; }
-      await openBrowser(ctx, {
-        title: "Command Result History",
-        subtitle: "Session-local result cache. Selecting expands stored output; no command is rerun.",
-        items: commandHistory.map((entry) => ({ id: entry.id, item: entry, status: "info" as const, searchText: `${entry.command} ${entry.summary} ${entry.output}`, details: entry.output.split(/\r?\n/).slice(0, 200) })),
-        pageSize: 20,
-        columns: [
-          { key: "created", label: "Created", width: 20, minWidth: 10, priority: 2, render: (entry) => entry.created_at, sortValue: (entry) => entry.created_at },
-          { key: "command", label: "Command", width: 22, minWidth: 10, priority: 1, render: (entry) => entry.command },
-          { key: "summary", label: "Summary", minWidth: 20, priority: 1, render: (entry) => entry.summary },
-        ],
-      }, plain);
-    },
-  });
+  const browserCommands = createBrowserCommands({ getRoot: () => root, getCommandHistory: () => commandHistory, getFtsIndex: () => ftsIndex, nowIso, rememberCommand, syncFtsAfterPatch });
+  pi.registerCommand("memory-history", browserCommands.memoryHistory);
 
   const diagnosticCommands = createDiagnosticCommands({
     getRoot: () => root,
@@ -873,105 +858,9 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("memory-inbox", {
-    description: "Show and interactively review pending inbox candidates",
-    handler: async (args, ctx) => {
-      const candidates = listCandidates(root).filter((c) => c.status === "new");
-      if (candidates.length === 0) { ctx.ui.notify("Inbox empty.", "info"); return; }
+  pi.registerCommand("memory-inbox", browserCommands.memoryInbox);
 
-      const plain = candidates.map((c, i) => `${i + 1}. [conf ${(c.confidence ?? 0).toFixed(2)}${c.ruleType ? ", " + c.ruleType : ""}] ${c.text.slice(0, 120)}`).join("\n");
-      rememberCommand("memory-inbox", plain, `inbox: ${candidates.length} candidates`);
-      if (wantsPlainOutput(args) || !ctx.ui.custom) { notifyStructured(ctx, args, candidates, `${candidates.length} pending candidate(s):\n${plain}`, "info"); return; }
-
-      // Show pageable/searchable browser if TUI is available
-      if (ctx.ui.custom) {
-        const cfg = loadConfig(root);
-        const threshold = cfg.curator.autoCurateHighThreshold ?? 0.85;
-        const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
-        try {
-          const result = await openBrowser(ctx, candidateBrowserOptions(candidates), plain);
-          const action = result?.action as import("./src/tui/InboxReviewOverlay").InboxOverlayAction | undefined;
-          if (action === "approve") {
-            const patch = curateInbox(root, { now: nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
-            const eligibleIds = patch.ops
-              .filter((op) => op.risk !== "high" &&
-                (op.record?.confidence ?? op.to_record?.confidence ?? 0) >= threshold)
-              .map((op) => op.op_id);
-            if (eligibleIds.length > 0) {
-              const applied = applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
-              await updateQmd();
-              syncFtsAfterPatch(patch, applied);
-              ctx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
-            } else {
-              ctx.ui.notify("No auto-eligible ops above confidence threshold.", "info");
-            }
-          } else if (action === "review") {
-            // Chain PatchReviewPanel directly
-            const reviewPatch = curateInbox(root, { now: nowIso(), mode: "propose", vaultPath, minEvidenceCount: 1 });
-            if (reviewPatch.ops.length > 0) {
-              const selectedIds = await ctx.ui.custom<string[] | null>(
-                (tui, theme, _kb, done) =>
-                  createPatchReviewComponent(reviewPatch, done, tui as any, undefined, theme),
-              );
-              if (selectedIds && selectedIds.length > 0) {
-                const applied = applyPatch(root, reviewPatch, { selectedOpIds: selectedIds, now: nowIso() });
-                await updateQmd();
-                syncFtsAfterPatch(reviewPatch, applied);
-                ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
-              }
-            } else {
-              ctx.ui.notify("No candidates meet curation thresholds.", "info");
-            }
-          }
-        } catch {
-          ctx.ui.notify(`${candidates.length} pending candidate(s):\n${plain}`, "info");
-        }
-      }
-    },
-  });
-
-  pi.registerCommand("memory-learnings", {
-    description: "Browse and manage long-term memory records in an interactive pageable table (use --plain or --json for scripted output)",
-    handler: async (args, ctx) => {
-      const records = loadActiveRecords(root)
-        .filter((r) => r.status === "active")
-        .sort((a, b) => b.confidence - a.confidence);
-      const plain = records.map((r) =>
-        `[${r.layer}, conf ${r.confidence.toFixed(2)}${r.ruleType ? ", " + r.ruleType : ""}] ${r.statement}`
-      ).join("\n") || "No memory records.";
-      rememberCommand("memory-learnings", plain, `memory: ${records.length} active records`);
-      if (wantsPlainOutput(args) || !ctx.ui.custom) { notifyStructured(ctx, args, records, plain, "info"); return; }
-
-      const result = await openBrowser(ctx, memoryRecordBrowserOptions(records), plain);
-
-      if (result?.action === "reinforce" && result.id) {
-        try {
-          const reinforcement = recordExplicitReinforcement(root, { memory_id: result.id, note: "Confirmed from memory browser.", session_id: "current-session", now: nowIso() });
-          ctx.ui.notify(reinforcement.created ? `Recorded explicit reinforcement for ${result.id}.` : `Identical reinforcement already exists for ${result.id} in this session.`, reinforcement.created ? "success" : "info");
-        } catch (error) {
-          ctx.ui.notify(`Memory reinforcement failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-        }
-      } else if (result?.action === "deprecate") {
-        const { loadLayerRecords, unsafeReplaceLayerRecords } = await import("./src/store");
-        for (const layer of ["L1", "L2"] as const) {
-          const layerRecords = loadLayerRecords(root, layer);
-          if (!result.id || !layerRecords.some((r) => r.id === result.id)) continue;
-          unsafeReplaceLayerRecords(root, layer,
-            layerRecords.map((r) => r.id === result.id
-              ? { ...r, status: "deprecated" as const, updated_at: new Date().toISOString().slice(0, 10) }
-              : r
-            )
-          );
-          renderMemoryToDisk(root);
-          syncFtsIndex(root, ftsIndex);
-          await updateQmd();
-              syncFtsIndex(root, ftsIndex);
-          ctx.ui.notify(`Deprecated: ${result.id}`, "success");
-          break;
-        }
-      }
-    },
-  });
+  pi.registerCommand("memory-learnings", browserCommands.memoryLearnings);
 
   pi.registerCommand("curate-memory", {
     description: "Curate inbox into patch proposals (with vault_ref hints)",
