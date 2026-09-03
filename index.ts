@@ -1,18 +1,12 @@
 import { Type } from "@sinclair/typebox";
 import { readFileSync, watch as fsWatch, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createGovernedRepairCommands } from "./src/commands/governed-repairs";
+import { notifyStructured, parseCommandArgs, wantsPlainOutput } from "./src/commands/output";
+import type { CommandDefinition, CommandUiContext } from "./src/commands/types";
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; details: unknown };
-type UiContext = {
-  hasUI?: boolean;
-  cwd: string;
-  ui: {
-    notify(message: string, kind?: string): void;
-    setStatus?(id: string, msg: string): void;
-    // ctx.ui.custom() — shows a TUI component; overlay:true makes it a floating modal
-    custom?<T>(factory: (tui: unknown, theme: unknown, kb: unknown, done: (val: T) => void) => unknown, opts?: { overlay?: boolean; overlayOptions?: { anchor?: string; width?: number; maxHeight?: number } }): Promise<T>;
-  };
-};
+type UiContext = CommandUiContext;
 type ExecResult = { stdout: string; stderr: string; code: number; killed: boolean };
 type ExtensionAPI = {
   on(name: string, handler: (event: any, ctx: UiContext) => Promise<any> | any): void;
@@ -26,7 +20,7 @@ type ExtensionAPI = {
     parameters: unknown;
     execute(id: string, params: any): Promise<ToolResult> | ToolResult;
   }): void;
-  registerCommand(name: string, definition: { description: string; handler(args: string, ctx: UiContext): Promise<void> | void }): void;
+  registerCommand(name: string, definition: CommandDefinition): void;
 };
 
 import { ensureMemoryDirs, resolveRoot } from "./src/paths";
@@ -39,8 +33,6 @@ import { generateMaintenanceRecommendations, buildStabilityPatchFromRecommendati
 import { readReinforcementEventsForMemory, recordExplicitReinforcement, summarizeReinforcement } from "./src/reinforcement";
 import { runMetaConsolidation, generateHandoffSnapshot, generateGoalHandoffSnapshot, DEFAULT_META_CONSOLIDATION_CONFIG } from "./src/meta-consolidation";
 import { runMemoryDiagnostics, renderDiagnosticsReport, saveDiagnosticsReport } from "./src/diagnostics";
-import { applyStoreIntegrityPlan, scanStoreIntegrity } from "./src/store-integrity";
-import { applyMemoryKeyRepair, scanMemoryKeyRepair } from "./src/memory-key-repair";
 import { applyPatch, readPatchFile } from "./src/patch";
 import { buildRetrievalContext, syncFtsIndex } from "./src/retriever";
 import { renderMemoryToDisk } from "./src/render";
@@ -94,31 +86,6 @@ function nowIso(): string { return new Date().toISOString(); }
 function shortId(prefix: string): string {
   return `${prefix}_${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}_${Math.random().toString(36).slice(2, 6)}`;
 }
-function parseCommandArgs(input: string): { positional: string[]; flags: Record<string, string | boolean> } {
-  const tokens = [...input.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((m) => m[1] ?? m[2] ?? m[3]);
-  const positional: string[] = [];
-  const flags: Record<string, string | boolean> = {};
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-    if (token.startsWith("--")) {
-      const key = token.slice(2);
-      const next = tokens[i + 1];
-      if (next && !next.startsWith("--")) { flags[key] = next; i++; }
-      else flags[key] = true;
-    } else positional.push(token);
-  }
-  return { positional, flags };
-}
-function wantsPlainOutput(args: string): boolean {
-  const { flags } = parseCommandArgs(args);
-  return flags.plain === true || flags.json === true || flags.yaml === true || flags.interactive === false;
-}
-function notifyStructured(ctx: UiContext, args: string, value: unknown, plain: string, kind = "info"): void {
-  const { flags } = parseCommandArgs(args);
-  if (flags.json === true) ctx.ui.notify(JSON.stringify(value, null, 2), kind);
-  else ctx.ui.notify(plain, kind);
-}
-
 const CODEBASE_EVIDENCE_TOOLS = new Set<CodebaseAnalysisTool>(["tsc", "eslint", "playwright", "vitest", "fallow", "custom"]);
 const CODEBASE_ANALYSIS_KINDS = new Set<CodebaseAnalysisKind>(["typecheck", "lint", "test", "e2e", "dependency", "dead_code", "complexity", "security", "duplication", "custom"]);
 
@@ -843,65 +810,9 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("memory-store-integrity", {
-    description: "Preview or apply canonical record integrity repairs. Usage: /memory-store-integrity [--apply --fingerprint <sha256>] [--json]",
-    handler: async (args, ctx) => {
-      try {
-        const parsed = parseCommandArgs(args);
-        const apply = parsed.flags.apply === true;
-        if (!apply) {
-          const plan = scanStoreIntegrity(root);
-          const text = plan.migration_needed
-            ? `Store integrity repair available: ${plan.rows_before} rows → ${plan.rows_after}; fingerprint ${plan.fingerprint}. Review this result, then apply with --apply --fingerprint ${plan.fingerprint}.`
-            : `Store integrity is clean: ${plan.rows_before} row(s), ${plan.unique_ids_before} unique ID(s).`;
-          notifyStructured(ctx, args, plan, text, plan.migration_needed ? "warning" : "success");
-          return;
-        }
-        const expectedFingerprint = typeof parsed.flags.fingerprint === "string" ? parsed.flags.fingerprint : "";
-        if (!expectedFingerprint) {
-          ctx.ui.notify("Apply requires the reviewed preview fingerprint. Run /memory-store-integrity --json, then use --apply --fingerprint <sha256>.", "warning");
-          return;
-        }
-        const result = applyStoreIntegrityPlan(root, expectedFingerprint, nowIso());
-        const text = result.mutation_performed
-          ? `Store integrity repair applied. Backup: ${result.backup_path}; report: ${result.report_path}.`
-          : "Store integrity apply made no changes.";
-        notifyStructured(ctx, args, result, text, result.mutation_performed ? "success" : "info");
-      } catch (error) {
-        ctx.ui.notify(`Store integrity failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-      }
-    },
-  });
-
-  pi.registerCommand("memory-key-repair", {
-    description: "Preview or apply versioned normalized-memory-key repairs. Usage: /memory-key-repair [--apply --fingerprint <sha256>] [--json]",
-    handler: async (args, ctx) => {
-      try {
-        const parsed = parseCommandArgs(args);
-        const apply = parsed.flags.apply === true;
-        if (!apply) {
-          const plan = scanMemoryKeyRepair(root);
-          const text = plan.targetCount > 0
-            ? `Normalized key repair preview: ${plan.targetCount} target(s), ${plan.collisions.length} collision(s), fingerprint ${plan.fingerprint}. Review the JSON before apply.`
-            : "No active normalized-memory-key repairs are needed.";
-          notifyStructured(ctx, args, plan, text, plan.targetCount > 0 ? "warning" : "success");
-          return;
-        }
-        const expectedFingerprint = typeof parsed.flags.fingerprint === "string" ? parsed.flags.fingerprint : "";
-        if (!expectedFingerprint) {
-          ctx.ui.notify("Apply requires the reviewed preview fingerprint. Run /memory-key-repair --json, then use --apply --fingerprint <sha256>.", "warning");
-          return;
-        }
-        const result = applyMemoryKeyRepair(root, expectedFingerprint, nowIso());
-        const text = result.mutationPerformed
-          ? `Normalized key repair applied. Backup: ${result.backupPath}; report: ${result.reportPath}.`
-          : "Normalized key repair apply made no changes.";
-        notifyStructured(ctx, args, result, text, result.mutationPerformed ? "success" : "info");
-      } catch (error) {
-        ctx.ui.notify(`Normalized key repair failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-      }
-    },
-  });
+  const governedRepairCommands = createGovernedRepairCommands({ getRoot: () => root, nowIso });
+  pi.registerCommand("memory-store-integrity", governedRepairCommands.memoryStoreIntegrity);
+  pi.registerCommand("memory-key-repair", governedRepairCommands.memoryKeyRepair);
 
   pi.registerCommand("memory-export", {
     description: "Export memory bundles. Usage: /memory-export --format pi-governance [--redacted] [--output bundle.json]",
