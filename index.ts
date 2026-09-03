@@ -7,6 +7,7 @@ import { createDiagnosticCommands } from "./src/commands/diagnostics";
 import { createGovernedRepairCommands } from "./src/commands/governed-repairs";
 import { createInteroperabilityCommands } from "./src/commands/interoperability";
 import { createQualityCommands } from "./src/commands/quality";
+import { createReinforcementCommands } from "./src/commands/reinforcement";
 import { createSessionCommands } from "./src/commands/sessions";
 import { notifyStructured, parseCommandArgs, wantsPlainOutput } from "./src/commands/output";
 import type { CommandDefinition, CommandUiContext } from "./src/commands/types";
@@ -36,7 +37,7 @@ import { appendCandidate, listCandidates, shouldPersistWorthDecision, withMemory
 import { curateInbox } from "./src/curator";
 import { maintainMemory } from "./src/maintainer";
 import { generateMaintenanceRecommendations, buildStabilityPatchFromRecommendations, generateMaintenanceReport } from "./src/maintenance";
-import { readReinforcementEventsForMemory, recordExplicitReinforcement, summarizeReinforcement } from "./src/reinforcement";
+import { readReinforcementEventsForMemory, summarizeReinforcement } from "./src/reinforcement";
 import { runMetaConsolidation, generateHandoffSnapshot, generateGoalHandoffSnapshot, DEFAULT_META_CONSOLIDATION_CONFIG } from "./src/meta-consolidation";
 import { applyPatch, readPatchFile } from "./src/patch";
 import { buildRetrievalContext, syncFtsIndex } from "./src/retriever";
@@ -52,13 +53,13 @@ import { actionsFromAgentMessages } from "./src/capture-activity";
 import { processCaptureTurn } from "./src/capture-coordinator";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
-import { inquiryBrowserOptions, openBrowser } from "./src/tui/browser-adapters";
+import { openBrowser } from "./src/tui/browser-adapters";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
 import { buildCandidateTrustMetadata } from "./src/trust";
 import { captureReinforcementLink, classifyRecordedToolOutcome, linkExplicitCorrectionToMemory } from "./src/reinforcement";
-import { appendInquiryRecord, applyInquiryStaleness, createInquiryRecord, planInquiryStaleness, readInquiryRecords, selectRelevantInquiries, renderInquiryInjectionBlock, transitionInquiry } from "./src/inquiries";
+import { appendInquiryRecord, createInquiryRecord, selectRelevantInquiries, renderInquiryInjectionBlock } from "./src/inquiries";
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
 import { generateProcedureCandidates, renderProcedureCandidateReport, saveProcedureCandidateReport } from "./src/procedure-candidates";
 import { appendRuntimeEvent } from "./src/runtime-events";
@@ -736,65 +737,10 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   const qualityCommands = createQualityCommands({ getRoot: () => root, getSessionCwd: () => sessionCwd, nowIso, rememberCommand });
   pi.registerCommand("memory-recall-xray", qualityCommands.memoryRecallXray);
 
-  pi.registerCommand("memory-reinforce", {
-    description: "Record explicit positive reinforcement without mutating memory. Usage: /memory-reinforce <memory-id> --note \"User confirmed this remains correct.\" [--json]",
-    handler: async (args, ctx) => {
-      const parsed = parseCommandArgs(args);
-      const memoryId = parsed.positional[0];
-      const note = typeof parsed.flags.note === "string" ? parsed.flags.note : "";
-      try {
-        if (!memoryId || !note) throw new Error("Usage: /memory-reinforce <memory-id> --note \"confirmation\"");
-        const result = recordExplicitReinforcement(root, { memory_id: memoryId, note, session_id: "current-session", now: nowIso() });
-        notifyStructured(ctx, args, result, result.created ? `Recorded explicit reinforcement for ${memoryId}.` : `Identical reinforcement already exists for ${memoryId} in this session.`, result.created ? "success" : "info");
-      } catch (error) {
-        ctx.ui.notify(`Memory reinforcement failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-      }
-    },
-  });
+  const reinforcementCommands = createReinforcementCommands({ getRoot: () => root, nowIso });
+  pi.registerCommand("memory-reinforce", reinforcementCommands.memoryReinforce);
 
-  pi.registerCommand("memory-inquiries", {
-    description: "Review inquiry lifecycle. Usage: /memory-inquiries list ... | answer <id> --memory <memory-id> | withdraw <id> | stale <id> | stale-scan [--apply --fingerprint <sha256>] [--json]", 
-    handler: async (args, ctx) => {
-      const parsed = parseCommandArgs(args);
-      const action = parsed.positional[0] ?? "list";
-      try {
-        if (action === "stale-scan") {
-          const reviewWindowDays = loadConfig(root).inquiries.reviewWindowDays;
-          if (parsed.flags.apply !== true) {
-            const plan = planInquiryStaleness(readInquiryRecords(root), reviewWindowDays, nowIso());
-            notifyStructured(ctx, args, plan, `Inquiry staleness preview: ${plan.stale_candidates} candidate(s) older than ${reviewWindowDays} days.`, plan.stale_candidates > 0 ? "warning" : "info");
-            return;
-          }
-          const fingerprint = typeof parsed.flags.fingerprint === "string" ? parsed.flags.fingerprint : "";
-          if (!fingerprint) throw new Error("Apply requires the reviewed stale-scan fingerprint.");
-          const result = applyInquiryStaleness(root, fingerprint, reviewWindowDays, nowIso());
-          notifyStructured(ctx, args, result, result.mutation_performed ? `Marked ${result.inquiries_staled} inquiry(s) stale. Backup: ${result.backup_path}.` : "No inquiries required staleness changes.", result.mutation_performed ? "success" : "info");
-          return;
-        }
-        if (action === "list") {
-          const status = typeof parsed.flags.status === "string" ? parsed.flags.status : undefined;
-          const allowed = new Set(["open", "answered", "withdrawn", "stale"]);
-          if (status && !allowed.has(status)) throw new Error(`Invalid inquiry status ${status}.`);
-          const inquiries = readInquiryRecords(root).filter((inquiry) => !status || inquiry.status === status);
-          const plain = inquiries.map((inquiry) => `${inquiry.id} [${inquiry.status}] ${inquiry.question}`).join("\n") || "No inquiries.";
-          if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, inquiries, plain, "info");
-          else await openBrowser(ctx, inquiryBrowserOptions(inquiries), plain);
-          return;
-        }
-        const inquiryId = parsed.positional[1];
-        if (!inquiryId || !["answer", "withdraw", "stale"].includes(action)) throw new Error("Usage: /memory-inquiries answer <id> --memory <memory-id> | withdraw <id> | stale <id>");
-        const result = transitionInquiry(root, {
-          inquiry_id: inquiryId,
-          status: action === "answer" ? "answered" : action === "withdraw" ? "withdrawn" : "stale",
-          answer_memory_id: typeof parsed.flags.memory === "string" ? parsed.flags.memory : undefined,
-          now: nowIso(),
-        });
-        notifyStructured(ctx, args, result, `Inquiry ${result.inquiry_id}: ${result.previous_status} → ${result.status}.`, "success");
-      } catch (error) {
-        ctx.ui.notify(`Inquiry command failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("memory-inquiries", reinforcementCommands.memoryInquiries);
 
   const captureCommands = createCaptureCommands({ getRoot: () => root, getSessionCwd: () => sessionCwd, nowIso, rememberCommand });
   pi.registerCommand("memory-evidence", captureCommands.memoryEvidence);
