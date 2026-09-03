@@ -7,6 +7,7 @@ import { createDiagnosticCommands } from "./src/commands/diagnostics";
 import { createGovernedRepairCommands } from "./src/commands/governed-repairs";
 import { createInteroperabilityCommands } from "./src/commands/interoperability";
 import { createLearningCommands } from "./src/commands/learning";
+import { createMaintenanceCommands } from "./src/commands/maintenance";
 import { createQualityCommands } from "./src/commands/quality";
 import { createReinforcementCommands } from "./src/commands/reinforcement";
 import { createSessionCommands } from "./src/commands/sessions";
@@ -36,11 +37,7 @@ import { appendDailyLog, readDailyLog, todayString } from "./src/daily";
 import { addScratchpadItem, clearDoneScratchpadItems, listScratchpadItems, markScratchpadDone, markScratchpadUndone } from "./src/scratchpad";
 import { appendCandidate, listCandidates, shouldPersistWorthDecision, withMemoryWorth } from "./src/inbox";
 import { curateInbox } from "./src/curator";
-import { maintainMemory } from "./src/maintainer";
-import { generateMaintenanceRecommendations, buildStabilityPatchFromRecommendations, generateMaintenanceReport } from "./src/maintenance";
-import { readReinforcementEventsForMemory, summarizeReinforcement } from "./src/reinforcement";
-import { runMetaConsolidation, generateHandoffSnapshot, generateGoalHandoffSnapshot, DEFAULT_META_CONSOLIDATION_CONFIG } from "./src/meta-consolidation";
-import { applyPatch, readPatchFile } from "./src/patch";
+import { applyPatch } from "./src/patch";
 import { buildRetrievalContext, syncFtsIndex } from "./src/retriever";
 import { renderMemoryToDisk } from "./src/render";
 import { setupQmd, updateQmd, runQmd, qmdSearchArgs, qmdCollectionName, type MemorySearchMode } from "./src/qmd";
@@ -57,14 +54,12 @@ import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
 import { openBrowser } from "./src/tui/browser-adapters";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
-import { loadActiveRecords } from "./src/store";
 import { buildCandidateTrustMetadata } from "./src/trust";
 import { captureReinforcementLink, classifyRecordedToolOutcome, linkExplicitCorrectionToMemory } from "./src/reinforcement";
 import { appendInquiryRecord, createInquiryRecord, selectRelevantInquiries, renderInquiryInjectionBlock } from "./src/inquiries";
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
 import { appendRuntimeEvent } from "./src/runtime-events";
 import { renderInvocationProfileReport } from "./src/profiling";
-import { renderGovernanceSimulationReport, simulatePatchImpact } from "./src/governance-simulation";
 import { resolveMemoryProfile } from "./src/profile";
 import type { CaptureCandidate } from "./src/types";
 
@@ -776,222 +771,28 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
   pi.registerCommand("memory-learnings", browserCommands.memoryLearnings);
 
-  pi.registerCommand("curate-memory", {
-    description: "Curate inbox into patch proposals (with vault_ref hints)",
-    handler: async (args, ctx) => {
-      const mode = args.includes("--mode=auto") ? "auto" : args.includes("--mode=supervised") ? "supervised" : "propose";
-      const vaultPath = process.env.PI_VAULT_PATH;
-      const patch = curateInbox(root, { now: nowIso(), mode, vaultPath });
-
-      if (mode === "auto") {
-        const applied = applyPatch(root, patch, { selectedOpIds: patch.ops.filter((op) => op.default_selected && op.risk !== "high").map((op) => op.op_id), now: nowIso() });
-        await updateQmd();
-        syncFtsAfterPatch(patch, applied);
-        ctx.ui.notify(`Applied ${applied.applied_ops.length} memory op(s) from ${applied.patch_id}`, "success");
-
-      } else if (patch.ops.length === 0) {
-        ctx.ui.notify("No candidates meet curation thresholds.", "info");
-
-      } else if (ctx.ui.custom) {
-        // Interactive patch review panel — full terminal width, same as inbox review prompt
-        const selectedIds = await ctx.ui.custom<string[] | null>(
-          (tui, theme, _kb, done) =>
-            createPatchReviewComponent(patch, done, tui as any, undefined, theme),
-        );
-        if (selectedIds && selectedIds.length > 0) {
-          const applied = applyPatch(root, patch, { selectedOpIds: selectedIds, now: nowIso() });
-          await updateQmd();
-          syncFtsAfterPatch(patch, applied);
-          ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
-        } else if (selectedIds === null) {
-          ctx.ui.notify("Curation cancelled — no changes made.", "info");
-        }
-      } else {
-        // Headless fallback
-        ctx.ui.notify(`${patch.patch_id}: ${patch.summary}`, "info");
-        if (patch.ops.length > 0) {
-          ctx.ui.notify(patch.ops.map((op) => `  ${op.op_id}: ${op.rationale}`).join("\n"), "info");
-        }
-      }
-    },
+  const maintenanceCommands = createMaintenanceCommands({
+    getRoot: () => root, getSessionCwd: () => sessionCwd, getFtsIndex: () => ftsIndex,
+    getPendingUserMessages: () => pendingUserMessages, getPendingAssistantMessages: () => pendingAssistantMessages,
+    getObservedModel: () => lastObservedModel, getRunner: () => pi, nowIso, rememberCommand, syncFtsAfterPatch, resolveConsolidationModel,
   });
+  pi.registerCommand("curate-memory", maintenanceCommands.curateMemory);
 
-  pi.registerCommand("maintain-memory", {
-    description: "Generate maintenance patch for overdue records and reinforcement-based recommendations",
-    handler: async (args, ctx) => {
-      const mode = args.includes("--mode=auto") ? "auto" : args.includes("--mode=supervised") ? "supervised" : "propose";
-      const showReport = args.includes("--report");
-      const patch = maintainMemory(root, { now: nowIso(), mode });
+  pi.registerCommand("maintain-memory", maintenanceCommands.maintainMemory);
 
-      // Sprint 10: generate reinforcement-based recommendations
-      const records = loadActiveRecords(root);
-      const summaries = records.map((rec) => summarizeReinforcement(readReinforcementEventsForMemory(root, rec.id))).filter((s) => s.counts.explicit_correction > 0 || s.counts.explicit_reinforcement > 0 || s.counts.implicit_success > 0);
-      const maintRecs = generateMaintenanceRecommendations(records, summaries, nowIso());
-      const stabilityPatch = buildStabilityPatchFromRecommendations(maintRecs, nowIso());
+  pi.registerCommand("memory-simulate-patch", maintenanceCommands.memorySimulatePatch);
 
-      if (showReport) {
-        const report = generateMaintenanceReport(maintRecs, records);
-        ctx.ui.notify(report.slice(0, 2000), "info");
-      }
+  pi.registerCommand("memory-patches", maintenanceCommands.memoryPatches);
 
-      if (mode === "auto") {
-        const decayOps = patch.ops.filter((op) => op.default_selected && op.risk !== "high").map((op) => op.op_id);
-        if (decayOps.length > 0) {
-          const applied = applyPatch(root, patch, { selectedOpIds: decayOps, now: nowIso() });
-          await updateQmd();
-          syncFtsAfterPatch(patch, applied);
-          ctx.ui.notify(`Applied ${applied.applied_ops.length} maintenance ops from ${applied.patch_id}`, "success");
-        }
-        const stabilityOps = stabilityPatch.ops.filter((op) => op.default_selected && op.risk !== "high").map((op) => op.op_id);
-        if (stabilityOps.length > 0) {
-          const appliedStability = applyPatch(root, stabilityPatch, { selectedOpIds: stabilityOps, now: nowIso() });
-          syncFtsAfterPatch(stabilityPatch, appliedStability);
-          ctx.ui.notify(`Applied ${appliedStability.applied_ops.length} stability ops.`, "success");
-        }
-        if (maintRecs.filter((r) => r.requires_review).length > 0) {
-          ctx.ui.notify(`${maintRecs.filter((r) => r.requires_review).length} recommendation(s) require human review.`, "warning");
-        }
-      } else {
-        ctx.ui.notify(`${patch.patch_id}: ${patch.summary}`, "info");
-        if (maintRecs.length > 0) ctx.ui.notify(`Reinforcement: ${maintRecs.length} maintenance recommendation(s). Use --report to see details.`, "info");
-      }
-    },
-  });
+  pi.registerCommand("apply-memory-patch", maintenanceCommands.applyMemoryPatch);
 
-  pi.registerCommand("memory-simulate-patch", {
-    description: "Preview patch effects on quality scores without applying mutation. Usage: /memory-simulate-patch <patch-id> [--plain|--json]",
-    handler: async (args, ctx) => {
-      const parsed = parseCommandArgs(args);
-      const patchId = parsed.positional[0];
-      if (!patchId) { ctx.ui.notify("Usage: /memory-simulate-patch <patch-id> [--plain|--json]", "warning"); return; }
-      try {
-        const patch = readPatchFile(root, patchId);
-        const report = simulatePatchImpact(root, patch, { now: nowIso() });
-        const text = renderGovernanceSimulationReport(report);
-        rememberCommand("memory-simulate-patch", text, `simulate patch ${patch.patch_id}: store delta ${report.deltas.store_quality_delta}`);
-        notifyStructured(ctx, args, report, text, report.deltas.store_quality_delta < 0 ? "warning" : "info");
-      } catch (err) {
-        ctx.ui.notify(`Patch simulation failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("meta-consolidation", maintenanceCommands.metaConsolidation);
 
-  pi.registerCommand("memory-patches", {
-    description: "List pending patch files",
-    handler: async (_args, ctx) => {
-      const { listPatchFiles, readPatchFile } = await import("./src/patch");
-      const ids = listPatchFiles(root);
-      if (ids.length === 0) { ctx.ui.notify("No patch files.", "info"); return; }
-      const summaries = ids.map((id) => {
-        try { const p = readPatchFile(root, id); return `${id} [${p.status}]: ${p.summary}`; } catch { return id; }
-      });
-      ctx.ui.notify(summaries.join("\n"), "info");
-    },
-  });
+  pi.registerCommand("memory-handoff", maintenanceCommands.memoryHandoff);
 
-  pi.registerCommand("apply-memory-patch", {
-    description: "Apply selected ops from a patch file by id",
-    handler: async (args, ctx) => {
-      const patchId = args.trim().split(/\s+/)[0];
-      if (!patchId) { ctx.ui.notify("Usage: /apply-memory-patch <patch_id>", "warning"); return; }
-      try {
-        const { readPatchFile } = await import("./src/patch");
-        const patch = readPatchFile(root, patchId);
-        const hasDelete = patch.ops.some((op) => op.op === "delete");
-        if (hasDelete) {
-          const applied = applyPatchAndSync(root, patch, { now: nowIso() }, ftsIndex);
-          await updateQmd();
-          ctx.ui.notify(`Applied ${applied.applied_ops.length} op(s) from ${patchId} (FTS synced).`, "success");
-        } else {
-          const applied = applyPatch(root, patch, { now: nowIso() });
-          await updateQmd();
-          syncFtsAfterPatch(patch, applied);
-          ctx.ui.notify(`Applied ${applied.applied_ops.length} op(s) from ${patchId}.`, "success");
-        }
-      } catch (err) {
-        ctx.ui.notify(`Failed to apply patch: ${err}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("render-memory", maintenanceCommands.renderMemory);
 
-  pi.registerCommand("meta-consolidation", {
-    description: "Propose L1 abstractions from stable L2 record clusters (always requires human review)",
-    handler: async (args, ctx) => {
-      const withHandoff = args.includes("--handoff");
-      const cfg = loadConfig(root);
-      const metaCfg = { ...DEFAULT_META_CONSOLIDATION_CONFIG, ...cfg.metaConsolidation, enabled: true, cadence: "manual" as const };
-      const profile = (await import("./src/profile")).resolveMemoryProfile(root, sessionCwd);
-      ctx.ui.notify("Running meta-consolidation (no automatic changes)…", "info");
-      try {
-        const run = runMetaConsolidation(root, metaCfg, profile.profile_id, nowIso());
-        ctx.ui.notify(`Meta-consolidation: ${run.clusters.length} cluster(s), ${run.candidates.length} L1 candidate(s) proposed.\nReport: ${run.report_path ?? "(none)"}`, "success");
-        if (run.candidates.length > 0) {
-          ctx.ui.notify(`All ${run.candidates.length} candidate(s) are l1_review_only — manually inspect report and apply patch if desired.`, "warning");
-        }
-        if (withHandoff) {
-          const snapshot = generateHandoffSnapshot(root, { profile_id: profile.profile_id, now: nowIso() });
-          ctx.ui.notify(`Handoff snapshot: ${snapshot.active_l2_count} L2 records, ${snapshot.open_inquiry_count} open inquiries.`, "info");
-        }
-      } catch (err) {
-        ctx.ui.notify(`Meta-consolidation failed: ${err}`, "error");
-      }
-    },
-  });
-
-  pi.registerCommand("memory-handoff", {
-    description: "Generate a handoff snapshot of current active memory state. Use --goal <goal> for goal handoff.",
-    handler: async (args, ctx) => {
-      try {
-        const { resolveMemoryProfile } = await import("./src/profile");
-        const profile = resolveMemoryProfile(root, sessionCwd);
-        if (args.includes("--goal")) {
-          const declaredGoal = args.replace("--goal", "").trim() || "Continue current goal safely.";
-          const snapshot = generateGoalHandoffSnapshot(root, { declared_goal: declaredGoal, profile_id: profile.profile_id, now: nowIso() });
-          ctx.ui.notify(`Goal handoff: ${snapshot.active_memory_ids.length} active memories, ${snapshot.open_inquiry_ids.length} open inquiries, ${snapshot.pending_candidate_ids.length} pending candidates. ${snapshot.background_reference_warning}`, "success");
-          return;
-        }
-        const snapshot = generateHandoffSnapshot(root, { profile_id: profile.profile_id, now: nowIso() });
-        ctx.ui.notify(`Handoff snapshot: ${snapshot.active_l2_count} L2 records, ${snapshot.open_inquiry_count} open inquiries, ${snapshot.pending_candidate_count} pending candidates.`, "success");
-      } catch (err) {
-        ctx.ui.notify(`Handoff failed: ${err}`, "error");
-      }
-    },
-  });
-
-  pi.registerCommand("render-memory", {
-    description: "Render canonical JSONL to markdown",
-    handler: async (_args, ctx) => {
-      renderMemoryToDisk(root);
-      await updateQmd();
-      syncFtsIndex(root, ftsIndex);
-      ctx.ui.notify("Rendered memory markdown projection", "success");
-    },
-  });
-
-  pi.registerCommand("consolidate-memory", {
-    description: "Manually trigger LLM consolidation from current session messages",
-    handler: async (_args, ctx) => {
-      if (pendingUserMessages.length < 2) {
-        ctx.ui.notify("Not enough conversation to consolidate (need at least 2 user messages).", "warning");
-        return;
-      }
-      const resolved = resolveConsolidationModel(lastObservedModel);
-      const modelLabel = resolved.model ? `${resolved.model} (${resolved.source})` : "Pi CLI default";
-      ctx.ui.notify(`Running consolidation using ${modelLabel}…`, "info");
-      const result = await runConsolidation(root, pendingUserMessages, pendingAssistantMessages, todayString(), sessionCwd, pi, resolved.model);
-      await updateQmd();
-      syncFtsIndex(root, ftsIndex);
-      if (result.status === "failed") {
-        const reason = result.failure_reason ?? "unknown failure";
-        appendRuntimeEvent(root, { type: "warn", severity: "medium", component: "consolidation", message: `manual consolidation failed using ${modelLabel}: ${reason}` });
-        ctx.ui.notify(`Consolidation failed using ${modelLabel}: ${reason}`, "error");
-      } else if (result.candidates_added > 0) {
-        ctx.ui.notify(`Added ${result.candidates_added} candidate(s) to inbox (${result.candidates_skipped_dedup} deduped). Run /curate-memory to review.`, "success");
-      } else {
-        ctx.ui.notify(`No new patterns extracted (${result.candidates_skipped_dedup} deduped as already known).`, "info");
-      }
-    },
-  });
+  pi.registerCommand("consolidate-memory", maintenanceCommands.consolidateMemory);
 
   const sessionCommands = createSessionCommands({ getRoot: () => root, getSessionStore: () => sessionStore, getFtsIndex: () => ftsIndex });
   pi.registerCommand("session-sync", sessionCommands.sessionSync);
@@ -1003,24 +804,7 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
 }
 
-/**
- * Apply a patch and immediately sync the FTS index.
- * Callers that need to keep search results consistent after delete/purge operations
- * should prefer this over calling applyPatch + syncFtsIndex separately.
- */
-export function applyPatchAndSync(
-  root: string,
-  patch: import("./src/types").MemoryPatch,
-  options: import("./src/patch").ApplyPatchOptions,
-  ftsIndex: MemoryFtsIndex,
-): import("./src/types").MemoryPatch {
-  const result = applyPatch(root, patch, options);
-  syncFtsIndex(root, ftsIndex);
-  const appliedOps = patch.ops.filter((op) => result.applied_ops.includes(op.op_id));
-  runFtsAwarePostMutationChecksAfterSync({ root, patchId: patch.patch_id, ops: appliedOps, ftsIndex });
-  return result;
-}
-
+export { applyPatchAndSync } from "./src/patch-sync";
 export { exportToPiGovernanceBundle, importFromPiGovernanceBundle, runPiGovernanceDoctor } from "./src/pi-governance-compat";
 export type { PiGovernanceBundle, PiGovernanceExportOptions, PiGovernanceImportOptions, PiGovernanceImportResult, PiGovernanceDoctorReport } from "./src/pi-governance-compat";
 export { reconcilePiGovernanceBundles } from "./src/pi-governance-reconciliation";
