@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { readFileSync, watch as fsWatch, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createDiagnosticCommands } from "./src/commands/diagnostics";
 import { createGovernedRepairCommands } from "./src/commands/governed-repairs";
 import { createInteroperabilityCommands } from "./src/commands/interoperability";
 import { notifyStructured, parseCommandArgs, wantsPlainOutput } from "./src/commands/output";
@@ -33,7 +34,6 @@ import { maintainMemory } from "./src/maintainer";
 import { generateMaintenanceRecommendations, buildStabilityPatchFromRecommendations, generateMaintenanceReport } from "./src/maintenance";
 import { readReinforcementEventsForMemory, recordExplicitReinforcement, summarizeReinforcement } from "./src/reinforcement";
 import { runMetaConsolidation, generateHandoffSnapshot, generateGoalHandoffSnapshot, DEFAULT_META_CONSOLIDATION_CONFIG } from "./src/meta-consolidation";
-import { runMemoryDiagnostics, renderDiagnosticsReport, saveDiagnosticsReport } from "./src/diagnostics";
 import { applyPatch, readPatchFile } from "./src/patch";
 import { buildRetrievalContext, syncFtsIndex } from "./src/retriever";
 import { renderMemoryToDisk } from "./src/render";
@@ -48,7 +48,7 @@ import { actionsFromAgentMessages } from "./src/capture-activity";
 import { processCaptureTurn } from "./src/capture-coordinator";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
-import { backgroundBrowserOptions, candidateBrowserOptions, captureQualityBrowserOptions, diagnosticsBrowserOptions, evidenceBrowserOptions, healthAuditBrowserOptions, inquiryBrowserOptions, memoryQualityBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallEffectivenessBrowserOptions, recallXrayBrowserOptions, relationshipQualityBrowserOptions, storeQualityBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
+import { backgroundBrowserOptions, candidateBrowserOptions, captureQualityBrowserOptions, evidenceBrowserOptions, inquiryBrowserOptions, memoryQualityBrowserOptions, memoryRecordBrowserOptions, openBrowser, recallEffectivenessBrowserOptions, recallXrayBrowserOptions, relationshipQualityBrowserOptions, storeQualityBrowserOptions, timelineBrowserOptions } from "./src/tui/browser-adapters";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
@@ -64,7 +64,6 @@ import { generateProcedureCandidates, renderProcedureCandidateReport, saveProced
 import { analyzeRecallEffectiveness, renderRecallEffectivenessReport } from "./src/recall-effectiveness";
 import { buildRecallXray, renderRecallXrayReport } from "./src/recall-xray";
 import { enqueueBackgroundAnalysis, listBackgroundAnalysisJobs, runBackgroundAnalysisQueue, type BackgroundAnalysisKind } from "./src/background-analysis";
-import { renderHealthAuditReport, runMemoryHealthAudit, saveHealthAuditReport } from "./src/health-audit";
 import { appendRuntimeEvent } from "./src/runtime-events";
 import { analyzeMemoryQuality, renderMemoryQualityReport } from "./src/memory-quality";
 import { analyzeRelationshipQuality, renderRelationshipQualityReport } from "./src/relationship-quality";
@@ -742,72 +741,17 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("memory-doctor", {
-    description: "Diagnose PI memory and session search setup as an interactive dashboard (use --plain or --json for scripted output)",
-    handler: async (args, ctx) => {
-      const paths = ensureMemoryDirs(root);
-      const cfg = loadConfig(root);
-      const parsed = parseCommandArgs(args);
-      const report = runMemoryDiagnostics(root, { profile: parsed.flags.profile === true });
-      const header = [
-        `PI memory root: ${paths.root}`,
-        `Session index: ${sessionStore.size()} sessions (file-watch + 5min sync active)`,
-        `Auto-curation: ${cfg.curator.autoCurate} (threshold: ${cfg.curator.autoCurateHighThreshold})`,
-        `Injection mode: ${cfg.retrieval.injectionMode}`,
-        `Consolidation model: ${(() => { const resolved = resolveConsolidationModel(lastObservedModel); return resolved.model ? `${resolved.model} (${resolved.source})` : "Pi CLI default (no --model override)"; })()}`,
-        `Vault: ${process.env.PI_VAULT_PATH ?? cfg.vault.path ?? "not configured (set PI_VAULT_PATH)"}`,
-        `Inbox: ${listCandidates(root).filter((c) => c.status === "new").length} pending candidate(s)`,
-        "",
-        renderDiagnosticsReport(report),
-        report.profile ? `\n${renderInvocationProfileReport(report.profile)}` : "",
-      ].join("\n");
-      rememberCommand("memory-doctor", header, `doctor: ${report.summary.errors} errors, ${report.summary.warnings} warnings`);
-      if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, { paths, config: cfg, diagnostics: report }, header, report.summary.errors ? "error" : report.summary.warnings ? "warning" : "success");
-      else await openBrowser(ctx, diagnosticsBrowserOptions(report), header);
-    },
+  const diagnosticCommands = createDiagnosticCommands({
+    getRoot: () => root,
+    getSessionCount: () => sessionStore.size(),
+    getObservedModel: () => lastObservedModel,
+    nowIso,
+    resolveConsolidationModel,
+    rememberCommand,
   });
-
-
-  pi.registerCommand("memory-health-audit", {
-    description: "Run a report-only autonomous memory health audit dashboard (use --plain, --json, or --save)",
-    handler: async (args, ctx) => {
-      try {
-        const parsed = parseCommandArgs(args);
-        const report = runMemoryHealthAudit(root, { now: nowIso() });
-        const text = renderHealthAuditReport(report);
-        rememberCommand("memory-health-audit", text, `health audit: ${report.health_score.overall}/100, ${report.recommendations.length} recommendations`);
-        if (parsed.flags.save === true) {
-          const paths = saveHealthAuditReport(root, report);
-          ctx.ui.notify(`Health audit saved: ${paths.markdownPath}`, "success");
-        }
-        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.health_score.overall < 80 ? "warning" : "success");
-        else await openBrowser(ctx, healthAuditBrowserOptions(report), text);
-      } catch (err) {
-        ctx.ui.notify(`Health audit failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-      }
-    },
-  });
-
-  pi.registerCommand("memory-diagnostics", {
-    description: "Run memory integrity diagnostics and open an interactive dashboard (use --plain or --json for scripted output)",
-    handler: async (args, ctx) => {
-      const saveReport = args.includes("--save");
-      try {
-        const parsed = parseCommandArgs(args);
-        const report = runMemoryDiagnostics(root, { profile: parsed.flags.profile === true });
-        const text = [renderDiagnosticsReport(report), report.profile ? `\n${renderInvocationProfileReport(report.profile)}` : ""].filter(Boolean).join("\n");
-        rememberCommand("memory-diagnostics", text, `diagnostics: ${report.summary.errors} errors, ${report.summary.warnings} warnings`);
-        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.summary.errors > 0 ? "error" : report.summary.warnings > 0 ? "warning" : "success");
-        else await openBrowser(ctx, diagnosticsBrowserOptions(report), text);
-        if (saveReport) {
-          const path = saveDiagnosticsReport(root, report);
-          ctx.ui.notify(`Diagnostics report saved: ${path}`, "info");
-        }
-      } catch (err) {
-        ctx.ui.notify(`Diagnostics failed: ${err}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("memory-doctor", diagnosticCommands.memoryDoctor);
+  pi.registerCommand("memory-health-audit", diagnosticCommands.memoryHealthAudit);
+  pi.registerCommand("memory-diagnostics", diagnosticCommands.memoryDiagnostics);
 
   const governedRepairCommands = createGovernedRepairCommands({ getRoot: () => root, nowIso });
   pi.registerCommand("memory-store-integrity", governedRepairCommands.memoryStoreIntegrity);
