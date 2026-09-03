@@ -6,6 +6,7 @@ import { createDiagnosticCommands } from "./src/commands/diagnostics";
 import { createGovernedRepairCommands } from "./src/commands/governed-repairs";
 import { createInteroperabilityCommands } from "./src/commands/interoperability";
 import { createQualityCommands } from "./src/commands/quality";
+import { createSessionCommands } from "./src/commands/sessions";
 import { notifyStructured, parseCommandArgs, wantsPlainOutput } from "./src/commands/output";
 import type { CommandDefinition, CommandUiContext } from "./src/commands/types";
 
@@ -1189,37 +1190,14 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("session-sync", {
-    description: "Sync session index with new/changed session files",
-    handler: async (_args, ctx) => {
-      const { added, updated, removed } = sessionStore.sync();
-      const exported = sessionStore.exportMarkdown(join(root, "sessions", "summaries"));
-      await updateQmd();
-      syncFtsIndex(root, ftsIndex);
-      ctx.ui.notify(`Session sync: ${added} added, ${updated} updated, ${removed} removed. Exported ${exported} markdown summaries. Total: ${sessionStore.size()}.`, "success");
-    },
-  });
+  const sessionCommands = createSessionCommands({ getRoot: () => root, getSessionStore: () => sessionStore, getFtsIndex: () => ftsIndex });
+  pi.registerCommand("session-sync", sessionCommands.sessionSync);
 
-  pi.registerCommand("session-reindex", {
-    description: "Force full re-parse of all session files",
-    handler: async (_args, ctx) => {
-      ctx.ui.notify("Re-indexing all sessions...", "info");
-      const fresh = new SessionStore(root);
-      const { added } = fresh.sync();
-      const exported = fresh.exportMarkdown(join(root, "sessions", "summaries"));
-      await updateQmd();
-      syncFtsIndex(root, ftsIndex);
-      ctx.ui.notify(`Re-indexed ${added} sessions. Exported ${exported} markdown summaries.`, "success");
-    },
-  });
+  pi.registerCommand("session-reindex", sessionCommands.sessionReindex);
 
-  pi.registerCommand("setup-session-search", {
-    description: "Show session search status",
-    handler: async (_args, ctx) => {
-      ctx.ui.notify(`Session index: ${sessionStore.size()} sessions. Tools: session_search, session_list, session_read, session_decisions.`, "success");
-      ctx.ui.notify("Semantic search: run 'qmd embed' then use session_search with mode=semantic.", "info");
-    },
-  });
+  pi.registerCommand("setup-session-search", sessionCommands.setupSessionSearch);
+
+
 }
 
 /**
