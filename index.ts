@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { readFileSync, watch as fsWatch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createGovernedRepairCommands } from "./src/commands/governed-repairs";
+import { createInteroperabilityCommands } from "./src/commands/interoperability";
 import { notifyStructured, parseCommandArgs, wantsPlainOutput } from "./src/commands/output";
 import type { CommandDefinition, CommandUiContext } from "./src/commands/types";
 
@@ -77,8 +78,6 @@ import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
 import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-analysis";
 import { renderGovernanceSimulationReport, simulatePatchImpact } from "./src/governance-simulation";
 import { resolveMemoryProfile } from "./src/profile";
-import { exportToPiGovernanceBundle, importFromPiGovernanceBundle, runPiGovernanceDoctor } from "./src/pi-governance-compat";
-import { reconcilePiGovernanceBundles } from "./src/pi-governance-reconciliation";
 import { applyLegacyEvidenceMigration, scanLegacyEvidenceMigration } from "./src/evidence-migration";
 import type { CaptureCandidate, CodebaseAnalysisKind, CodebaseAnalysisTool, MemoryKind } from "./src/types";
 
@@ -814,71 +813,11 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
   pi.registerCommand("memory-store-integrity", governedRepairCommands.memoryStoreIntegrity);
   pi.registerCommand("memory-key-repair", governedRepairCommands.memoryKeyRepair);
 
-  pi.registerCommand("memory-export", {
-    description: "Export memory bundles. Usage: /memory-export --format pi-governance [--redacted] [--output bundle.json]",
-    handler: async (args, ctx) => {
-      const parsed = parseCommandArgs(args);
-      if (parsed.flags.format !== "pi-governance") { ctx.ui.notify("Usage: /memory-export --format pi-governance [--redacted] [--output bundle.json]", "warning"); return; }
-      const cfg = loadConfig(root);
-      const out = typeof parsed.flags.output === "string" ? parsed.flags.output : join(root, "runtime", `pi-governance-export-${Date.now()}.json`);
-      const profile = resolveMemoryProfile(root, sessionCwd);
-      const bundle = exportToPiGovernanceBundle(root, {
-        namespace: typeof parsed.flags.namespace === "string" ? parsed.flags.namespace : cfg.piGovernance.namespace,
-        project: typeof parsed.flags.project === "string" ? parsed.flags.project : undefined,
-        profile_id: profile.profile_id,
-        redacted: parsed.flags.redacted === true,
-      });
-      writeFileSync(out, `${JSON.stringify(bundle, null, 2)}\n`, "utf-8");
-      ctx.ui.notify(`Exported pi-governance bundle: ${out}`, "success");
-    },
-  });
-
-  pi.registerCommand("memory-import", {
-    description: "Import memory bundles. Usage: /memory-import --format pi-governance <bundle.json> [--apply] [--backup] [--redacted-aware]",
-    handler: async (args, ctx) => {
-      const parsed = parseCommandArgs(args);
-      if (parsed.flags.format !== "pi-governance" || !parsed.positional[0]) { ctx.ui.notify("Usage: /memory-import --format pi-governance <bundle.json> [--apply] [--backup] [--redacted-aware]", "warning"); return; }
-      const path = parsed.positional[0];
-      const bundle = JSON.parse(readFileSync(path, "utf-8"));
-      const result = importFromPiGovernanceBundle(root, bundle, { dryRun: parsed.flags.apply !== true, backup: parsed.flags.backup === true, redactedAware: parsed.flags["redacted-aware"] === true });
-      ctx.ui.notify(JSON.stringify(result, null, 2), result.dry_run ? "info" : "success");
-    },
-  });
-
-  pi.registerCommand("memory-reconcile", {
-    description: "Compare local memory with an independent peer bundle without mutation. Usage: /memory-reconcile <peer-bundle.json> [--project <name>] [--profile <id>] [--json]",
-    handler: async (args, ctx) => {
-      try {
-        const parsed = parseCommandArgs(args);
-        const peerPath = parsed.positional[0];
-        if (!peerPath) {
-          ctx.ui.notify("Usage: /memory-reconcile <peer-bundle.json> [--project <name>] [--profile <id>] [--json]", "warning");
-          return;
-        }
-        const cfg = loadConfig(root);
-        const source = exportToPiGovernanceBundle(root, {
-          namespace: cfg.piGovernance.namespace,
-          project: typeof parsed.flags.project === "string" ? parsed.flags.project : undefined,
-          profile_id: typeof parsed.flags.profile === "string" ? parsed.flags.profile : undefined,
-        });
-        const destination = JSON.parse(readFileSync(peerPath, "utf-8"));
-        const report = reconcilePiGovernanceBundles(source, destination);
-        const text = `Reconciliation is report-only: ${report.artifact_counts.records.source} local record(s), ${report.artifact_counts.records.destination} peer record(s), ${report.sections.records.divergent_ids.length} divergent ID(s).`;
-        notifyStructured(ctx, args, report, text, report.sections.records.divergent_ids.length > 0 ? "warning" : "info");
-      } catch (error) {
-        ctx.ui.notify(`Memory reconciliation failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-      }
-    },
-  });
-
-  pi.registerCommand("memory-governance", {
-    description: "Check optional pi-governance-rs bridge status. Usage: /memory-governance doctor",
-    handler: async (args, ctx) => {
-      if ((parseCommandArgs(args).positional[0] ?? "doctor") !== "doctor") { ctx.ui.notify("Usage: /memory-governance doctor", "warning"); return; }
-      const report = runPiGovernanceDoctor(root);
-      ctx.ui.notify(JSON.stringify(report, null, 2), report.ok ? "success" : "warning");
-    },
-  });
+  const interoperabilityCommands = createInteroperabilityCommands({ getRoot: () => root, getSessionCwd: () => sessionCwd });
+  pi.registerCommand("memory-export", interoperabilityCommands.memoryExport);
+  pi.registerCommand("memory-import", interoperabilityCommands.memoryImport);
+  pi.registerCommand("memory-reconcile", interoperabilityCommands.memoryReconcile);
+  pi.registerCommand("memory-governance", interoperabilityCommands.memoryGovernance);
 
   pi.registerCommand("memory-recall-xray", {
     description: "Browse why memory would be included or excluded for a query (read-only). Usage: /memory-recall-xray <query> [--plain|--json]",
