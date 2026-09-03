@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { readFileSync, watch as fsWatch, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createCaptureCommands } from "./src/commands/capture";
 import { createDiagnosticCommands } from "./src/commands/diagnostics";
 import { createGovernedRepairCommands } from "./src/commands/governed-repairs";
 import { createInteroperabilityCommands } from "./src/commands/interoperability";
@@ -49,7 +50,7 @@ import { actionsFromAgentMessages } from "./src/capture-activity";
 import { processCaptureTurn } from "./src/capture-coordinator";
 import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
 import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
-import { candidateBrowserOptions, captureQualityBrowserOptions, evidenceBrowserOptions, inquiryBrowserOptions, memoryRecordBrowserOptions, openBrowser } from "./src/tui/browser-adapters";
+import { candidateBrowserOptions, inquiryBrowserOptions, memoryRecordBrowserOptions, openBrowser } from "./src/tui/browser-adapters";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { loadActiveRecords } from "./src/store";
@@ -57,28 +58,19 @@ import { buildCandidateTrustMetadata } from "./src/trust";
 import { captureReinforcementLink, classifyRecordedToolOutcome, linkExplicitCorrectionToMemory } from "./src/reinforcement";
 import { appendInquiryRecord, applyInquiryStaleness, createInquiryRecord, planInquiryStaleness, readInquiryRecords, selectRelevantInquiries, renderInquiryInjectionBlock, transitionInquiry } from "./src/inquiries";
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
-import { appendEvidenceRecord, readEvidenceRecords } from "./src/evidence";
-import { linkEvidenceToCandidate } from "./src/evidence-link";
 import { generateProcedureCandidates, renderProcedureCandidateReport, saveProcedureCandidateReport } from "./src/procedure-candidates";
 import { appendRuntimeEvent } from "./src/runtime-events";
 import { renderInvocationProfileReport } from "./src/profiling";
-import { buildCaptureQualityReport, renderCaptureQualityReport } from "./src/capture-quality";
-import { auditCaptureHistory, renderCaptureAuditReport } from "./src/capture-audit";
-import { applyCaptureBackfill, previewCaptureBackfill, saveCaptureBackfillPreview } from "./src/capture-backfill";
 import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
 import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-analysis";
 import { renderGovernanceSimulationReport, simulatePatchImpact } from "./src/governance-simulation";
 import { resolveMemoryProfile } from "./src/profile";
-import { applyLegacyEvidenceMigration, scanLegacyEvidenceMigration } from "./src/evidence-migration";
-import type { CaptureCandidate, CodebaseAnalysisKind, CodebaseAnalysisTool, MemoryKind } from "./src/types";
+import type { CaptureCandidate } from "./src/types";
 
 function nowIso(): string { return new Date().toISOString(); }
 function shortId(prefix: string): string {
   return `${prefix}_${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}_${Math.random().toString(36).slice(2, 6)}`;
 }
-const CODEBASE_EVIDENCE_TOOLS = new Set<CodebaseAnalysisTool>(["tsc", "eslint", "playwright", "vitest", "fallow", "custom"]);
-const CODEBASE_ANALYSIS_KINDS = new Set<CodebaseAnalysisKind>(["typecheck", "lint", "test", "e2e", "dependency", "dead_code", "complexity", "security", "duplication", "custom"]);
-
 function extractText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -818,185 +810,18 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("memory-evidence", {
-    description: "Manage structured evidence. Usage: /memory-evidence migrate-legacy [--apply --fingerprint <sha256>] [--json] | add-codebase-analysis ... | link <evidence-id> --statement \"...\"", 
-    handler: async (args, ctx) => {
-      const parsed = parseCommandArgs(args);
-      const action = parsed.positional[0];
-      if (!action || action === "list") {
-        const evidence = readEvidenceRecords(root);
-        const plain = evidence.map((ev) => `${ev.id} [${ev.source_kind}, ${ev.trust_class}, ${ev.polarity}] ${ev.source_summary}`).join("\n") || "No evidence records.";
-        rememberCommand("memory-evidence", plain, `evidence: ${evidence.length} records`);
-        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, evidence, plain, "info");
-        else await openBrowser(ctx, evidenceBrowserOptions(evidence), plain);
-        return;
-      }
-      if (action === "migrate-legacy") {
-        try {
-          if (parsed.flags.apply !== true) {
-            const plan = scanLegacyEvidenceMigration(root);
-            notifyStructured(ctx, args, plan, `Legacy evidence migration preview: ${plan.evidence_to_create} evidence record(s), ${plan.unresolved_references} unresolved reference(s).`, plan.evidence_to_create > 0 ? "warning" : "info");
-            return;
-          }
-          const fingerprint = typeof parsed.flags.fingerprint === "string" ? parsed.flags.fingerprint : "";
-          if (!fingerprint) {
-            ctx.ui.notify("Apply requires the reviewed preview fingerprint. Run /memory-evidence migrate-legacy --json first.", "warning");
-            return;
-          }
-          const result = applyLegacyEvidenceMigration(root, fingerprint, nowIso());
-          notifyStructured(ctx, args, result, result.mutation_performed ? `Legacy evidence migration applied. Backup: ${result.backup_path}; report: ${result.report_path}.` : "No legacy evidence migration changes were needed.", result.mutation_performed ? "success" : "info");
-        } catch (error) {
-          ctx.ui.notify(`Legacy evidence migration failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-        }
-        return;
-      }
-      if (action === "link") {
-        const evidenceId = parsed.positional[1];
-        const statement = typeof parsed.flags.statement === "string" ? parsed.flags.statement : "";
-        const tags = typeof parsed.flags.tags === "string" ? parsed.flags.tags.split(",").map((tag) => tag.trim()).filter(Boolean) : undefined;
-        const confidence = typeof parsed.flags.confidence === "string" ? Number(parsed.flags.confidence) : undefined;
-        const result = linkEvidenceToCandidate(root, {
-          evidence_id: evidenceId,
-          statement,
-          kind: typeof parsed.flags.kind === "string" ? parsed.flags.kind as MemoryKind : undefined,
-          tags,
-          scope: typeof parsed.flags.scope === "string" ? parsed.flags.scope : undefined,
-          confidence: Number.isFinite(confidence) ? confidence : undefined,
-          forceReview: parsed.flags["force-review"] === true,
-          now: nowIso(),
-          cwd: sessionCwd,
-        });
-        ctx.ui.notify(redactSecrets(result.message), result.status === "failed" || result.status === "rejected" ? "warning" : "success");
-        return;
-      }
-      if (action !== "add-codebase-analysis") {
-        ctx.ui.notify("Usage: /memory-evidence add-codebase-analysis --tool <tsc|eslint|playwright|vitest|fallow|custom> --command \"<command>\" --exit-code <code> --analysis-kind <kind> OR /memory-evidence link <evidence-id> --statement \"...\"", "warning");
-        return;
-      }
-      const tool = parsed.flags.tool;
-      const analysisKind = parsed.flags["analysis-kind"];
-      if (typeof tool !== "string" || !CODEBASE_EVIDENCE_TOOLS.has(tool as CodebaseAnalysisTool)) {
-        ctx.ui.notify(`Invalid codebase evidence tool. Supported: ${[...CODEBASE_EVIDENCE_TOOLS].join(", ")}`, "error");
-        return;
-      }
-      if (typeof analysisKind !== "string" || !CODEBASE_ANALYSIS_KINDS.has(analysisKind as CodebaseAnalysisKind)) {
-        ctx.ui.notify(`Invalid codebase analysis kind. Supported: ${[...CODEBASE_ANALYSIS_KINDS].join(", ")}`, "error");
-        return;
-      }
-      const command = typeof parsed.flags.command === "string" ? redactSecrets(parsed.flags.command) : undefined;
-      const exitRaw = typeof parsed.flags["exit-code"] === "string" ? Number(parsed.flags["exit-code"]) : undefined;
-      if (exitRaw !== undefined && !Number.isFinite(exitRaw)) {
-        ctx.ui.notify("Invalid --exit-code; expected a number.", "error");
-        return;
-      }
-      const profile = resolveMemoryProfile(root, sessionCwd);
-      try {
-        const record = appendEvidenceRecord(root, {
-          id: "",
-          resource_id: profile.resource_id,
-          profile_id: profile.profile_id,
-          thread_id: "manual-command",
-          created_at: nowIso(),
-          source_kind: "codebase_analysis",
-          source_tool: tool,
-          source_ref: command,
-          source_summary: redactSecrets(typeof parsed.flags.summary === "string" ? parsed.flags.summary : `${tool} ${analysisKind} evidence${exitRaw === undefined ? "" : ` (exit ${exitRaw})`}`),
-          trust_class: "passing_tool_or_test_outcome",
-          polarity: exitRaw === undefined || exitRaw === 0 ? "supports" : "qualifies",
-          durability_signal: "task",
-          related_memory_ids: [],
-          redaction_status: "none",
-          codebase_analysis: {
-            source_kind: "codebase_analysis",
-            tool: tool as CodebaseAnalysisTool,
-            command,
-            exit_code: exitRaw,
-            file_path: typeof parsed.flags.file === "string" ? redactSecrets(parsed.flags.file) : undefined,
-            symbol: typeof parsed.flags.symbol === "string" ? redactSecrets(parsed.flags.symbol) : undefined,
-            analysis_kind: analysisKind as CodebaseAnalysisKind,
-            timestamp: nowIso(),
-          },
-        });
-        ctx.ui.notify(`Added codebase-analysis evidence ${record.id}. Evidence is support, not automatic durable truth.`, "success");
-      } catch (err) {
-        ctx.ui.notify(`Failed to add codebase-analysis evidence: ${err instanceof Error ? err.message : String(err)}`, "error");
-      }
-    },
-  });
+  const captureCommands = createCaptureCommands({ getRoot: () => root, getSessionCwd: () => sessionCwd, nowIso, rememberCommand });
+  pi.registerCommand("memory-evidence", captureCommands.memoryEvidence);
 
   pi.registerCommand("memory-background", qualityCommands.memoryBackground);
 
   pi.registerCommand("memory-recall-effectiveness", qualityCommands.memoryRecallEffectiveness);
 
-  pi.registerCommand("memory-capture-backfill", {
-    description: "Preview or apply fingerprinted candidate-only historical preference backfill. Usage: /memory-capture-backfill [--since YYYY-MM-DD] [--output FILE] [--apply --fingerprint HASH]",
-    handler: async (args, ctx) => {
-      try {
-        const parsed = parseCommandArgs(args);
-        const since = typeof parsed.flags.since === "string" ? parsed.flags.since : undefined;
-        if (since && !/^20\d{2}-\d{2}-\d{2}$/.test(since)) {
-          ctx.ui.notify("Invalid --since date. Use YYYY-MM-DD.", "warning");
-          return;
-        }
-        if (parsed.flags.apply === true) {
-          const fingerprint = typeof parsed.flags.fingerprint === "string" ? parsed.flags.fingerprint : "";
-          const result = applyCaptureBackfill(root, { since, fingerprint, now: nowIso() });
-          ctx.ui.notify(`Backfill created ${result.candidates_created} candidate(s) and reinforced ${result.candidates_reinforced}. Backup: ${result.backup_path}`, "success");
-          return;
-        }
-        const preview = previewCaptureBackfill(root, { since, now: nowIso() });
-        const output = typeof parsed.flags.output === "string" ? saveCaptureBackfillPreview(root, preview, parsed.flags.output) : undefined;
-        const text = [
-          `Capture backfill preview: ${preview.candidates.length} candidate(s).`,
-          `Fingerprint: ${preview.fingerprint}`,
-          `Contaminated records: ${preview.contaminated_record_ids.length}`,
-          `Contaminated candidates: ${preview.contaminated_candidate_ids.length}`,
-          `Rescope records: ${preview.rescope_record_ids.length}`,
-          `Skipped ambiguous-scope findings: ${preview.skipped_ambiguous_scope_count}`,
-          ...(output ? [`Report: ${output}`] : []),
-          "No mutation performed.",
-        ].join("\n");
-        notifyStructured(ctx, args, preview, text, preview.candidates.length ? "warning" : "info");
-      } catch (err) {
-        ctx.ui.notify(`Capture backfill failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("memory-capture-backfill", captureCommands.memoryCaptureBackfill);
 
-  pi.registerCommand("memory-capture-audit", {
-    description: "Audit historical preference capture and scope without mutation. Usage: /memory-capture-audit [--since YYYY-MM-DD] [--plain|--json]",
-    handler: async (args, ctx) => {
-      try {
-        const parsed = parseCommandArgs(args);
-        const since = typeof parsed.flags.since === "string" ? parsed.flags.since : undefined;
-        if (since && !/^20\d{2}-\d{2}-\d{2}$/.test(since)) {
-          ctx.ui.notify("Invalid --since date. Use YYYY-MM-DD.", "warning");
-          return;
-        }
-        const report = auditCaptureHistory(root, { since, now: nowIso() });
-        const text = renderCaptureAuditReport(report);
-        rememberCommand("memory-capture-audit", text, `capture audit: ${report.historical_preferences.length} historical preferences, ${report.contaminated_record_ids.length} contaminated records, ${report.contaminated_candidate_ids.length} contaminated candidates`);
-        notifyStructured(ctx, args, report, text, report.contaminated_record_ids.length || report.rescope_proposals.length ? "warning" : "info");
-      } catch (err) {
-        ctx.ui.notify(`Capture audit failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("memory-capture-audit", captureCommands.memoryCaptureAudit);
 
-  pi.registerCommand("memory-capture-quality", {
-    description: "Show read-only preference capture funnel and scope quality. Usage: /memory-capture-quality [--plain|--json]",
-    handler: async (args, ctx) => {
-      try {
-        const report = buildCaptureQualityReport(root, { now: nowIso() });
-        const text = renderCaptureQualityReport(report);
-        rememberCommand("memory-capture-quality", text, `capture quality: ${report.messages_evaluated} evaluated, ${report.pending_candidates} pending`);
-        if (wantsPlainOutput(args) || !ctx.ui.custom) notifyStructured(ctx, args, report, text, report.funnel.rejected > report.funnel.candidate_created ? "warning" : "info");
-        else await openBrowser(ctx, captureQualityBrowserOptions(report), text);
-      } catch (err) {
-        ctx.ui.notify(`Capture quality analysis failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-      }
-    },
-  });
+  pi.registerCommand("memory-capture-quality", captureCommands.memoryCaptureQuality);
 
   pi.registerCommand("memory-store-quality", qualityCommands.memoryStoreQuality);
 
