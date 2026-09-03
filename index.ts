@@ -6,6 +6,7 @@ import { createCaptureCommands } from "./src/commands/capture";
 import { createDiagnosticCommands } from "./src/commands/diagnostics";
 import { createGovernedRepairCommands } from "./src/commands/governed-repairs";
 import { createInteroperabilityCommands } from "./src/commands/interoperability";
+import { createLearningCommands } from "./src/commands/learning";
 import { createQualityCommands } from "./src/commands/quality";
 import { createReinforcementCommands } from "./src/commands/reinforcement";
 import { createSessionCommands } from "./src/commands/sessions";
@@ -61,11 +62,8 @@ import { buildCandidateTrustMetadata } from "./src/trust";
 import { captureReinforcementLink, classifyRecordedToolOutcome, linkExplicitCorrectionToMemory } from "./src/reinforcement";
 import { appendInquiryRecord, createInquiryRecord, selectRelevantInquiries, renderInquiryInjectionBlock } from "./src/inquiries";
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
-import { generateProcedureCandidates, renderProcedureCandidateReport, saveProcedureCandidateReport } from "./src/procedure-candidates";
 import { appendRuntimeEvent } from "./src/runtime-events";
 import { renderInvocationProfileReport } from "./src/profiling";
-import { draftSkillFromProcedureCandidate } from "./src/skill-draft";
-import { runFailureAnalysis, renderFailureAnalysisReport } from "./src/failure-analysis";
 import { renderGovernanceSimulationReport, simulatePatchImpact } from "./src/governance-simulation";
 import { resolveMemoryProfile } from "./src/profile";
 import type { CaptureCandidate } from "./src/types";
@@ -767,42 +765,12 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
   pi.registerCommand("memory-timeline", qualityCommands.memoryTimeline);
 
-  pi.registerCommand("procedure-candidates", {
-    description: "Generate review-only procedure candidates from repeated workflow memory",
-    handler: async (args, ctx) => {
-      try {
-        const report = generateProcedureCandidates(root, { now: nowIso() });
-        ctx.ui.notify(renderProcedureCandidateReport(report), report.candidates.length ? "success" : "info");
-        if (args.includes("--save")) {
-          const paths = saveProcedureCandidateReport(root, report);
-          ctx.ui.notify(`Procedure candidate report saved: ${paths.mdPath}`, "success");
-        }
-      } catch (err) {
-        ctx.ui.notify(`Procedure candidates failed: ${err}`, "error");
-      }
-    },
-  });
+  const learningCommands = createLearningCommands({ getRoot: () => root, nowIso });
+  pi.registerCommand("procedure-candidates", learningCommands.procedureCandidates);
 
-  pi.registerCommand("memory-skill", {
-    description: "Generate review-only skill draft artifacts from procedure candidates. Usage: /memory-skill draft <procedure-candidate-id>",
-    handler: async (args, ctx) => {
-      const parsed = parseCommandArgs(args);
-      if (parsed.positional[0] !== "draft") { ctx.ui.notify("Usage: /memory-skill draft <procedure-candidate-id>", "warning"); return; }
-      const result = draftSkillFromProcedureCandidate(root, parsed.positional[1] ?? "", nowIso());
-      ctx.ui.notify(redactSecrets(result.message), result.status === "draft_created" ? "success" : "error");
-    },
-  });
+  pi.registerCommand("memory-skill", learningCommands.memorySkill);
 
-  pi.registerCommand("memory-failures", {
-    description: "Analyze failed jobs/rejected candidates into review-only learning artifacts. Usage: /memory-failures analyze [--save]",
-    handler: async (args, ctx) => {
-      const parsed = parseCommandArgs(args);
-      if ((parsed.positional[0] ?? "analyze") !== "analyze") { ctx.ui.notify("Usage: /memory-failures analyze [--save]", "warning"); return; }
-      const { report, path } = runFailureAnalysis(root, { now: nowIso(), save: parsed.flags.save === true });
-      ctx.ui.notify(renderFailureAnalysisReport(report), "info");
-      if (path) ctx.ui.notify(`Failure analysis saved: ${path}`, "success");
-    },
-  });
+  pi.registerCommand("memory-failures", learningCommands.memoryFailures);
 
   pi.registerCommand("memory-inbox", browserCommands.memoryInbox);
 
