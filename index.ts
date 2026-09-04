@@ -1,6 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { readFileSync, watch as fsWatch, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { watch as fsWatch } from "node:fs";
 import { createBrowserCommands } from "./src/commands/browser";
 import { createCaptureCommands } from "./src/commands/capture";
 import { createDiagnosticCommands } from "./src/commands/diagnostics";
@@ -11,8 +10,8 @@ import { createMaintenanceCommands } from "./src/commands/maintenance";
 import { createQualityCommands } from "./src/commands/quality";
 import { createReinforcementCommands } from "./src/commands/reinforcement";
 import { createSessionCommands } from "./src/commands/sessions";
-import { notifyStructured, parseCommandArgs, wantsPlainOutput } from "./src/commands/output";
 import type { CommandDefinition, CommandUiContext } from "./src/commands/types";
+import { createLifecycleHandlers, type LifecycleState } from "./src/lifecycle";
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; details: unknown };
 type UiContext = CommandUiContext;
@@ -36,31 +35,14 @@ import { ensureMemoryDirs, resolveRoot } from "./src/paths";
 import { appendDailyLog, readDailyLog, todayString } from "./src/daily";
 import { addScratchpadItem, clearDoneScratchpadItems, listScratchpadItems, markScratchpadDone, markScratchpadUndone } from "./src/scratchpad";
 import { appendCandidate, listCandidates, shouldPersistWorthDecision, withMemoryWorth } from "./src/inbox";
-import { curateInbox } from "./src/curator";
-import { applyPatch } from "./src/patch";
-import { buildRetrievalContext, syncFtsIndex } from "./src/retriever";
+import { syncFtsIndex } from "./src/retriever";
 import { renderMemoryToDisk } from "./src/render";
-import { setupQmd, updateQmd, runQmd, qmdSearchArgs, qmdCollectionName, type MemorySearchMode } from "./src/qmd";
-import { runConsolidation, type ConsolidationResult } from "./src/consolidator";
-import { loadConfig } from "./src/config";
-import { SessionStore, buildSessionSearchTools, buildSessionContextBlock, SESSION_SYNC_INTERVAL_MS } from "./src/session-search";
-import { isChildProcess } from "./src/sessions/store";
-import { createInboxReviewComponent, buildInboxNotification, shouldPromptForInbox, type InboxOverlayAction } from "./src/tui/InboxReviewOverlay";
-import { maybeCorrectionSignal } from "./src/corrections";
-import { actionsFromAgentMessages } from "./src/capture-activity";
-import { processCaptureTurn } from "./src/capture-coordinator";
-import { createPatchReviewComponent } from "./src/tui/PatchReviewPanel";
-import { createMemoryListComponent } from "./src/tui/MemoryListPanel";
-import { openBrowser } from "./src/tui/browser-adapters";
+import { updateQmd, runQmd, qmdSearchArgs, type MemorySearchMode } from "./src/qmd";
+import { SessionStore } from "./src/session-search";
 import { MemoryFtsIndex } from "./src/search/fts";
 import { runFtsAwarePostMutationChecksAfterSync } from "./src/post-mutation-checks";
 import { buildCandidateTrustMetadata } from "./src/trust";
-import { captureReinforcementLink, classifyRecordedToolOutcome, linkExplicitCorrectionToMemory } from "./src/reinforcement";
-import { appendInquiryRecord, createInquiryRecord, selectRelevantInquiries, renderInquiryInjectionBlock } from "./src/inquiries";
 import { scanSecrets, shouldBlockPersistence, redactSecrets } from "./src/secret-scanner";
-import { appendRuntimeEvent } from "./src/runtime-events";
-import { renderInvocationProfileReport } from "./src/profiling";
-import { resolveMemoryProfile } from "./src/profile";
 import type { CaptureCandidate } from "./src/types";
 
 function nowIso(): string { return new Date().toISOString(); }
@@ -126,461 +108,24 @@ export default function persistentIntelligence(pi: ExtensionAPI) {
 
   // ─── Lifecycle ──────────────────────────────────────────────────────
 
-  pi.on("session_start", async (_event, ctx) => {
-    // Resolve root from cwd settings.json (localPath cascade)
-    const newRoot = resolveRoot(ctx.cwd);
-    if (newRoot !== root) {
-      root = newRoot;
-      ftsIndex.close();
-      ftsIndex = new MemoryFtsIndex(root + "/search/memory-fts.db");
-      sessionStore = new SessionStore(root);
-      sessionStore.load();
-    }
-    // Sync FTS with current records on session start
-    syncFtsIndex(root, ftsIndex);
-
-    ensureMemoryDirs(root);
-    sessionCwd = ctx.cwd ?? process.cwd();
-    inboxOverlayShown = false;  // reset per session
-    await setupQmd(root);
-
-    // ── Session index sync ────────────────────────────────────────────
-    try {
-      const { added, updated } = sessionStore.sync();
-      // Export markdown summaries for qmd semantic indexing
-      const summariesDir = join(root, "sessions", "summaries");
-      sessionStore.exportMarkdown(summariesDir);
-      if (added + updated > 0 && ctx.hasUI) {
-        ctx.ui.notify(`Session index: ${sessionStore.size()} sessions (${added} new, ${updated} updated)`, "info");
-      }
-    } catch { /* best-effort */ }
-
-    // ── Session tools ─────────────────────────────────────────────────
-    const sessionTools = buildSessionSearchTools(root, sessionStore);
-
-    pi.registerTool({
-      name: "session_search",
-      label: "Session Search",
-      description: "Search past pi sessions by content, decisions, project, or date. Use mode=semantic for conceptual queries (requires qmd embeddings).",
-      parameters: Type.Object({
-        query: Type.String(),
-        project: Type.Optional(Type.String()),
-        after: Type.Optional(Type.String({ description: "ISO date e.g. 2026-04-01" })),
-        limit: Type.Optional(Type.Number()),
-        include_archived: Type.Optional(Type.Boolean()),
-        mode: Type.Optional(Type.Union([Type.Literal("keyword"), Type.Literal("semantic")], { description: "Search mode: keyword (default, instant) or semantic (requires qmd)" })),
-      }),
-      async execute(_id, params) {
-        let text: string;
-        if (params.mode === "semantic") {
-          // Delegate to qmd over session summaries
-          try {
-            const result = await runQmd(qmdSearchArgs(params.query, "semantic", params.limit ?? 8), 10_000);
-            text = result.stdout || "No semantic results. Ensure qmd embeddings are complete (run: qmd embed).";
-          } catch {
-            text = await sessionTools.session_search(params);
-          }
-        } else {
-          text = await sessionTools.session_search(params);
-        }
-        return { content: [{ type: "text", text }], details: {} };
-      },
-    });
-
-    pi.registerTool({
-      name: "session_list",
-      label: "Session List",
-      description: "List past pi sessions filtered by project or date range.",
-      parameters: Type.Object({
-        project: Type.Optional(Type.String()),
-        after: Type.Optional(Type.String()),
-        before: Type.Optional(Type.String()),
-        limit: Type.Optional(Type.Number()),
-        include_archived: Type.Optional(Type.Boolean()),
-      }),
-      async execute(_id, params) {
-        return { content: [{ type: "text", text: await sessionTools.session_list(params) }], details: {} };
-      },
-    });
-
-    pi.registerTool({
-      name: "session_read",
-      label: "Session Read",
-      description: "Read the full conversation from a past session by ID or file path.",
-      parameters: Type.Object({
-        session: Type.String({ description: "Session UUID or file path" }),
-        offset: Type.Optional(Type.Number()),
-        limit: Type.Optional(Type.Number()),
-      }),
-      async execute(_id, params) {
-        return { content: [{ type: "text", text: await sessionTools.session_read(params) }], details: {} };
-      },
-    });
-
-    pi.registerTool({
-      name: "session_decisions",
-      label: "Session Decisions",
-      description: "List #decision markers from recent sessions. Review past architectural and workflow decisions.",
-      parameters: Type.Object({
-        days: Type.Optional(Type.Number({ description: "Days back to look (default 7)" })),
-        project: Type.Optional(Type.String()),
-      }),
-      async execute(_id, params) {
-        return { content: [{ type: "text", text: await sessionTools.session_decisions(params) }], details: {} };
-      },
-    });
-
-    // ── Periodic sync (like pi-session-search, 5min interval) ─────────
-    if (!isChildProcess()) {
-      // File-watch for instant detection of new session files
-      try {
-        const { homedir } = await import("node:os");
-        const sessDirs = [join(homedir(), ".pi", "agent", "sessions")];
-        for (const dir of sessDirs) {
-          try {
-            const watcher = fsWatch(dir, { persistent: false }, () => {
-              if (syncDebounce) clearTimeout(syncDebounce);
-              syncDebounce = setTimeout(() => {
-                try {
-                  sessionStore.sync();
-                  sessionStore.exportMarkdown(join(root, "sessions", "summaries"));
-                } catch { /* ignore */ }
-              }, 2000);
-            });
-            fsWatchers.push(watcher);
-          } catch { /* fs.watch may not be available for this dir */ }
-        }
-      } catch { /* dynamic import may fail in some envs */ }
-
-      // Fallback periodic sync every 5 minutes
-      syncTimer = setInterval(() => {
-        try {
-          const { added, updated } = sessionStore.sync();
-          if (added + updated > 0) sessionStore.exportMarkdown(join(root, "sessions", "summaries"));
-        } catch { /* ignore */ }
-      }, SESSION_SYNC_INTERVAL_MS);
-    }
-
-    if (ctx.hasUI) ctx.ui.notify("Persistent Intelligence ready", "info");
-
-    // ── Version update check ──────────────────────────────────────────
-    // Check npm registry for a newer version once per session, non-blocking.
-    // Skipped in subagents and headless mode.
-    if (ctx.hasUI && !isChildProcess()) {
-      (async () => {
-        try {
-          const { readFileSync } = await import("node:fs");
-          const { join: pathJoin } = await import("node:path");
-          const pkgPath = pathJoin(import.meta.dir, "package.json");
-          const currentVersion: string = (JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string }).version;
-          const response = await fetch(`https://registry.npmjs.org/pi-persistent-intelligence/latest`, {
-            signal: AbortSignal.timeout(8_000),
-          });
-          if (!response.ok) return;
-          const data = await response.json() as { version?: string };
-          const latestVersion = data.version;
-          if (typeof latestVersion !== "string" || !latestVersion.trim()) return;
-
-          // Simple semver comparison: split on . and compare numerically
-          const parseVer = (v: string) => v.replace(/^v/, "").split(".").map(Number);
-          const current = parseVer(currentVersion);
-          const latest = parseVer(latestVersion);
-          const isNewer = latest[0] > current[0] || (latest[0] === current[0] && latest[1] > current[1]) || (latest[0] === current[0] && latest[1] === current[1] && latest[2] > current[2]);
-
-          if (isNewer) {
-            ctx.ui.notify(
-              `pi-persistent-intelligence ${latestVersion} is available (you have ${currentVersion}).\nRun: pi install npm:pi-persistent-intelligence`,
-              "warning",
-            );
-          }
-        } catch { /* best-effort: network unavailable, offline, etc. */ }
-      })();
-    }
+  const lifecycleState: LifecycleState = {
+    get root() { return root; }, set root(value) { root = value; },
+    get ftsIndex() { return ftsIndex; }, set ftsIndex(value) { ftsIndex = value; },
+    get sessionStore() { return sessionStore; }, set sessionStore(value) { sessionStore = value; },
+    get sessionCwd() { return sessionCwd; }, set sessionCwd(value) { sessionCwd = value; },
+    get inboxOverlayShown() { return inboxOverlayShown; }, set inboxOverlayShown(value) { inboxOverlayShown = value; },
+    get syncTimer() { return syncTimer; }, set syncTimer(value) { syncTimer = value; },
+    get syncDebounce() { return syncDebounce; }, set syncDebounce(value) { syncDebounce = value; },
+    fsWatchers, pendingUserMessages, pendingAssistantMessages,
+    get lastObservedModel() { return lastObservedModel; }, set lastObservedModel(value) { lastObservedModel = value; },
+  };
+  const lifecycleHandlers = createLifecycleHandlers(pi, lifecycleState, {
+    nowIso, extractText, extractMessageModel, resolveConsolidationModel, syncFtsAfterPatch,
   });
-
-  pi.on("before_agent_start", async (event, ctx) => {
-    // ── Inbox review — first turn only ─────────────────────────────────────
-    // Step 1: InboxReviewOverlay summary — ✓/~ badges, [A]/[R]/[S] actions.
-    //         Uses the same theme color mappings as PatchReviewPanel (via
-    //         themeFromInbox) for visual consistency across the extension.
-    // Step 2: If user picks [R] → open PatchReviewPanel for per-op selection
-    //         (identical to /curate-memory propose mode).
-    // minEvidenceCount: 1 — show all candidates for human review; evidence
-    // gate (≥2) still enforced by the curator at apply time.
-    if (!inboxOverlayShown && ctx.hasUI && ctx.ui.custom) {
-      inboxOverlayShown = true;
-      const cfg = loadConfig(root);
-      const threshold = cfg.curator.autoCurateHighThreshold ?? 0.85;
-      const promptThreshold = cfg.curator.inboxPromptThreshold ?? 3;
-      const pending = listCandidates(root).filter((c) => c.status === "new");
-
-      if (shouldPromptForInbox(pending, { batchThreshold: promptThreshold, singletonDirectReview: cfg.capture.singletonDirectReview })) {
-        const autoEligible = pending.filter((c) => (c.confidence ?? 0) >= threshold);
-        const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
-
-        try {
-          // ── Step 1: summary overlay ──────────────────────────────────
-          const action = await ctx.ui.custom<InboxOverlayAction>(
-            (tui, theme, _kb, done) =>
-              createInboxReviewComponent(
-                { candidates: pending, autoEligibleCount: autoEligible.length, highThreshold: threshold },
-                done,
-                tui as { requestRender(): void },
-                theme,
-              ),
-          );
-
-          if (action === "approve") {
-            // Apply ops for candidates meeting confidence threshold.
-            // Intentionally does not filter on default_selected -- pressing 'a' is an
-            // explicit user approval for all eligible ops, including review_only classified
-            // ones that would otherwise stay in inbox indefinitely.
-            const patch = curateInbox(root, { now: nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
-            const eligibleIds = patch.ops
-              .filter((op) => op.risk !== "high" &&
-                (op.record?.confidence ?? op.to_record?.confidence ?? 0) >= threshold)
-              .map((op) => op.op_id);
-            if (eligibleIds.length > 0) {
-              const applied = applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
-              await updateQmd();
-              syncFtsAfterPatch(patch, applied);
-              ctx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
-            }
-
-          } else if (action === "review") {
-            // Chain a second ctx.ui.custom() call to show PatchReviewPanel.
-            // The first ctx.ui.custom() (inbox overlay) must fully resolve before
-            // calling the second -- they are sequential, not concurrent.
-            // We are still inside before_agent_start at this point.
-            if (ctx.ui.custom) {
-              try {
-                const cfg2 = loadConfig(root);
-                const vaultPath2 = cfg2.vault.path ?? process.env.PI_VAULT_PATH;
-                const reviewPatch = curateInbox(root, { now: nowIso(), mode: "propose", vaultPath: vaultPath2, minEvidenceCount: 1 });
-                if (reviewPatch.ops.length > 0) {
-                  const selectedIds = await ctx.ui.custom<string[] | null>(
-                    (tui, theme, _kb, done) =>
-                      createPatchReviewComponent(reviewPatch, done, tui as any, undefined, theme),
-                  );
-                  if (selectedIds && selectedIds.length > 0) {
-                    const applied = applyPatch(root, reviewPatch, { selectedOpIds: selectedIds, now: nowIso() });
-                    await updateQmd();
-                    syncFtsAfterPatch(reviewPatch, applied);
-                    ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
-                  }
-                } else {
-                  ctx.ui.notify("No candidates meet curation thresholds.", "info");
-                }
-              } catch {
-                ctx.ui.notify("Type /curate-memory to review pending candidates.", "info");
-              }
-            } else {
-              ctx.ui.notify("Type /curate-memory to review pending candidates.", "info");
-            }
-          }
-          // "skip" / null — candidates stay in inbox, session continues
-        } catch {
-          ctx.ui.notify(buildInboxNotification(pending, autoEligible.length), "info");
-        }
-      }
-    }
-
-    // ── Context injection ───────────────────────────────────────────────
-    const context = await buildRetrievalContext(root, {
-      prompt: event.prompt ?? "",
-      today: todayString(),
-      useQmd: true,
-      qmdCollection: qmdCollectionName,
-      ftsIndex,
-      cwd: ctx.cwd ?? sessionCwd,
-      threadId: (event as { session_id?: string; sessionId?: string }).session_id ?? (event as { sessionId?: string }).sessionId ?? "current-session",
-    });
-    const sessionBlock = buildSessionContextBlock(sessionStore, todayString());
-    const inquiries = selectRelevantInquiries(root, {
-      profile_id: context.processorTraces.length > 0 ? (context.selectedMemory[0]?.profile_id ?? undefined) : undefined,
-      current_message: event.prompt ?? "",
-      tags: [],
-    });
-    const inquiryBlock = renderInquiryInjectionBlock(inquiries);
-    const combined = [sessionBlock ? `${context.markdown}\n\n## Today's Sessions\n${sessionBlock}` : context.markdown, inquiryBlock].filter(Boolean).join("\n\n");
-
-    if (!combined.trim()) return;
-    return {
-      message: {
-        customType: "pi-persistent-intelligence-context",
-        content: combined,
-        display: false,
-      },
-    };
-  });
-
-  pi.on("agent_end", async (event) => {
-    let sawObservableOutcome = false;
-    const eventMessages = (event.messages as any[]) ?? [];
-    const captureActions = actionsFromAgentMessages(eventMessages, sessionCwd);
-    const captureSessionId = String((event as any).session_id ?? (event as any).sessionId ?? "current-session");
-    for (const [messageIndex, msg] of eventMessages.entries()) {
-      if (msg.role === "user" && !msg.customType) {
-        const text = extractText(msg.content);
-        if (text.trim()) {
-          pendingUserMessages.push(text);
-          if (pendingUserMessages.length > 60) pendingUserMessages.shift();
-
-          const messageTurnId = String(msg.id ?? msg.messageId ?? msg.timestamp ?? (event as any).turn_id ?? (event as any).turnId ?? (event as any).id ?? `user-${messageIndex}`);
-          processCaptureTurn(root, {
-            session_id: captureSessionId,
-            turn_id: messageTurnId,
-            message: text,
-            launch_cwd: sessionCwd,
-            actions: captureActions,
-            now: nowIso(),
-          });
-
-          if (maybeCorrectionSignal(text)) {
-            try {
-              const selected = JSON.parse((await import("node:fs")).readFileSync(ensureMemoryDirs(root).runtime.selected, "utf-8")) as import("./src/types").MemoryRecord[];
-              linkExplicitCorrectionToMemory(root, text, selected, { thread_id: captureSessionId, now: nowIso() });
-            } catch { /* best-effort reinforcement linking */ }
-          }
-        }
-      } else if (msg.role === "toolResult" || msg.role === "tool") {
-        const toolName = String(msg.toolName ?? msg.name ?? msg.tool_name ?? "");
-        const details = msg.details ?? {};
-        const observableCommand = String(msg.input?.command ?? details.command ?? "");
-        const observableLabel = `${toolName} ${observableCommand}`;
-        if (/\b(test|typecheck|lint|check|build|playwright|vitest|tsc|cargo)\b/i.test(observableLabel)) {
-          const recordedOutcome = classifyRecordedToolOutcome({ ...details, isError: msg.isError === true || details.isError === true });
-          if (recordedOutcome !== "unknown") {
-            sawObservableOutcome = true;
-            try {
-              const selected = JSON.parse((await import("node:fs")).readFileSync(ensureMemoryDirs(root).runtime.selected, "utf-8")) as import("./src/types").MemoryRecord[];
-              captureReinforcementLink(root, {
-                selected_memory: selected,
-                session_id: captureSessionId,
-                observable_outcome: { kind: /\b(test|playwright|vitest)\b/i.test(observableLabel) ? "test" : "tool", success: recordedOutcome === "success", tool_name: toolName, command: observableCommand },
-                neutral_exposure_enabled: loadConfig(root).reinforcement.neutralExposureEnabled,
-                now: nowIso(),
-              });
-            } catch { /* observable reinforcement is best-effort and never mutates memory */ }
-          }
-        }
-      } else if (msg.role === "assistant") {
-        const observed = extractMessageModel(msg);
-        if (observed) lastObservedModel = observed;
-        const text = extractText(msg.content);
-        if (text.trim()) {
-          pendingAssistantMessages.push(text);
-          if (pendingAssistantMessages.length > 60) pendingAssistantMessages.shift();
-        }
-      }
-    }
-    if (!sawObservableOutcome && loadConfig(root).reinforcement.neutralExposureEnabled) {
-      try {
-        const selected = JSON.parse((await import("node:fs")).readFileSync(ensureMemoryDirs(root).runtime.selected, "utf-8")) as import("./src/types").MemoryRecord[];
-        captureReinforcementLink(root, {
-          selected_memory: selected,
-          session_id: "current-session",
-          neutral_exposure_enabled: true,
-          now: nowIso(),
-        });
-      } catch { /* neutral exposure is optional and best-effort */ }
-    }
-  });
-
-  pi.on("session_shutdown", async (event) => {
-    // Clear all timers and watchers
-    if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
-    if (syncDebounce) { clearTimeout(syncDebounce); syncDebounce = null; }
-    for (const w of fsWatchers) { try { w.close(); } catch { /* ignore */ } }
-    fsWatchers.length = 0;
-
-    if ((event as { reason?: string }).reason === "reload") return;
-
-    appendDailyLog(root, todayString(), `<!-- ${nowIso()} -->\n## Session ended\n- Persistent Intelligence captured session end marker.`);
-
-    // LLM consolidation — extracts candidates to inbox, deduped by Jaccard
-    const cfg = loadConfig(root);
-    const consolidationModel = resolveConsolidationModel(lastObservedModel);
-    let consolidationResult: ConsolidationResult | null = null;
-
-    if (pendingUserMessages.length >= 3) {
-      consolidationResult = await runConsolidation(
-        root, pendingUserMessages, pendingAssistantMessages,
-        todayString(), sessionCwd, pi, consolidationModel.model,
-      );
-      if (consolidationResult.status === "failed") {
-        const modelLabel = consolidationModel.model ? `${consolidationModel.model} (${consolidationModel.source})` : "Pi CLI default";
-        const reason = consolidationResult.failure_reason ?? "unknown failure";
-        appendRuntimeEvent(root, { type: "warn", severity: "medium", component: "consolidation", message: `session consolidation failed using ${modelLabel}: ${reason}` });
-        appendDailyLog(
-          root, todayString(),
-          `<!-- ${nowIso()} -->\n## Consolidation skipped\n- Persistent Intelligence could not run session consolidation using ${modelLabel}: ${reason}`,
-        );
-      }
-    }
-
-    // ── Tiered auto-curation ──────────────────────────────────────────
-    // Runs after consolidation so freshly extracted candidates are eligible.
-    //
-    // "off"          — never auto-curate; user runs /curate-memory manually
-    // "high-only"    — auto-apply only ops with confidence >= threshold AND
-    //                  not L1 / supersede (default_selected=true, risk=low)
-    // "all-eligible" — auto-apply every default_selected non-high-risk op
-    //
-    // L1 writes and supersede ops are NEVER auto-applied regardless of mode
-    // because they are marked risk="high" / default_selected=false by the curator.
-    const autoCurate = cfg.curator.autoCurate ?? "high-only";
-    const highThreshold = cfg.curator.autoCurateHighThreshold ?? 0.85;
-
-    if (autoCurate !== "off") {
-      try {
-        const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
-        const patch = curateInbox(root, { now: nowIso(), mode: "auto", vaultPath, governanceMode: cfg.governance.mode });
-
-        if (patch.ops.length > 0) {
-          // Filter ops to apply based on the autoCurate tier
-          const eligibleIds = patch.ops
-            .filter((op) => {
-              if (!op.default_selected || op.risk === "high") return false;
-              if (autoCurate === "high-only") {
-                const confidence = op.record?.confidence ?? op.to_record?.confidence ?? 0;
-                return confidence >= highThreshold;
-              }
-              return true; // "all-eligible"
-            })
-            .map((op) => op.op_id);
-
-          if (eligibleIds.length > 0) {
-            const applied = applyPatch(root, patch, { selectedOpIds: eligibleIds, now: nowIso() });
-            syncFtsAfterPatch(patch, applied); // F-03 fix: sync immediately after auto-curation patch plus post-sync diagnostics
-            const skipped = patch.ops.length - eligibleIds.length;
-            appendDailyLog(
-              root, todayString(),
-              `<!-- ${nowIso()} -->\n## Auto-curation\n- Applied ${applied.applied_ops.length} L2 op(s) automatically (${skipped} held for /curate-memory review).`,
-            );
-          }
-        }
-      } catch { /* best-effort — never crash shutdown */ }
-    }
-
-    // Log consolidation result (after curation, so it appears below auto-curation note)
-    if (consolidationResult && consolidationResult.candidates_added > 0) {
-      const held = listCandidates(root).filter((c) => c.status === "new").length;
-      if (held > 0) {
-        appendDailyLog(
-          root, todayString(),
-          `<!-- ${nowIso()} -->\n## Consolidation\n- ${consolidationResult.candidates_added} candidate(s) in inbox (${consolidationResult.candidates_skipped_dedup} deduped). ${held} await /curate-memory review.`,
-        );
-      }
-    }
-
-    pendingUserMessages.length = 0;
-    pendingAssistantMessages.length = 0;
-    lastObservedModel = null;
-
-    await updateQmd();
-      syncFtsIndex(root, ftsIndex);
-  });
+  pi.on("session_start", lifecycleHandlers.sessionStart);
+  pi.on("before_agent_start", lifecycleHandlers.beforeAgentStart);
+  pi.on("agent_end", lifecycleHandlers.agentEnd);
+  pi.on("session_shutdown", lifecycleHandlers.sessionShutdown);
 
   // ─── Core memory tools ───────────────────────────────────────────────
 
