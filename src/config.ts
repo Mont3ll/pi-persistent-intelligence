@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { ensureMemoryDirs } from "./paths";
 
 export interface PiMemoryConfig {
-  qmd: { collection: string; enabled: boolean };
+  qmd: { collection: string; enabled: boolean; injectionTimeoutMs: number };
   curator: {
     minConfidence: number;
     minEvidenceCount: number;
@@ -52,7 +52,7 @@ export interface PiMemoryConfig {
 }
 
 export const defaultConfig: PiMemoryConfig = {
-  qmd: { collection: "pi-persistent-intelligence", enabled: true },
+  qmd: { collection: "pi-persistent-intelligence", enabled: true, injectionTimeoutMs: 800 },
   curator: {
     minConfidence: 0.75,
     minEvidenceCount: 2,
@@ -112,6 +112,9 @@ export function loadConfig(root: string): PiMemoryConfig {
   try {
     const parsed = JSON.parse(readFileSync(paths.config, "utf-8")) as DeepPartial<PiMemoryConfig>;
     const merged = mergeConfig(defaultConfig, parsed);
+    if (!Number.isInteger(merged.qmd.injectionTimeoutMs) || merged.qmd.injectionTimeoutMs < 100 || merged.qmd.injectionTimeoutMs > 5000) {
+      merged.qmd.injectionTimeoutMs = defaultConfig.qmd.injectionTimeoutMs;
+    }
     if (!Number.isInteger(merged.inquiries.reviewWindowDays) || merged.inquiries.reviewWindowDays < 1 || merged.inquiries.reviewWindowDays > 3650) {
       merged.inquiries.reviewWindowDays = defaultConfig.inquiries.reviewWindowDays;
     }

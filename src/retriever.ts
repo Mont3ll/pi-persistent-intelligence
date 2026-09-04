@@ -106,8 +106,6 @@ function parseQmdIds(stdout: string): string[] {
  * Select relevant L2 records using hybrid FTS + qmd semantic search.
  * Falls back through: hybrid → FTS-only → term-matching.
  */
-const INJECTION_QMD_BUDGET_MS = 800;
-
 function isSubstantialPrompt(prompt: string): boolean {
   return prompt.trim().split(/\s+/).filter(Boolean).length > 8;
 }
@@ -134,6 +132,7 @@ async function selectMemoryHybrid(
   ftsIndex?: MemoryFtsIndex,
   useQmd?: boolean,
   qmdCollection?: string,
+  qmdTimeoutMs = 800,
   qmdRunner: (args: string[], timeoutMs: number) => Promise<{ stdout: string }> = runQmd,
 ): Promise<MemoryRecord[]> {
   const l1 = records.filter((r) => r.layer === "L1");
@@ -149,7 +148,7 @@ async function selectMemoryHybrid(
     if (useQmd && qmdCollection && isSubstantialPrompt(prompt)) {
       const qmdStart = performance.now();
       try {
-        const result = await qmdRunner(qmdSearchArgs(prompt, "semantic", budget.maxRecords, qmdCollection), INJECTION_QMD_BUDGET_MS);
+        const result = await qmdRunner(qmdSearchArgs(prompt, "semantic", budget.maxRecords, qmdCollection), qmdTimeoutMs);
         semanticIds = parseQmdIds(result.stdout).filter((id) => eligibleIds.has(id));
       } catch (err) {
         appendRuntimeEvent(root, { type: "warn", severity: "low", component: "retriever", message: `qmd unavailable during injection; using FTS fallback: ${err instanceof Error ? err.message : String(err)}` });
@@ -301,13 +300,13 @@ export async function buildRetrievalContext(root: string, options: RetrievalOpti
     return { markdown: "", selectedMemory: [], processorTraces: [], contestedMemory: [] };
   }
 
-  const mode = loadConfig(root).retrieval.injectionMode;
+  const config = loadConfig(root);
+  const mode = config.retrieval.injectionMode;
   if (mode === "policy_only" || mode === "wakeup") return buildPolicyOnlyContext(root, mode);
 
   const totalStart = performance.now();
   const timings = { loadRecordsMs: 0, processorPipelineMs: 0, ftsMs: 0, qmdMs: 0, dailyDigestMs: 0, assemblyMs: 0, runtimeWriteMs: 0, totalMs: 0 };
   const paths = ensureMemoryDirs(root);
-  const config = loadConfig(root);
   const maxTotal = options.maxTotalChars ?? 14_000;
   const maxRecords = options.maxRecords ?? config.retrieval.maxRecords ?? 12;
   const maxL1 = config.retrieval.maxL1Records ?? Math.min(4, Math.floor(maxRecords * 0.35));
@@ -342,6 +341,7 @@ export async function buildRetrievalContext(root: string, options: RetrievalOpti
     options.ftsIndex,
     options.useQmd,
     options.qmdCollection,
+    config.qmd.injectionTimeoutMs,
     options.qmdRunner,
   );
 
