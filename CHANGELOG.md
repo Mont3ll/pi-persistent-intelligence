@@ -4,9 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-04
+
 ### Added
 
-- Added a repository-only, fingerprint-gated external agent-memory benchmark harness with isolated governed-production and diagnostic-substrate tracks, AMA-Bench and LongMemEval-V2 adapters, and a fail-closed MemoryArena integration gate.
+- Added versioned semantic memory keys and a preview-first, fingerprint-gated normalized-key repair command with backups, collision checks, and audit reports.
+- Added deterministic legacy evidence resolution and governed evidence backfill with unresolved-reference diagnostics instead of fabricated evidence.
+- Added conservative successful-operation attribution, explicit browser reinforcement, and review-only stability proposals.
+- Added repository-only external benchmark infrastructure with isolated governed-production and diagnostic-substrate tracks, pinned AMA-Bench and LongMemEval-V2 adapters, exact approval fingerprints, resumable artifacts, and a fail-closed MemoryArena adapter gate.
+- Added mirrored, content-addressed JavaScript and Rust conformance fixtures for portable records, auxiliary artifacts, redaction, duplicate handling, sessions, events, and reconciliation.
+
+### Changed
+
+- Operational quality reports now score active memory and relationships separately from historical and review populations while retaining each population for inspection.
+- Extracted command handlers and lifecycle hooks from the extension entry point into focused modules while preserving the literal public command registry and runtime root switching.
+- Added bounded `qmd.injectionTimeoutMs` configuration for semantic prompt injection, defaulting to 800 milliseconds with FTS fallback.
+
+### Fixed
+
+- Publishing now fails closed on authentication, permission, network, and unknown npm errors while treating only confirmed duplicate versions as non-fatal.
+- Hardened evidence provenance, transactional migration rollback, active dangling-relationship reporting, negative-memory reinforcement exclusion, and imported artifact validation.
+- Quarantined divergent portable duplicate IDs, preserved stable patch identity and session scope, rejected spoofed reserved markers, and expanded portable redaction coverage.
+
+### Governance
+
+- Live repairs remain preview-first, fingerprinted, backed up, drift-protected, and explicitly approved.
+- Benchmark implementation and artifacts remain outside the npm package; diagnostic benchmark results cannot be reported as governed-production results.
+- Meta-consolidation remains manually invoked and report-only; cadence configuration does not schedule background work.
 
 ## [0.15.1] - 2026-08-20
 
