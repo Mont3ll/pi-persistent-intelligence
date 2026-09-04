@@ -14,6 +14,7 @@ describe("config", () => {
     const dir = root();
     const config = loadConfig(dir);
     expect(config.qmd.collection).toBe("pi-persistent-intelligence");
+    expect(config.qmd.injectionTimeoutMs).toBe(800);
     expect(config.curator.minConfidence).toBe(0.75);
     expect(config.llm.enabled).toBe(false);
     expect(config.vault.enabled).toBe(false);
@@ -36,6 +37,19 @@ describe("config", () => {
     expect(config.llm.enabled).toBe(true);
     expect(config.llm.model).toBe("test/model");
     expect(config.capture.activityRetentionCount).toBe(500);
+  });
+
+  test("validates qmd injection timeout bounds", () => {
+    const dir = root();
+    const paths = ensureMemoryDirs(dir);
+    for (const valid of [100, 1500, 5000]) {
+      writeFileSync(paths.config, JSON.stringify({ qmd: { injectionTimeoutMs: valid } }), "utf-8");
+      expect(loadConfig(dir).qmd.injectionTimeoutMs).toBe(valid);
+    }
+    for (const invalid of [99, 5001, 800.5, "1200"]) {
+      writeFileSync(paths.config, JSON.stringify({ qmd: { injectionTimeoutMs: invalid } }), "utf-8");
+      expect(loadConfig(dir).qmd.injectionTimeoutMs).toBe(800);
+    }
   });
 
   test("validates inquiry review window range", () => {

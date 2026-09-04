@@ -106,6 +106,22 @@ describe("retrieval hardening", () => {
     expect(context.selectedMemory.map((r) => r.id)).toContain("mem_semantic_l2");
   });
 
+  test("passes the bounded configured injection timeout to qmd", async () => {
+    const root = tempRoot();
+    writeFileSync(join(root, "config.json"), JSON.stringify({ qmd: { injectionTimeoutMs: 1500 } }), "utf-8");
+    addMemoryRecord(root, record("mem_l2", "L2", "semantic retrieval playbook"));
+    let observedTimeout = 0;
+    await buildRetrievalContext(root, {
+      prompt: "this is a substantial retrieval prompt that should call semantic qmd",
+      today: "2026-06-15",
+      ftsIndex: fts(["mem_l2"]),
+      useQmd: true,
+      qmdCollection: "test",
+      qmdRunner: async (_args, timeoutMs) => { observedTimeout = timeoutMs; return { stdout: "[]" }; },
+    });
+    expect(observedTimeout).toBe(1500);
+  });
+
   test("split L1/L2 budgets prevent L1 starvation by default and respect overrides", async () => {
     const root = tempRoot();
     for (let i = 0; i < 10; i++) addMemoryRecord(root, record(`l1_${i}`, "L1", `identity ${i}`));

@@ -18,7 +18,8 @@ All settings are optional. Missing keys fall back to defaults.
 {
   "qmd": {
     "collection": "pi-persistent-intelligence",
-    "enabled": true
+    "enabled": true,
+    "injectionTimeoutMs": 800
   },
   "curator": {
     "minConfidence": 0.75,
@@ -70,6 +71,16 @@ All settings are optional. Missing keys fall back to defaults.
 ---
 
 ## Settings reference
+
+### `qmd`
+
+| Key | Default | Description |
+|---|---|---|
+| `collection` | `"pi-persistent-intelligence"` | qmd collection used for semantic memory retrieval |
+| `enabled` | `true` | Enable semantic qmd retrieval during prompt injection |
+| `injectionTimeoutMs` | `800` | Injection-only qmd timeout in milliseconds; integer from 100 to 5000. Invalid values fall back to 800. |
+
+This timeout does not change explicit qmd search, setup, or update command budgets. Injection falls back to FTS when qmd fails or exceeds the budget.
 
 ### `curator`
 
@@ -129,12 +140,14 @@ Optional external `pi-governance-rs` bridge diagnostics. Disabled standalone mod
 | Key | Default | Description |
 |---|---|---|
 | `enabled` | `false` | Does not gate the `/meta-consolidation` command; reserved for future automation |
-| `cadence` | `"manual"` | `"manual"`, `"weekly"`, or `"monthly"` (future use) |
+| `cadence` | `"manual"` | Reserved value: `"manual"`, `"weekly"`, or `"monthly"` |
 | `min_l2_records` | `2` | Minimum cluster size to propose an L1 candidate |
 | `min_reinforcement_score` | `0` | Minimum reinforcement score for a cluster to be eligible |
 | `max_candidates_per_run` | `5` | Maximum L1 proposals per run |
 | `max_input_records` | `50` | Maximum L2 records to process per run |
 | `require_counterexample_search` | `true` | Whether counterexample search is mandatory (should not be disabled) |
+
+No scheduler currently consumes `enabled` or `cadence`. Meta-consolidation runs only through the explicit report-only command; setting `weekly` or `monthly` does not schedule background or LLM work.
 
 ### `vault`
 
