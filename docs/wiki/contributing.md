@@ -9,21 +9,23 @@ Thank you for your interest in contributing to `pi-persistent-intelligence`.
 ```bash
 git clone https://github.com/Mont3ll/pi-persistent-intelligence.git
 cd pi-persistent-intelligence
-bun install
+bun install --frozen-lockfile
 ```
+
+PI uses Bun `1.3.13`, declared in `package.json` and pinned in GitHub Actions.
 
 ---
 
 ## Development commands
 
 ```bash
-bun test              # run all 260 unit tests
-bun run typecheck     # TypeScript type checking
-bun run eval          # deterministic eval suite (14 categories, 7 hard invariants)
-npm pack --dry-run    # check package contents before publishing
+bun run verify:pr
+bun run release-audit
 ```
 
-All three must pass before any commit or pull request.
+`bun run verify:pr` is the required pull-request gate. It runs TypeScript type checking, the unit suite, and deterministic evals.
+
+`bun run release-audit` is the release gate. It runs the PR verification contract, then stress tests and `npm pack --dry-run`.
 
 ---
 
@@ -157,7 +159,8 @@ Hard invariants are reserved for safety properties that must never be violated:
 
 ## Pull requests
 
-- Run `bun test && bun run typecheck && bun run eval` before opening a PR
+- Run `bun run verify:pr` before opening or updating a PR
+- Run `bun run release-audit` before publishing a version
 - Describe what the change does, not how it was built
 - Link to relevant issues
 - Public documentation changes belong in `docs/wiki/`; internal architecture notes belong in the internal wiki
