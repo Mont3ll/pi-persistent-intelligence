@@ -11,8 +11,10 @@ const ci = readFileSync(join(root, ".github/workflows/ci.yml"), "utf8");
 const publish = readFileSync(join(root, ".github/workflows/publish.yml"), "utf8");
 
 describe("release verification contract", () => {
-  test("pins the Bun runtime in package.json and removes floating workflow pins", () => {
+  test("pins Bun 1.3.13 in package metadata and every workflow setup", () => {
     expect(pkg.packageManager).toBe("bun@1.3.13");
+    expect(ci).toContain("bun-version: 1.3.13");
+    expect(publish.match(/bun-version: 1\.3\.13/g)?.length).toBe(3);
     expect(ci).not.toContain("bun-version: latest");
     expect(publish).not.toContain("bun-version: latest");
   });
