@@ -6,21 +6,19 @@ on:
       - 'v*'
 
 jobs:
-  # Run tests first — publish only if everything passes
+  # Run the complete release audit first. Publish only if everything passes.
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
       - name: Verify tag matches package version
         run: bun scripts/publish-guard.ts verify-tag "$GITHUB_REF_NAME"
       - run: bun install --frozen-lockfile
-      - run: bun test
-      - run: bun run typecheck
+      - name: Run release audit
+        run: bun run release-audit
 
-  # Publish to npm (npmjs.com) via OIDC trusted publishing — no NPM_TOKEN needed
+  # Publish to npm (npmjs.com) via OIDC trusted publishing. No NPM_TOKEN needed.
   publish-npm:
     needs: test
     runs-on: ubuntu-latest
@@ -30,22 +28,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Node >= 22.14.0 is required for trusted publishing / OIDC token exchange
+      # Node >= 22.14.0 is required for trusted publishing / OIDC token exchange.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
       - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
 
       - run: bun install --frozen-lockfile
 
       - name: Publish to npm
         run: bun scripts/publish-guard.ts publish --access public --provenance
 
-  # Publish to GitHub Packages — makes the GitHub repo Packages tab show the package
+  # Publish to GitHub Packages so the repository Packages tab shows the package.
   publish-github:
     needs: test
     runs-on: ubuntu-latest
@@ -60,8 +56,6 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
           scope: '@Mont3ll'
       - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
       - run: bun install --frozen-lockfile
       - name: Set scoped package name for GitHub Packages
         run: |
