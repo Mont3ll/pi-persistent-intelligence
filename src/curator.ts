@@ -224,7 +224,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
         to_record: { ...record, supersedes: [targetId] },
         reason,
         rationale: `Supersede ${targetId} with ${candidate.id}.`,
-        risk: "medium" as const,
+        risk: "high" as const,
         default_selected: false,
       };
     }

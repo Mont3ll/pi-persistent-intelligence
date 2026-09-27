@@ -52,6 +52,7 @@ function applyDecision(root: string, op: PatchOp): ApplyDecision {
 
   if (op.op === "add" && !op.record) return reject("malformed_operation", `Add operation ${op.op_id} is missing its record.`);
   if (op.op === "supersede" && (!op.target_id || !op.to_record)) return reject("malformed_operation", `Supersede operation ${op.op_id} is missing its target or replacement record.`);
+  if (op.op === "reject_candidate" && !op.candidate_id) return reject("malformed_operation", `Reject-candidate operation ${op.op_id} is missing its candidate.`);
   const updateOps = ["update", "update_stability", "flag_for_review", "decay"];
   if (updateOps.includes(op.op) && (!op.target_id || !op.updates)) return reject("malformed_operation", `Update operation ${op.op_id} is missing its target or update fields.`);
   const targetOnlyOps = ["deprecate", "contest", "uncontest", "add_exception", "delete"];
@@ -76,6 +77,14 @@ function applyDecision(root: string, op: PatchOp): ApplyDecision {
     const id = op.record!.id;
     if (isTombstonedRecord(root, id)) return reject("tombstoned", `Record ${id} is tombstoned.`);
     if (byId.has(id)) return reject("duplicate_id", `Record ${id} already exists in canonical memory.`);
+    return { ok: true };
+  }
+
+  if (op.op === "reject_candidate") {
+    const candidateId = op.candidate_id!;
+    if (!listCandidates(root).some((candidate) => candidate.id === candidateId)) {
+      return reject("missing_candidate", `Candidate ${candidateId} does not exist.`);
+    }
     return { ok: true };
   }
 
@@ -197,18 +206,29 @@ function applyOp(root: string, patchId: string, op: PatchOp, now: string): void 
 
   if (op.op === "supersede") {
     if (!op.target_id || !op.to_record) throw new Error(`Patch op ${op.op_id} missing supersede fields`);
+    const invalidationDate = op.to_record.created_at || now.slice(0, 10);
     const replacement = {
       ...op.to_record,
       supersedes: [...new Set([...(op.to_record.supersedes ?? []), op.target_id])],
+      valid_from: op.to_record.valid_from ?? invalidationDate,
       updated_at: now.slice(0, 10),
     };
     updateMemoryRecord(root, op.target_id, (record) => ({
       ...record,
       status: "superseded",
       superseded_by: [...new Set([...record.superseded_by, replacement.id])],
+      valid_to: record.valid_to ?? invalidationDate,
+      invalidated_by: record.invalidated_by ?? replacement.id,
+      validity_reason: record.validity_reason ?? `Superseded by ${replacement.id}.`,
       updated_at: now.slice(0, 10),
     }), PATCH_APPLY_CONTEXT);
     addMemoryRecordFromPatch(root, replacement);
+    return;
+  }
+
+  if (op.op === "reject_candidate") {
+    if (!op.candidate_id) throw new Error(`Patch op ${op.op_id} missing candidate_id`);
+    updateCandidateStatus(root, op.candidate_id, "rejected");
     return;
   }
 
