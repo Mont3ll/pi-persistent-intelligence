@@ -122,26 +122,17 @@ function replacementNeedles(targetId: string, sensitiveValues: string[]): string
     .sort((a, b) => b.length - a.length);
 }
 
-function redactString(value: string, needles: string[]): string {
-  let next = value;
-  for (const needle of needles) next = next.replaceAll(needle, PURGED);
-  return next;
-}
-
-function redactValue(value: unknown, needles: string[]): unknown {
-  if (typeof value === "string") return redactString(value, needles);
-  if (Array.isArray(value)) return value.map((item) => redactValue(item, needles));
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, redactValue(item, needles)]));
+function containsNeedle(value: string, needles: string[]): boolean {
+  return needles.some((needle) => value.includes(needle));
 }
 
 function jsonlChange(file: string, needles: string[]): ArtifactChange | null {
   if (!existsSync(file)) return null;
   const original = readFileSync(file, "utf-8");
-  if (!needles.some((needle) => original.includes(needle))) return null;
+  if (!containsNeedle(original, needles)) return null;
   const lines = original.split(/\r?\n/).filter(Boolean);
-  const redacted = lines.map((line) => JSON.stringify(redactValue(JSON.parse(line), needles)));
-  const content = redacted.length ? `${redacted.join("\n")}\n` : "";
+  const retained = lines.filter((line) => !containsNeedle(line, needles));
+  const content = retained.length ? `${retained.join("\n")}\n` : "";
   return content === original ? null : { file, original, content };
 }
 
@@ -157,17 +148,13 @@ function reportChange(file: string, needles: string[]): ArtifactChange | null {
   const extension = extname(file).toLowerCase();
   if (![".json", ".jsonl", ".md", ".txt"].includes(extension)) return null;
   const original = readFileSync(file, "utf-8");
-  if (!needles.some((needle) => original.includes(needle))) return null;
-  let content: string;
-  if (extension === ".json") {
-    content = `${JSON.stringify(redactValue(JSON.parse(original), needles), null, 2)}\n`;
-  } else if (extension === ".jsonl") {
-    const lines = original.split(/\r?\n/).filter(Boolean);
-    content = lines.length ? `${lines.map((line) => JSON.stringify(redactValue(JSON.parse(line), needles))).join("\n")}\n` : "";
-  } else {
-    content = redactString(original, needles);
-  }
-  return content === original ? null : { file, original, content };
+  if (!containsNeedle(original, needles)) return null;
+  const content = extension === ".json"
+    ? `${JSON.stringify({ redacted: true, reason: "privacy_purge" }, null, 2)}\n`
+    : extension === ".jsonl"
+      ? ""
+      : `${PURGED}\n`;
+  return { file, original, content };
 }
 
 export function validatePrivacyArtifactSet(root: string): void {
