@@ -69,8 +69,9 @@ export class MemoryFtsIndex {
   /** Replace the entire index with the provided records. Fast for small corpora. */
   sync(records: Array<{ id: string; layer: string; ruleType?: string; confidence: number; statement: string; tags: string[] }>): void {
     if (!this.db || !this.available) return;
+    const db = this.db as any;
     try {
-      const db = this.db as any;
+      db.exec("BEGIN IMMEDIATE;");
       db.exec("DELETE FROM memory_fts;");
       const insert = db.prepare(
         "INSERT INTO memory_fts (id, layer, rule_type, confidence, statement, tags) VALUES (?, ?, ?, ?, ?, ?)",
@@ -78,8 +79,10 @@ export class MemoryFtsIndex {
       for (const r of records) {
         insert.run(r.id, r.layer, r.ruleType ?? "", r.confidence, r.statement, r.tags.join(" "));
       }
+      db.exec("COMMIT;");
     } catch {
-      // best-effort
+      try { db.exec("ROLLBACK;"); } catch { /* ignore rollback failures */ }
+      // best-effort: retain the previously committed complete index
     }
   }
 
