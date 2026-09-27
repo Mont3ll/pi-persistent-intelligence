@@ -557,6 +557,7 @@ export type PatchSkipReason =
   | "unresolved_evidence"
   | "tombstoned"
   | "missing_target"
+  | "missing_candidate"
   | "target_terminal"
   | "self_supersession"
   | "replacement_id_conflict"
