@@ -209,14 +209,16 @@ The repository includes a fingerprint-gated harness for AMA-Bench, LongMemEval-V
 
 ## Development
 
+PI uses Bun `1.3.13`, pinned in `package.json` and the GitHub Actions workflows.
+
 ```bash
-bun test
-bun run typecheck
-bun run eval
-bun run test:stress
-npm pack --dry-run
+bun install --frozen-lockfile
+bun run verify:pr
+bun run release-audit
 ```
 
-`bun run eval` runs deterministic governance, recall, package/docs, replay, and hardening checks. Replay fixtures are internal validation inputs, not public performance benchmarks.
+`bun run verify:pr` runs typecheck, unit tests, and deterministic evals. `bun run release-audit` adds stress tests and `npm pack --dry-run` package validation.
+
+Replay fixtures are internal validation inputs, not public performance benchmarks.
 
 `bun run build` is intentionally unavailable because this package has no build script.
