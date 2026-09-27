@@ -14,6 +14,7 @@
   "publishConfig": {
     "access": "public"
   },
+  "packageManager": "bun@1.3.13",
   "type": "module",
   "main": "index.ts",
   "files": [
@@ -68,8 +69,9 @@
     "benchmark:resume": "bun eval/external/cli.ts resume",
     "benchmark:verify": "bun eval/external/cli.ts verify",
     "benchmark:report": "bun eval/external/cli.ts report",
-    "release-audit": "bun run typecheck && bun test && bun run eval && bun run test:stress && npm pack --dry-run",
-    "prepublishOnly": "bun run typecheck && bun test"
+    "verify:pr": "bun run typecheck && bun test && bun run eval",
+    "release-audit": "bun run verify:pr && bun run test:stress && npm pack --dry-run",
+    "prepublishOnly": "bun run verify:pr"
   },
   "dependencies": {
     "@earendil-works/pi-tui": "^0.74.0",
