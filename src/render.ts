@@ -5,6 +5,16 @@ import { loadAllRecords, slugifyProject } from "./store";
 import type { MemoryRecord } from "./types";
 
 function renderRecord(record: MemoryRecord): string {
+  if (record.status === "deleted") {
+    return [
+      `### ${record.id}`,
+      "",
+      "**Status**: deleted",
+      "",
+      "_[Deleted record content is omitted from rendered memory. Canonical audit state is retained separately.]_",
+    ].join("\n");
+  }
+
   const tags = record.tags.map((tag) => `#${tag}`).join(" ");
   const evidence = record.evidence.map((item) => `- ${item.ref} — ${item.note}`).join("\n");
   const supersession = [
