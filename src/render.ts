@@ -34,10 +34,21 @@ function renderRecord(record: MemoryRecord): string {
   ].filter((part) => part !== "").join("\n");
 }
 
+function renderRecordGroup(records: MemoryRecord[], emptyMessage: string): string {
+  return records.length ? records.map(renderRecord).join("\n\n") : emptyMessage;
+}
+
 export function renderMemoryMarkdown(records: MemoryRecord[]): string {
-  const visible = records.filter((record) => record.status !== "deleted");
-  const l1 = visible.filter((record) => record.layer === "L1");
-  const l2 = visible.filter((record) => record.layer === "L2");
+  const current = records.filter((record) => record.status === "active");
+  const contested = records.filter((record) => record.status === "contested");
+  const history = records.filter((record) =>
+    record.status !== "active"
+    && record.status !== "contested"
+    && record.status !== "deleted"
+  );
+  const currentL1 = current.filter((record) => record.layer === "L1");
+  const currentL2 = current.filter((record) => record.layer === "L2");
+
   const sections = [
     "# Long-Term Memory",
     "",
@@ -45,11 +56,23 @@ export function renderMemoryMarkdown(records: MemoryRecord[]): string {
     "",
     "## L1 — Identity",
     "",
-    l1.length ? l1.map(renderRecord).join("\n\n") : "_No L1 records._",
+    renderRecordGroup(currentL1, "_No L1 records._"),
     "",
     "## L2 — Playbooks",
     "",
-    l2.length ? l2.map(renderRecord).join("\n\n") : "_No L2 records._",
+    renderRecordGroup(currentL2, "_No L2 records._"),
+    "",
+    "## Contested — Review Required",
+    "",
+    "> Contested memory is not current truth and must be reviewed before use.",
+    "",
+    renderRecordGroup(contested, "_No contested records._"),
+    "",
+    "## History",
+    "",
+    "> Deprecated, superseded, and promoted memory is retained here for audit and temporal context. Deleted records remain only in canonical/tombstone audit state and are not projected here.",
+    "",
+    renderRecordGroup(history, "_No historical records._"),
     "",
   ];
   return sections.join("\n");
