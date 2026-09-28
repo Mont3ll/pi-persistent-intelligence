@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
 import { readCanonicalGeneration } from "./governance-generation";
 import { ensureMemoryDirs } from "./paths";
 
@@ -35,17 +35,35 @@ export function readGovernanceWriterLock(root: string): Record<string, unknown> 
   try { return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>; } catch { return { malformed: true }; }
 }
 
-export function acquireGovernanceWriterLock(root: string, options: AcquireGovernanceWriterLockOptions): GovernanceWriterLockHandle {
-  const path = ensureMemoryDirs(root).governance.writerLock;
-  let fd: number;
+function ownerIsDead(lock: Record<string, unknown> | null): boolean {
+  const pid = typeof lock?.pid === "number" && Number.isInteger(lock.pid) && lock.pid > 0 ? lock.pid : null;
+  if (!pid) return false;
   try {
-    fd = openSync(path, "wx", 0o600);
+    process.kill(pid, 0);
+    return false;
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
-    if (code === "EEXIST") throw new GovernanceWriterBusyError();
-    throw error;
+    return code === "ESRCH";
   }
+}
 
+function openLock(path: string): number {
+  try {
+    return openSync(path, "wx", 0o600);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+    if (code !== "EEXIST") throw error;
+    let lock: Record<string, unknown> | null = null;
+    try { lock = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>; } catch { /* fail closed below */ }
+    if (!ownerIsDead(lock)) throw new GovernanceWriterBusyError();
+    unlinkSync(path);
+    try { return openSync(path, "wx", 0o600); } catch { throw new GovernanceWriterBusyError(); }
+  }
+}
+
+export function acquireGovernanceWriterLock(root: string, options: AcquireGovernanceWriterLockOptions): GovernanceWriterLockHandle {
+  const path = ensureMemoryDirs(root).governance.writerLock;
+  const fd = openLock(path);
   let released = false;
   try {
     const observedGeneration = readCanonicalGeneration(root);
@@ -59,6 +77,7 @@ export function acquireGovernanceWriterLock(root: string, options: AcquireGovern
       observed_generation: observedGeneration,
     };
     writeSync(fd, `${JSON.stringify(payload, null, 2)}\n`, undefined, "utf8");
+    fsyncSync(fd);
     closeSync(fd);
     return {
       path,
