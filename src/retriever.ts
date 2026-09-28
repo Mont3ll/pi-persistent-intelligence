@@ -63,8 +63,6 @@ export interface RetrievalContext {
   contestedMemory: MemoryRecord[];
 }
 
-// ─── Staleness helpers ────────────────────────────────────────────────────────
-
 function daysSince(dateStr: string): number {
   try {
     const then = new Date(dateStr).getTime();
@@ -85,8 +83,6 @@ function renderRecordBrief(record: MemoryRecord): string {
   return `- ${record.id} [${record.layer}, conf ${record.confidence.toFixed(2)}${stale}${ruleTag}] ${record.statement}`;
 }
 
-// ─── Relevance selection ─────────────────────────────────────────────────────
-
 function promptTerms(prompt: string): Set<string> {
   return new Set(prompt.toLowerCase().split(/[^a-z0-9-]+/).filter((t) => t.length > 2));
 }
@@ -97,15 +93,10 @@ function isRelevantByTerms(record: MemoryRecord, terms: Set<string>): boolean {
   return [...terms].some((t) => haystack.includes(t));
 }
 
-/** Parse qmd JSON to extract record IDs */
 function parseQmdIds(stdout: string): string[] {
   return parseQmdMemoryIds(stdout);
 }
 
-/**
- * Select relevant L2 records using hybrid FTS + qmd semantic search.
- * Falls back through: hybrid → FTS-only → term-matching.
- */
 function isSubstantialPrompt(prompt: string): boolean {
   return prompt.trim().split(/\s+/).filter(Boolean).length > 8;
 }
@@ -119,10 +110,6 @@ function applyLayerBudgets(l1: MemoryRecord[], l2: MemoryRecord[], budget: Selec
   return [...selectedL1, ...selectedL2].slice(0, budget.maxRecords);
 }
 
-/**
- * Select relevant L2 records using hybrid FTS + qmd semantic search.
- * Falls back through: hybrid → FTS-only → term-matching.
- */
 async function selectMemoryHybrid(
   root: string,
   records: MemoryRecord[],
@@ -175,8 +162,6 @@ async function selectMemoryHybrid(
   return applyLayerBudgets(l1, relevantL2, budget);
 }
 
-// ─── Daily digest ─────────────────────────────────────────────────────────────
-
 export function buildDailyDigest(dailyContent: string, maxChars: number): string {
   if (!dailyContent.trim()) return "";
 
@@ -204,8 +189,6 @@ export function buildDailyDigest(dailyContent: string, maxChars: number): string
   return dailyContent.slice(-maxChars);
 }
 
-// ─── Dynamic budget assembler ─────────────────────────────────────────────────
-
 function assembleWithBudget(sections: Array<{ label: string; content: string }>, maxTotal: number): string {
   const parts: string[] = [];
   let used = 0;
@@ -224,8 +207,6 @@ function assembleWithBudget(sections: Array<{ label: string; content: string }>,
 
   return parts.join("\n");
 }
-
-// ─── Main retrieval function ─────────────────────────────────────────────────
 
 function statsPath(root: string): string {
   return join(ensureMemoryDirs(root).runtime.dir, "injection-stats.json");
@@ -295,7 +276,6 @@ function buildPolicyOnlyContext(root: string, mode: InjectionMode): RetrievalCon
 }
 
 export async function buildRetrievalContext(root: string, options: RetrievalOptions): Promise<RetrievalContext> {
-  // Skip injection for trivial prompts — saves tokens and avoids noise
   if (!shouldInjectMemoryContext(options.prompt)) {
     return { markdown: "", selectedMemory: [], processorTraces: [], contestedMemory: [] };
   }
@@ -351,12 +331,10 @@ export async function buildRetrievalContext(root: string, options: RetrievalOpti
   const dailyDigest = buildDailyDigest(daily, options.maxDailyChars ?? 3000);
   timings.dailyDigestMs = performance.now() - dailyStart;
 
-  // Hard rules: high-confidence typed corrections injected prominently
-  // Contested memory: from the same loaded snapshot (including non-active), context-relevant
   const contestedMemory = extractContestedMemory(allRecords, options.prompt);
   const contestedBlock = renderContestedMemoryBlock(contestedMemory, options.prompt);
 
-  const hardRules = renderHardRulesBlockWithCount(processed.records);
+  const hardRules = renderHardRulesBlockWithCount(processed.records, config.governance.mode);
   const hardRulesBlock = hardRules.block;
 
   const header = "# Persistent Intelligence Context";
@@ -413,9 +391,6 @@ export function readRuntimeContext(root: string): string {
   return existsSync(paths.runtime.context) ? readFileSync(paths.runtime.context, "utf-8") : "";
 }
 
-/**
- * Suggest vault_ref values from vault concept/entity pages matching candidate tags.
- */
 export function suggestVaultRefs(tags: string[], vaultPath?: string): string[] {
   const vaultDir = vaultPath ?? process.env.PI_VAULT_PATH;
   if (!vaultDir) return [];
@@ -435,10 +410,6 @@ export function suggestVaultRefs(tags: string[], vaultPath?: string): string[] {
   return [...new Set(candidates)].slice(0, 3);
 }
 
-/**
- * Sync the FTS index with current active records.
- * Call after any canonical mutation (applyPatch, session_start).
- */
 export function syncFtsIndex(root: string, ftsIndex: MemoryFtsIndex): void {
   const records = loadActiveRecords(root);
   ftsIndex.sync(
