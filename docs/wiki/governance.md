@@ -6,26 +6,30 @@ PI has two governance modes that control trust gates, auto-application, and dire
 
 ## Governance modes
 
-Configure in `~/.pi/agent/pi-memory/config.json`:
+New PI stores default to strict governance. Pre-existing stores that do not yet have an explicit governance setting are marked as legacy and retain compatibility mode for migration. An explicit `governance.mode` in `config.json` remains authoritative in either direction.
+
+Configure explicitly in `~/.pi/agent/pi-memory/config.json`:
 
 ```json
 {
   "governance": {
-    "mode": "compatibility"
+    "mode": "strict"
   }
 }
 ```
 
-### Compatibility mode (default)
+### Compatibility mode (legacy migration default)
 
 Legacy memory records and candidates without trust metadata remain auto-eligible. This preserves existing behavior for records written before the evidence and trust system was added.
 
 Use compatibility mode when:
 - You are migrating from an older version of PI
 - You have existing memory records without trust metadata
-- You want minimal friction for low-risk personal workflows
+- You deliberately want the legacy low-friction behavior
 
-### Strict mode
+A pre-existing store without an explicit governance setting is assigned durable store metadata with `origin: "legacy"` and `default_governance_mode: "compatibility"`.
+
+### Strict mode (default for new stores)
 
 Candidates must carry trust metadata, a `verified` verification status, and at least one evidence ID before they are default-selected for auto-apply. Candidates that pass all checks but lack this metadata stay in the inbox for manual review.
 
@@ -36,15 +40,7 @@ Use strict mode when:
 - You are using PI in team or shared-context workflows
 - You prefer explicit review over convenience
 
-To enable strict mode:
-
-```json
-{
-  "governance": {
-    "mode": "strict"
-  }
-}
-```
+A genuinely new store is assigned durable store metadata with `origin: "new"` and `default_governance_mode: "strict"` before empty memory artifacts are materialized.
 
 ---
 
@@ -68,6 +64,8 @@ In strict governance, an actionable L2 record is eligible for hard-rule authorit
 4. The ratification contains at least one evidence reference.
 5. Every ratification evidence reference is also present on the memory record.
 6. The record is active and has an actionable rule type.
+
+Malformed or incomplete policy-ratification metadata fails closed and does not create directive authority.
 
 Confidence is not a policy threshold in strict mode. A low-confidence record with valid explicit policy ratification can carry directive authority, while a confidence-1.0 belief without ratification cannot.
 

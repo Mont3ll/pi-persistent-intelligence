@@ -2,6 +2,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+export type StoreOrigin = "new" | "legacy";
+
+export interface StoreMetadata {
+  schema_version: 1;
+  origin: StoreOrigin;
+  default_governance_mode: "compatibility" | "strict";
+}
+
 export interface MemoryPaths {
   root: string;
   config: string;
@@ -16,7 +24,7 @@ export interface MemoryPaths {
   reports: string;
   sessions: string;
   search: string;
-  governance: { dir: string; canonicalState: string; projections: string; transactions: string; writerLock: string };
+  governance: { dir: string; canonicalState: string; projections: string; transactions: string; writerLock: string; storeMetadata: string };
 }
 
 export function defaultRoot(home = process.env.HOME ?? homedir()): string {
@@ -93,12 +101,52 @@ export function resolvePaths(root = defaultRoot()): MemoryPaths {
       projections: join(root, "governance", "projections.json"),
       transactions: join(root, "governance", "transactions"),
       writerLock: join(root, "governance", "writer.lock"),
+      storeMetadata: join(root, "governance", "store-metadata.json"),
     },
   };
 }
 
+function hasLegacyStoreFootprint(paths: MemoryPaths): boolean {
+  return [
+    paths.config,
+    paths.memory.L1,
+    paths.memory.L2,
+    paths.memory.evidence,
+    paths.inbox.captured,
+    paths.rendered.memory,
+    paths.governance.canonicalState,
+  ].some((file) => existsSync(file));
+}
+
+function ensureStoreMetadata(paths: MemoryPaths): void {
+  if (existsSync(paths.governance.storeMetadata)) return;
+  const legacy = hasLegacyStoreFootprint(paths);
+  const metadata: StoreMetadata = {
+    schema_version: 1,
+    origin: legacy ? "legacy" : "new",
+    default_governance_mode: legacy ? "compatibility" : "strict",
+  };
+  mkdirSync(paths.governance.dir, { recursive: true });
+  writeFileSync(paths.governance.storeMetadata, `${JSON.stringify(metadata, null, 2)}\n`, "utf-8");
+}
+
+export function readStoreMetadata(root = defaultRoot()): StoreMetadata | null {
+  const paths = resolvePaths(root);
+  if (!existsSync(paths.governance.storeMetadata)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(paths.governance.storeMetadata, "utf-8")) as Partial<StoreMetadata>;
+    if (parsed.schema_version !== 1) return null;
+    if (parsed.origin !== "new" && parsed.origin !== "legacy") return null;
+    if (parsed.default_governance_mode !== "strict" && parsed.default_governance_mode !== "compatibility") return null;
+    return parsed as StoreMetadata;
+  } catch {
+    return null;
+  }
+}
+
 export function ensureMemoryDirs(root = defaultRoot()): MemoryPaths {
   const paths = resolvePaths(root);
+  ensureStoreMetadata(paths);
   for (const dir of [
     paths.root,
     join(paths.root, "schemas"),
