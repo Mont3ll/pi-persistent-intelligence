@@ -1,12 +1,13 @@
 import { readEvidenceRecords } from "./evidence";
 import { inferMemoryKind } from "./memory-kind";
 import { runMemoryProcessorPipeline } from "./processors";
+import { hasValidPolicyRatification } from "./policy-authority";
 import { extractHardRules } from "./rules";
 import { redactSecrets } from "./secret-scanner";
 import { loadAllRecords } from "./store";
 import type { InvocationProfiler, InvocationProfileReport } from "./profiling";
 import { isTombstonedRecord } from "./tombstones";
-import type { EvidenceRecord, EvidenceSourceKind, MemoryKind, MemoryRecord, SessionContext } from "./types";
+import type { EvidenceRecord, EvidenceSourceKind, GovernanceMode, MemoryKind, MemoryRecord, SessionContext } from "./types";
 
 export interface RecallXrayOptions {
   query: string;
@@ -18,7 +19,7 @@ export interface RecallXrayOptions {
   working_directory?: string;
   recent_files_touched?: string[];
   maxRecords?: number;
-  governance_mode?: "compatibility" | "strict";
+  governance_mode?: GovernanceMode;
   injection_mode?: "scoped" | "policy_only" | "wakeup";
   profiler?: InvocationProfiler;
 }
@@ -159,8 +160,9 @@ export function buildRecallXray(root: string, options: RecallXrayOptions): Recal
   const all = profiler?.measure("candidate_retrieval", () => loadAllRecords(root)) ?? loadAllRecords(root);
   const evidence = profiler?.measure("evidence_lookup", () => readEvidenceRecords(root)) ?? readEvidenceRecords(root);
   const q = terms(options.query);
+  const governanceMode = options.governance_mode ?? "compatibility";
   const pipeline = profiler?.measure("policy_pipeline", () => runMemoryProcessorPipeline(all, contextFrom(options))) ?? runMemoryProcessorPipeline(all, contextFrom(options));
-  const hardRuleIds = new Set(extractHardRules(pipeline.records).map((record) => record.id));
+  const hardRuleIds = new Set(extractHardRules(pipeline.records, governanceMode).map((record) => record.id));
   const surviving = new Set(pipeline.records.map((r) => r.id));
   const exclusionById = new Map<string, { reasons: string[]; processors: string[] }>();
   for (const trace of pipeline.traces) {
@@ -180,9 +182,13 @@ export function buildRecallXray(root: string, options: RecallXrayOptions): Recal
     const invalidated = dependencyInvalidated(evs);
     const tombstoned = isTombstonedRecord(root, record.id);
     const score = relevance(record, q);
-    const isHardRuleCandidate = Boolean(record.ruleType && ["avoid_pattern", "prefer_pattern", "convention", "correction"].includes(record.ruleType) && record.confidence >= 0.85);
+    const actionableRule = Boolean(record.ruleType && ["avoid_pattern", "prefer_pattern", "convention", "correction"].includes(record.ruleType));
+    const legacyHardRuleCandidate = actionableRule && record.confidence >= 0.85;
+    const strictPolicyCandidate = actionableRule && hasValidPolicyRatification(record);
+    const isHardRuleCandidate = governanceMode === "strict" ? strictPolicyCandidate : legacyHardRuleCandidate;
+    const diagnosticHardRuleCandidate = legacyHardRuleCandidate || strictPolicyCandidate;
     const evsPresent = evs.length > 0;
-    const strictSafe = options.governance_mode === "strict" ? evsPresent && !invalidated : true;
+    const strictSafe = governanceMode === "strict" ? strictPolicyCandidate && evsPresent && !invalidated : true;
     const hardRule = hardRuleIds.has(record.id) && strictSafe;
     const notRelevant = !surviving.has(record.id) ? false : score <= 0 && record.layer !== "L1" && !hardRule;
     if (surviving.has(record.id) && !tombstoned && !invalidated && !notRelevant && (included.length < (options.maxRecords ?? 20))) {
@@ -195,7 +201,11 @@ export function buildRecallXray(root: string, options: RecallXrayOptions): Recal
         memory_kind: record.memory_kind ?? inferMemoryKind(record),
         retrieval_tier: hardRule ? "hard_rule" : record.layer === "L1" ? "policy_rule" : score > 0 ? "term_match" : "scoped_memory",
         retrieval_score: Number(score.toFixed(3)),
-        included_reason: hardRule ? "Active high-confidence typed correction/convention selected as hard rule after policy filters" : record.layer === "L1" ? "L1 records are included after policy filters" : "Matched query terms after policy filters",
+        included_reason: hardRule
+          ? governanceMode === "strict"
+            ? "Explicitly ratified policy selected as hard rule after evidence and policy filters"
+            : "Active high-confidence typed correction/convention selected as hard rule after policy filters"
+          : record.layer === "L1" ? "L1 records are included after policy filters" : "Matched query terms after policy filters",
         trust_class: evs[0]?.trust_class,
         verification_status: (record as any).verification_status,
         evidence_ids: evidenceIds(record),
@@ -211,16 +221,28 @@ export function buildRecallXray(root: string, options: RecallXrayOptions): Recal
         statement_excerpt: redactSecrets(record.statement.slice(0, 240)),
         hard_rule: hardRule,
         rule_type: record.ruleType,
-        hard_rule_reason: hardRule ? "active high-confidence hard-rule ruleType with policy filters satisfied" : isHardRuleCandidate ? "typed high-confidence candidate not attributed as clean hard rule under current governance" : undefined,
-        governance_safe: isHardRuleCandidate ? strictSafe : undefined,
-        warnings: isHardRuleCandidate && !strictSafe ? ["strict governance requires structured live evidence before hard-rule attribution"] : undefined,
+        hard_rule_reason: hardRule
+          ? governanceMode === "strict"
+            ? "explicit policy authority with valid ratification provenance and live evidence"
+            : "active high-confidence hard-rule ruleType with policy filters satisfied"
+          : diagnosticHardRuleCandidate
+            ? governanceMode === "strict" && !strictPolicyCandidate
+              ? "legacy hard-rule candidate lacks explicit policy ratification under strict governance"
+              : "directive candidate not attributed as clean hard rule under current governance"
+            : undefined,
+        governance_safe: diagnosticHardRuleCandidate ? strictSafe : undefined,
+        warnings: diagnosticHardRuleCandidate && !strictSafe
+          ? [governanceMode === "strict" && !strictPolicyCandidate
+            ? "strict governance requires explicit policy ratification before hard-rule attribution"
+            : "strict governance requires structured live evidence before hard-rule attribution"]
+          : undefined,
         score_provenance: {
           fts_score: Number(score.toFixed(3)),
           semantic_provider: "none",
           final_score: Number(score.toFixed(3)),
           matched_terms: matchedTerms(record, q),
           rank_sources: hardRule
-            ? [{ source: "hard_rule", reason: "typed high-confidence active rule selected after policy filters" }]
+            ? [{ source: "hard_rule", reason: governanceMode === "strict" ? "ratified policy selected after policy and evidence filters" : "typed high-confidence active rule selected after policy filters" }]
             : [{ source: score > 0 ? "fts" : "scope", score: Number(score.toFixed(3)), reason: score > 0 ? "query term overlap" : "policy scope inclusion" }],
         },
       });

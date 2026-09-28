@@ -1,6 +1,6 @@
 # Governance
 
-PI has two governance modes that control how aggressively candidates are auto-applied.
+PI has two governance modes that control trust gates, auto-application, and directive policy authority.
 
 ---
 
@@ -29,6 +29,8 @@ Use compatibility mode when:
 
 Candidates must carry trust metadata, a `verified` verification status, and at least one evidence ID before they are default-selected for auto-apply. Candidates that pass all checks but lack this metadata stay in the inbox for manual review.
 
+Strict mode also separates belief strength from directive authority. Confidence may rank a belief, but confidence alone does not make that belief policy.
+
 Use strict mode when:
 - You want every promoted belief to have a traceable source
 - You are using PI in team or shared-context workflows
@@ -43,6 +45,33 @@ To enable strict mode:
   }
 }
 ```
+
+---
+
+## Evidence, belief, and policy authority
+
+PI distinguishes three authority planes:
+
+- **Evidence** records source observations, user utterances, tool outcomes, tests, commits, and other support for memory claims.
+- **Belief** covers preferences, claims, conventions, experiences, and learned procedures. Confidence describes belief strength.
+- **Policy** covers ratified directives, hard prohibitions, operating rules, and other constraints that may be injected as hard rules.
+
+The core invariant is:
+
+> Confidence alone must never promote belief into policy.
+
+In strict governance, an actionable L2 record is eligible for hard-rule authority only when:
+
+1. `authority_plane` is `"policy"`.
+2. `policy_ratification` is present.
+3. The ratification method is an explicit authority path such as `direct_user_instruction`, `user_correction`, `explicit_config`, or `manual_review`.
+4. The ratification contains at least one evidence reference.
+5. Every ratification evidence reference is also present on the memory record.
+6. The record is active and has an actionable rule type.
+
+Confidence is not a policy threshold in strict mode. A low-confidence record with valid explicit policy ratification can carry directive authority, while a confidence-1.0 belief without ratification cannot.
+
+Compatibility mode deliberately preserves the legacy hard-rule rule for migration: active L2 actionable records with confidence at or above 0.85 can still be treated as hard rules even when they do not contain explicit policy metadata.
 
 ---
 
@@ -70,7 +99,7 @@ Under `autoCurate: "high-only"` (default), the following can auto-apply at sessi
   - `default_selected: true` (passes trust gate)
   - `risk != "high"`
   - `confidence >= autoCurateHighThreshold` (default: 0.85)
-  - Governance mode allows (compatibility: legacy candidates also eligible; strict: must have trust metadata + verified status + evidence IDs)
+  - Governance mode allows it (compatibility: legacy candidates also eligible; strict: trust metadata, verified status, and evidence IDs are required)
 
 Under `autoCurate: "all-eligible"`, all `default_selected: true` non-high-risk operations apply.
 
