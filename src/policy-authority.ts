@@ -9,9 +9,13 @@ export interface PolicyRatification {
   ratified_at: string;
 }
 
-export interface PolicyAttributedMemoryRecord extends MemoryRecord {
-  authority_plane?: AuthorityPlane;
-  policy_ratification?: PolicyRatification;
+declare module "./types" {
+  interface MemoryRecord {
+    /** Explicit epistemic/authority plane. Legacy records without this field are beliefs in strict mode. */
+    authority_plane?: AuthorityPlane;
+    /** Explicit provenance required before strict governance treats a record as directive policy. */
+    policy_ratification?: PolicyRatification;
+  }
 }
 
 const EXPLICIT_POLICY_RATIFICATION_METHODS = new Set<PolicyRatificationMethod>([
@@ -22,9 +26,8 @@ const EXPLICIT_POLICY_RATIFICATION_METHODS = new Set<PolicyRatificationMethod>([
 ]);
 
 export function hasValidPolicyRatification(record: MemoryRecord): boolean {
-  const attributed = record as PolicyAttributedMemoryRecord;
-  const ratification = attributed.policy_ratification;
-  if (attributed.authority_plane !== "policy" || !ratification) return false;
+  const ratification = record.policy_ratification;
+  if (record.authority_plane !== "policy" || !ratification) return false;
   if (!EXPLICIT_POLICY_RATIFICATION_METHODS.has(ratification.method)) return false;
   if (!ratification.ratified_at || ratification.evidence_refs.length === 0) return false;
 
