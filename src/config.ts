@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { ensureMemoryDirs } from "./paths";
+import { ensureMemoryDirs, readStoreMetadata } from "./paths";
 
 export interface PiMemoryConfig {
   qmd: { collection: string; enabled: boolean; injectionTimeoutMs: number };
@@ -70,7 +70,7 @@ export const defaultConfig: PiMemoryConfig = {
   maintainer: { semiStableDecay: 0.15, stableDecay: 0.05, mode: "propose" },
   llm: { enabled: false, model: null, command: null },
   vault: { enabled: false, path: null, reportOnly: true },
-  governance: { mode: "compatibility" as const },
+  governance: { mode: "strict" as const },
   piGovernance: { enabled: false, mode: "external" as const, command: null, store: null, namespace: "default" },
   retrieval: { injectionMode: "scoped" as const },
   inquiries: { reviewWindowDays: 30 },
@@ -114,12 +114,24 @@ function mergeConfig(base: PiMemoryConfig, override: DeepPartial<PiMemoryConfig>
   };
 }
 
+function storeDefaultMode(root: string): "compatibility" | "strict" {
+  return readStoreMetadata(root)?.default_governance_mode ?? "strict";
+}
+
+function configForStoreDefault(root: string): PiMemoryConfig {
+  return mergeConfig(defaultConfig, { governance: { mode: storeDefaultMode(root) } });
+}
+
 export function loadConfig(root: string): PiMemoryConfig {
   const paths = ensureMemoryDirs(root);
-  if (!existsSync(paths.config)) return defaultConfig;
+  const storeMode = storeDefaultMode(root);
+  if (!existsSync(paths.config)) return configForStoreDefault(root);
   try {
     const parsed = JSON.parse(readFileSync(paths.config, "utf-8")) as DeepPartial<PiMemoryConfig>;
     const merged = mergeConfig(defaultConfig, parsed);
+    if (parsed.governance?.mode !== "strict" && parsed.governance?.mode !== "compatibility") {
+      merged.governance.mode = storeMode;
+    }
     if (!Number.isInteger(merged.qmd.injectionTimeoutMs) || merged.qmd.injectionTimeoutMs < 100 || merged.qmd.injectionTimeoutMs > 5000) {
       merged.qmd.injectionTimeoutMs = defaultConfig.qmd.injectionTimeoutMs;
     }
@@ -137,12 +149,15 @@ export function loadConfig(root: string): PiMemoryConfig {
     if (!Number.isInteger(merged.capture.implicitConsolidationTurnInterval) || merged.capture.implicitConsolidationTurnInterval < 3 || merged.capture.implicitConsolidationTurnInterval > 200) merged.capture.implicitConsolidationTurnInterval = defaultConfig.capture.implicitConsolidationTurnInterval;
     return merged;
   } catch {
-    return defaultConfig;
+    return configForStoreDefault(root);
   }
 }
 
 export function writeDefaultConfig(root: string): string {
   const paths = ensureMemoryDirs(root);
-  if (!existsSync(paths.config)) writeFileSync(paths.config, `${JSON.stringify(defaultConfig, null, 2)}\n`, "utf-8");
+  if (!existsSync(paths.config)) {
+    const config = configForStoreDefault(root);
+    writeFileSync(paths.config, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+  }
   return paths.config;
 }
