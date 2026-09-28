@@ -16,6 +16,7 @@ export interface MemoryPaths {
   reports: string;
   sessions: string;
   search: string;
+  governance: { dir: string; canonicalState: string; projections: string; transactions: string; writerLock: string };
 }
 
 export function defaultRoot(home = process.env.HOME ?? homedir()): string {
@@ -40,11 +41,9 @@ export function resolveRoot(cwd?: string): string {
       if (existsSync(localSettings)) {
         const settings = JSON.parse(readFileSync(localSettings, "utf-8")) as Record<string, unknown>;
 
-        // Package-specific key wins
         const piPi = settings["pi-persistent-intelligence"] as Record<string, unknown> | undefined;
         if (typeof piPi?.localPath === "string" && piPi.localPath) return piPi.localPath;
 
-        // Short-alias cascade
         const piAlias = settings["pi-pi"] as Record<string, unknown> | undefined;
         if (typeof piAlias?.localPath === "string" && piAlias.localPath) return join(piAlias.localPath, "pi-memory");
       }
@@ -88,6 +87,13 @@ export function resolvePaths(root = defaultRoot()): MemoryPaths {
     reports: join(root, "reports"),
     sessions: join(root, "sessions"),
     search: join(root, "search"),
+    governance: {
+      dir: join(root, "governance"),
+      canonicalState: join(root, "governance", "canonical-state.json"),
+      projections: join(root, "governance", "projections.json"),
+      transactions: join(root, "governance", "transactions"),
+      writerLock: join(root, "governance", "writer.lock"),
+    },
   };
 }
 
@@ -108,6 +114,8 @@ export function ensureMemoryDirs(root = defaultRoot()): MemoryPaths {
     paths.reports,
     paths.sessions,
     paths.search,
+    paths.governance.dir,
+    paths.governance.transactions,
   ]) {
     mkdirSync(dir, { recursive: true });
   }
