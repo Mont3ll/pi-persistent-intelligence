@@ -40,7 +40,7 @@ function record(id: string, status: MemoryRecord["status"]): MemoryRecord {
 }
 
 describe("derived-state integrity", () => {
-  test("rendered current memory excludes contested and historical lifecycle states", () => {
+  test("rendered memory separates current, contested, and auditable non-deleted history", () => {
     const markdown = renderMemoryMarkdown([
       record("mem_active", "active"),
       record("mem_contested", "contested"),
@@ -58,7 +58,8 @@ describe("derived-state integrity", () => {
     expect(markdown).toContain("### mem_deprecated");
     expect(markdown).toContain("### mem_superseded");
     expect(markdown).toContain("### mem_promoted");
-    expect(markdown).toContain("### mem_deleted");
+    expect(markdown).not.toContain("### mem_deleted");
+    expect(markdown).not.toContain("Statement for mem_deleted");
 
     const current = markdown.split("## Contested — Review Required")[0];
     expect(current).toContain("### mem_active");
