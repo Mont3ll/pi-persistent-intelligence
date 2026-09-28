@@ -9,7 +9,7 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, extname, join, relative } from "node:path";
 import { ensureMemoryDirs } from "./paths";
 import type { CaptureCandidate, MemoryPatch, PatchOp } from "./types";
 
@@ -115,6 +115,48 @@ function stage(file: string, content: string): string {
 
 interface ArtifactChange { file: string; content: string; original: string }
 
+function replacementNeedles(targetId: string, sensitiveValues: string[]): string[] {
+  return [...new Set([targetId, ...sensitiveValues]
+    .map((value) => value.trim())
+    .filter((value) => value.length >= 3))]
+    .sort((a, b) => b.length - a.length);
+}
+
+function containsNeedle(value: string, needles: string[]): boolean {
+  return needles.some((needle) => value.includes(needle));
+}
+
+function jsonlChange(file: string, needles: string[]): ArtifactChange | null {
+  if (!existsSync(file)) return null;
+  const original = readFileSync(file, "utf-8");
+  if (!containsNeedle(original, needles)) return null;
+  const lines = original.split(/\r?\n/).filter(Boolean);
+  const retained = lines.filter((line) => !containsNeedle(line, needles));
+  const content = retained.length ? `${retained.join("\n")}\n` : "";
+  return content === original ? null : { file, original, content };
+}
+
+function walkFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    return entry.isDirectory() ? walkFiles(path) : [path];
+  });
+}
+
+function reportChange(file: string, needles: string[]): ArtifactChange | null {
+  const extension = extname(file).toLowerCase();
+  if (![".json", ".jsonl", ".md", ".txt"].includes(extension)) return null;
+  const original = readFileSync(file, "utf-8");
+  if (!containsNeedle(original, needles)) return null;
+  const content = extension === ".json"
+    ? `${JSON.stringify({ redacted: true, reason: "privacy_purge" }, null, 2)}\n`
+    : extension === ".jsonl"
+      ? ""
+      : `${PURGED}\n`;
+  return { file, original, content };
+}
+
 export function validatePrivacyArtifactSet(root: string): void {
   const paths = ensureMemoryDirs(root);
   for (const name of readdirSync(paths.patches).filter((entry) => entry.endsWith(".json"))) {
@@ -189,7 +231,7 @@ export function redactPrivacyPatchForExecution(
   return redactCurrentPrivacyPatch(patch, targetIds, externallyCorrelatedCandidateIds, true);
 }
 
-export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string): { changedFiles: string[] } {
+export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string, sensitiveValues: string[] = []): { changedFiles: string[] } {
   const paths = ensureMemoryDirs(root);
   const parsedPatches = readdirSync(paths.patches)
     .filter((name) => name.endsWith(".json"))
@@ -227,6 +269,22 @@ export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string):
     return redactedCandidate(candidate);
   });
 
+  const needles = replacementNeedles(targetId, sensitiveValues);
+  const derivativeFiles = [
+    join(paths.runtime.dir, "recall", "events.jsonl"),
+    paths.memory.reinforcement,
+    paths.memory.inquiries,
+    join(paths.runtime.dir, "events.jsonl"),
+  ];
+  const derivativeChanges = derivativeFiles.flatMap((file) => {
+    const change = jsonlChange(file, needles);
+    return change ? [change] : [];
+  });
+  const reportChanges = walkFiles(paths.reports).flatMap((file) => {
+    const change = reportChange(file, needles);
+    return change ? [change] : [];
+  });
+
   const changes: ArtifactChange[] = [
     ...(candidatesChanged ? [{
       file: paths.inbox.captured,
@@ -238,6 +296,8 @@ export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string):
       content: `${JSON.stringify(entry.patch, null, 2)}\n`,
       original: entry.original,
     })),
+    ...derivativeChanges,
+    ...reportChanges,
   ];
   if (changes.length === 0) return { changedFiles: [] };
 

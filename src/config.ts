@@ -33,6 +33,12 @@ export interface PiMemoryConfig {
   retrieval: { injectionMode: "scoped" | "policy_only" | "wakeup"; maxRecords?: number; maxL1Records?: number; maxL2Records?: number };
   inquiries: { reviewWindowDays: number };
   reinforcement: { neutralExposureEnabled: boolean };
+  privacy: {
+    /** Raw user prompt excerpts are excluded from recall telemetry unless explicitly enabled. */
+    persistPromptExcerpts: boolean;
+    /** Maximum age of recall/runtime diagnostic records retained on disk. */
+    diagnosticRetentionDays: number;
+  };
   capture: {
     activityRetentionCount: number;
     activityRetentionDays: number;
@@ -57,9 +63,9 @@ export const defaultConfig: PiMemoryConfig = {
     minConfidence: 0.75,
     minEvidenceCount: 2,
     mode: "propose",
-    autoCurate: "high-only",         // smart default: auto-promote confident L2, protect L1
+    autoCurate: "high-only",
     autoCurateHighThreshold: 0.85,
-    inboxPromptThreshold: 3,         // show overlay when >= 3 candidates pending
+    inboxPromptThreshold: 3,
   },
   maintainer: { semiStableDecay: 0.15, stableDecay: 0.05, mode: "propose" },
   llm: { enabled: false, model: null, command: null },
@@ -69,6 +75,7 @@ export const defaultConfig: PiMemoryConfig = {
   retrieval: { injectionMode: "scoped" as const },
   inquiries: { reviewWindowDays: 30 },
   reinforcement: { neutralExposureEnabled: false },
+  privacy: { persistPromptExcerpts: false, diagnosticRetentionDays: 90 },
   capture: {
     activityRetentionCount: 500,
     activityRetentionDays: 30,
@@ -101,6 +108,7 @@ function mergeConfig(base: PiMemoryConfig, override: DeepPartial<PiMemoryConfig>
     retrieval: { ...base.retrieval, ...(override.retrieval ?? {}) },
     inquiries: { ...base.inquiries, ...(override.inquiries ?? {}) },
     reinforcement: { ...base.reinforcement, ...(override.reinforcement ?? {}) },
+    privacy: { ...base.privacy, ...(override.privacy ?? {}) },
     capture: { ...base.capture, ...(override.capture ?? {}) },
     metaConsolidation: { ...base.metaConsolidation, ...(override.metaConsolidation ?? {}) },
   };
@@ -117,6 +125,12 @@ export function loadConfig(root: string): PiMemoryConfig {
     }
     if (!Number.isInteger(merged.inquiries.reviewWindowDays) || merged.inquiries.reviewWindowDays < 1 || merged.inquiries.reviewWindowDays > 3650) {
       merged.inquiries.reviewWindowDays = defaultConfig.inquiries.reviewWindowDays;
+    }
+    if (!Number.isInteger(merged.privacy.diagnosticRetentionDays) || merged.privacy.diagnosticRetentionDays < 1 || merged.privacy.diagnosticRetentionDays > 3650) {
+      merged.privacy.diagnosticRetentionDays = defaultConfig.privacy.diagnosticRetentionDays;
+    }
+    if (typeof merged.privacy.persistPromptExcerpts !== "boolean") {
+      merged.privacy.persistPromptExcerpts = defaultConfig.privacy.persistPromptExcerpts;
     }
     if (!Number.isInteger(merged.capture.activityRetentionCount) || merged.capture.activityRetentionCount < 10 || merged.capture.activityRetentionCount > 10000) merged.capture.activityRetentionCount = defaultConfig.capture.activityRetentionCount;
     if (!Number.isInteger(merged.capture.activityRetentionDays) || merged.capture.activityRetentionDays < 1 || merged.capture.activityRetentionDays > 365) merged.capture.activityRetentionDays = defaultConfig.capture.activityRetentionDays;
