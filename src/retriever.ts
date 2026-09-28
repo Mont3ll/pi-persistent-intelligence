@@ -97,6 +97,13 @@ function isRelevantByTerms(record: MemoryRecord, terms: Set<string>): boolean {
   return [...terms].some((t) => haystack.includes(t));
 }
 
+function hasMatchedExplicitApplicability(record: MemoryRecord): boolean {
+  // The processor pipeline has already removed records whose applies_when does not
+  // match the current session. Surviving explicit applicability is therefore a
+  // positive relevance signal even when the prompt shares no statement/tag terms.
+  return (record.applies_when?.length ?? 0) > 0;
+}
+
 /** Parse qmd JSON to extract record IDs */
 function parseQmdIds(stdout: string): string[] {
   return parseQmdMemoryIds(stdout);
@@ -137,6 +144,7 @@ async function selectMemoryHybrid(
 ): Promise<MemoryRecord[]> {
   const l1 = records.filter((r) => r.layer === "L1");
   const l2 = records.filter((r) => r.layer === "L2");
+  const explicitApplicableL2 = l2.filter(hasMatchedExplicitApplicability);
   const eligibleIds = new Set(records.map((r) => r.id));
 
   if (ftsIndex?.isAvailable) {
@@ -162,16 +170,21 @@ async function selectMemoryHybrid(
     );
 
     const merged = mergeHybridResults(ftsResults, semanticIds, recordMap, budget.maxL2);
-    const selectedL2 = merged.flatMap((h) => {
+    const selectedBySearch = merged.flatMap((h) => {
       const rec = l2.find((r) => r.id === h.id);
       return rec ? [rec] : [];
     });
+    const applicableIds = new Set(explicitApplicableL2.map((record) => record.id));
+    const selectedL2 = [
+      ...explicitApplicableL2,
+      ...selectedBySearch.filter((record) => !applicableIds.has(record.id)),
+    ];
 
     return applyLayerBudgets(l1, selectedL2, budget);
   }
 
   const terms = promptTerms(prompt);
-  const relevantL2 = l2.filter((r) => isRelevantByTerms(r, terms));
+  const relevantL2 = l2.filter((r) => hasMatchedExplicitApplicability(r) || isRelevantByTerms(r, terms));
   return applyLayerBudgets(l1, relevantL2, budget);
 }
 
