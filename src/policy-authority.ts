@@ -25,11 +25,19 @@ const EXPLICIT_POLICY_RATIFICATION_METHODS = new Set<PolicyRatificationMethod>([
   "manual_review",
 ]);
 
+function isPolicyRatification(value: unknown): value is PolicyRatification {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Partial<PolicyRatification>;
+  if (typeof candidate.method !== "string" || !EXPLICIT_POLICY_RATIFICATION_METHODS.has(candidate.method as PolicyRatificationMethod)) return false;
+  if (typeof candidate.ratified_at !== "string" || candidate.ratified_at.trim().length === 0) return false;
+  if (!Array.isArray(candidate.evidence_refs) || candidate.evidence_refs.length === 0) return false;
+  return candidate.evidence_refs.every((ref) => typeof ref === "string" && ref.trim().length > 0);
+}
+
 export function hasValidPolicyRatification(record: MemoryRecord): boolean {
-  const ratification = record.policy_ratification;
-  if (record.authority_plane !== "policy" || !ratification) return false;
-  if (!EXPLICIT_POLICY_RATIFICATION_METHODS.has(ratification.method)) return false;
-  if (!ratification.ratified_at || ratification.evidence_refs.length === 0) return false;
+  if (record.authority_plane !== "policy") return false;
+  const ratification = record.policy_ratification as unknown;
+  if (!isPolicyRatification(ratification)) return false;
 
   const recordEvidence = new Set(record.evidence.map((item) => item.ref));
   return ratification.evidence_refs.every((ref) => recordEvidence.has(ref));
