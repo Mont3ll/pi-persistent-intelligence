@@ -94,6 +94,20 @@ describe("K5 evidence, belief, and policy authority separation", () => {
     expect(extractWithMode([policy], "strict")).toEqual([]);
   });
 
+  test("malformed policy ratification fails closed instead of crashing strict extraction", () => {
+    const malformed = {
+      ...record("mem_malformed", 0.99),
+      authority_plane: "policy",
+      policy_ratification: {
+        method: "direct_user_instruction",
+        ratified_at: "2026-09-28T10:00:00Z",
+      },
+    } as unknown as MemoryRecord;
+
+    expect(() => extractWithMode([malformed], "strict")).not.toThrow();
+    expect(extractWithMode([malformed], "strict")).toEqual([]);
+  });
+
   test("compatibility mode preserves legacy high-confidence hard-rule behavior for migration", () => {
     const legacy = record("mem_legacy", 0.95);
 
