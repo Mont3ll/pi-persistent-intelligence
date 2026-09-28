@@ -5,16 +5,6 @@ import { loadAllRecords, slugifyProject } from "./store";
 import type { MemoryRecord } from "./types";
 
 function renderRecord(record: MemoryRecord): string {
-  if (record.status === "deleted") {
-    return [
-      `### ${record.id}`,
-      "",
-      "**Status**: deleted",
-      "",
-      "_[Deleted record content is omitted from rendered memory. Canonical audit state is retained separately.]_",
-    ].join("\n");
-  }
-
   const tags = record.tags.map((tag) => `#${tag}`).join(" ");
   const evidence = record.evidence.map((item) => `- ${item.ref} — ${item.note}`).join("\n");
   const supersession = [
@@ -51,7 +41,11 @@ function renderRecordGroup(records: MemoryRecord[], emptyMessage: string): strin
 export function renderMemoryMarkdown(records: MemoryRecord[]): string {
   const current = records.filter((record) => record.status === "active");
   const contested = records.filter((record) => record.status === "contested");
-  const history = records.filter((record) => record.status !== "active" && record.status !== "contested");
+  const history = records.filter((record) =>
+    record.status !== "active"
+    && record.status !== "contested"
+    && record.status !== "deleted"
+  );
   const currentL1 = current.filter((record) => record.layer === "L1");
   const currentL2 = current.filter((record) => record.layer === "L2");
 
@@ -76,7 +70,7 @@ export function renderMemoryMarkdown(records: MemoryRecord[]): string {
     "",
     "## History",
     "",
-    "> Historical memory is retained for audit and temporal context, not as current truth.",
+    "> Deprecated, superseded, and promoted memory is retained here for audit and temporal context. Deleted records remain only in canonical/tombstone audit state and are not projected here.",
     "",
     renderRecordGroup(history, "_No historical records._"),
     "",
