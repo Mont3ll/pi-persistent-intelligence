@@ -15,8 +15,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-// Bun built-in SQLite — always available, no install required
-// Using dynamic import to allow non-Bun runtimes to fall back gracefully
 let BunDatabase: typeof import("bun:sqlite").Database | null = null;
 try {
   BunDatabase = (await import("bun:sqlite")).Database;
@@ -42,8 +40,9 @@ export class MemoryFtsIndex {
     try {
       mkdirSync(dirname(dbPath), { recursive: true });
       this.db = new BunDatabase(dbPath);
-      (this.db as any).exec("PRAGMA journal_mode=WAL;");
-      (this.db as any).exec(`
+      const db = this.db as any;
+      db.exec("PRAGMA journal_mode=WAL;");
+      db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
           id UNINDEXED,
           layer UNINDEXED,
@@ -54,9 +53,9 @@ export class MemoryFtsIndex {
           tokenize='porter unicode61'
         );
       `);
+      db.exec("CREATE TABLE IF NOT EXISTS memory_fts_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
       this.available = true;
     } catch {
-      // FTS5 may not be available in all SQLite builds
       this.db = null;
       this.available = false;
     }
@@ -66,8 +65,20 @@ export class MemoryFtsIndex {
     return this.available;
   }
 
+  getGeneration(): number | null {
+    if (!this.db || !this.available) return null;
+    try {
+      const row = (this.db as any).prepare("SELECT value FROM memory_fts_meta WHERE key = 'canonical_generation'").get() as { value?: string } | null;
+      if (!row?.value) return null;
+      const value = Number(row.value);
+      return Number.isInteger(value) && value >= 0 ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Replace the entire index with the provided records. Fast for small corpora. */
-  sync(records: Array<{ id: string; layer: string; ruleType?: string; confidence: number; statement: string; tags: string[] }>): void {
+  sync(records: Array<{ id: string; layer: string; ruleType?: string; confidence: number; statement: string; tags: string[] }>, generation = 0): void {
     if (!this.db || !this.available) return;
     const db = this.db as any;
     try {
@@ -79,19 +90,17 @@ export class MemoryFtsIndex {
       for (const r of records) {
         insert.run(r.id, r.layer, r.ruleType ?? "", r.confidence, r.statement, r.tags.join(" "));
       }
+      db.prepare("INSERT INTO memory_fts_meta (key, value) VALUES ('canonical_generation', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(generation));
       db.exec("COMMIT;");
     } catch {
       try { db.exec("ROLLBACK;"); } catch { /* ignore rollback failures */ }
-      // best-effort: retain the previously committed complete index
     }
   }
 
-  /** BM25 keyword search over statement + tags. */
   search(query: string, limit = 10): FtsSearchResult[] {
     if (!this.db || !this.available || !query.trim()) return [];
     try {
       const db = this.db as any;
-      // Sanitize query: FTS5 syntax chars could cause parse errors
       const safeQuery = query.replace(/["'*()]/g, " ").trim();
       if (!safeQuery) return [];
       const rows = db
@@ -113,7 +122,7 @@ export class MemoryFtsIndex {
         layer: r.layer as "L1" | "L2",
         confidence: r.confidence,
         ruleType: r.rule_type || undefined,
-        score: Math.abs(r.score), // bm25 returns negative
+        score: Math.abs(r.score),
       }));
     } catch {
       return [];
