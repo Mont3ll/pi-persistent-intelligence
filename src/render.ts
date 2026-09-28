@@ -1,5 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { readCanonicalGeneration, markProjectionGeneration } from "./governance-generation";
 import { ensureMemoryDirs } from "./paths";
 import { loadAllRecords, slugifyProject } from "./store";
 import type { MemoryRecord } from "./types";
@@ -38,7 +39,7 @@ function renderRecordGroup(records: MemoryRecord[], emptyMessage: string): strin
   return records.length ? records.map(renderRecord).join("\n\n") : emptyMessage;
 }
 
-export function renderMemoryMarkdown(records: MemoryRecord[]): string {
+export function renderMemoryMarkdown(records: MemoryRecord[], generation?: number): string {
   const current = records.filter((record) => record.status === "active");
   const contested = records.filter((record) => record.status === "contested");
   const history = records.filter((record) =>
@@ -53,6 +54,7 @@ export function renderMemoryMarkdown(records: MemoryRecord[]): string {
     "# Long-Term Memory",
     "",
     "> Generated from canonical JSONL. Do not edit directly.",
+    ...(generation === undefined ? [] : ["", `> Canonical generation: ${generation}`]),
     "",
     "## L1 — Identity",
     "",
@@ -78,10 +80,10 @@ export function renderMemoryMarkdown(records: MemoryRecord[]): string {
   return sections.join("\n");
 }
 
-export function renderMemoryToDisk(root: string): string {
+export function renderMemoryToDisk(root: string, generation = readCanonicalGeneration(root)): string {
   const paths = ensureMemoryDirs(root);
   const records = loadAllRecords(root);
-  const markdown = renderMemoryMarkdown(records);
+  const markdown = renderMemoryMarkdown(records, generation);
   writeFileSync(paths.rendered.memory, markdown, "utf-8");
 
   const byProject = new Map<string, MemoryRecord[]>();
@@ -92,7 +94,8 @@ export function renderMemoryToDisk(root: string): string {
     byProject.set(record.scope.project, existing);
   }
   for (const [project, projectRecords] of byProject) {
-    writeFileSync(join(paths.rendered.projects, `${slugifyProject(project)}.md`), renderMemoryMarkdown(projectRecords), "utf-8");
+    writeFileSync(join(paths.rendered.projects, `${slugifyProject(project)}.md`), renderMemoryMarkdown(projectRecords, generation), "utf-8");
   }
+  markProjectionGeneration(root, "rendered", generation);
   return markdown;
 }
