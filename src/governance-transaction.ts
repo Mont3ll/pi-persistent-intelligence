@@ -1,9 +1,12 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { readCanonicalState, writeCanonicalStateAtomic } from "./governance-generation";
+import { acquireGovernanceWriterLock, StaleCanonicalGenerationError } from "./governance-writer-lock";
 import { resolvePaths, ensureMemoryDirs } from "./paths";
 import { renderMemoryToDisk } from "./render";
 import type { MemoryPatch } from "./types";
+
+export { StaleCanonicalGenerationError } from "./governance-writer-lock";
 
 export type GovernanceTransactionStage =
   | "validated"
@@ -29,13 +32,6 @@ export interface GovernanceTransactionOptions {
   expectedGeneration?: number;
   now: string;
   faultAfterStage?: GovernanceTransactionStage;
-}
-
-export class StaleCanonicalGenerationError extends Error {
-  constructor(expected: number, actual: number) {
-    super(`Stale canonical generation: expected ${expected}, found ${actual}`);
-    this.name = "StaleCanonicalGenerationError";
-  }
 }
 
 export class GovernanceRecoveryBlockedError extends Error {
@@ -87,20 +83,8 @@ function maybeFault(options: GovernanceTransactionOptions, stage: GovernanceTran
 }
 
 const WORKSPACE_ENTRIES = [
-  "config.json",
-  "schemas",
-  "memory",
-  "rendered",
-  "scratchpad.md",
-  "daily",
-  "inbox",
-  "patches",
-  "runtime",
-  "reports",
-  "sessions",
-  "search",
+  "config.json", "schemas", "memory", "rendered", "scratchpad.md", "daily", "inbox", "patches", "runtime", "reports", "sessions", "search",
 ] as const;
-
 const PUBLISH_ENTRIES = ["memory", "inbox", "patches", "runtime", "reports"] as const;
 
 function cloneLiveStore(root: string, transactionId: string): string {
@@ -151,11 +135,7 @@ export function completeInterruptedTransaction(root: string, manifest: Governanc
     publishTransactionWorkspace(root, manifest.transaction_id);
     current = { ...current, stage: "canonical_published", updated_at: now };
     writeTransactionManifest(root, current);
-    writeCanonicalStateAtomic(root, {
-      generation: manifest.next_generation,
-      last_transaction_id: manifest.transaction_id,
-      updated_at: now,
-    });
+    writeCanonicalStateAtomic(root, { generation: manifest.next_generation, last_transaction_id: manifest.transaction_id, updated_at: now });
     current = { ...current, stage: "generation_published", updated_at: now };
     writeTransactionManifest(root, current);
   }
@@ -180,58 +160,68 @@ export function runGovernanceTransaction(
   if (existing?.stage === "complete" && existing.result) return existing.result;
   if (existing) return completeInterruptedTransaction(root, existing, options.now);
 
-  const state = readCanonicalState(root);
-  const expected = options.expectedGeneration ?? state.generation;
-  if (state.generation !== expected) throw new StaleCanonicalGenerationError(expected, state.generation);
-  const next = state.generation + 1;
-  let manifest: GovernanceTransactionManifest = {
-    transaction_id: transactionId,
-    stage: "validated",
-    expected_generation: state.generation,
-    next_generation: next,
-    created_at: options.now,
-    updated_at: options.now,
-  };
-  maybeFault(options, "validated");
-
-  const workspace = cloneLiveStore(root, transactionId);
-  let durableIntent = false;
+  const lock = acquireGovernanceWriterLock(root, {
+    transactionId,
+    expectedGeneration: options.expectedGeneration,
+    now: options.now,
+  });
   try {
-    const result = mutateWorkspace(workspace);
-    if (result.applied_ops.length === 0) {
-      rmSync(transactionDirectory(root, transactionId), { recursive: true, force: true });
-      return result;
+    const state = readCanonicalState(root);
+    if (state.generation !== lock.observedGeneration) {
+      throw new StaleCanonicalGenerationError(lock.observedGeneration, state.generation);
     }
+    const next = state.generation + 1;
+    let manifest: GovernanceTransactionManifest = {
+      transaction_id: transactionId,
+      stage: "validated",
+      expected_generation: state.generation,
+      next_generation: next,
+      created_at: options.now,
+      updated_at: options.now,
+    };
+    maybeFault(options, "validated");
 
-    manifest = { ...manifest, stage: "staged", updated_at: options.now, result };
-    maybeFault(options, "staged");
-    manifest = { ...manifest, stage: "intent_written", updated_at: options.now };
-    writeTransactionManifest(root, manifest);
-    durableIntent = true;
-    maybeFault(options, "intent_written");
+    const workspace = cloneLiveStore(root, transactionId);
+    let durableIntent = false;
+    try {
+      const result = mutateWorkspace(workspace);
+      if (result.applied_ops.length === 0) {
+        rmSync(transactionDirectory(root, transactionId), { recursive: true, force: true });
+        return result;
+      }
 
-    publishTransactionWorkspace(root, transactionId);
-    manifest = { ...manifest, stage: "canonical_published", updated_at: options.now };
-    writeTransactionManifest(root, manifest);
-    maybeFault(options, "canonical_published");
+      manifest = { ...manifest, stage: "staged", updated_at: options.now, result };
+      maybeFault(options, "staged");
+      manifest = { ...manifest, stage: "intent_written", updated_at: options.now };
+      writeTransactionManifest(root, manifest);
+      durableIntent = true;
+      maybeFault(options, "intent_written");
 
-    writeCanonicalStateAtomic(root, { generation: next, last_transaction_id: transactionId, updated_at: options.now });
-    manifest = { ...manifest, stage: "generation_published", updated_at: options.now };
-    writeTransactionManifest(root, manifest);
-    maybeFault(options, "generation_published");
+      publishTransactionWorkspace(root, transactionId);
+      manifest = { ...manifest, stage: "canonical_published", updated_at: options.now };
+      writeTransactionManifest(root, manifest);
+      maybeFault(options, "canonical_published");
 
-    renderMemoryToDisk(root, next);
-    manifest = { ...manifest, stage: "projections_derived", updated_at: options.now };
-    writeTransactionManifest(root, manifest);
-    maybeFault(options, "projections_derived");
+      writeCanonicalStateAtomic(root, { generation: next, last_transaction_id: transactionId, updated_at: options.now });
+      manifest = { ...manifest, stage: "generation_published", updated_at: options.now };
+      writeTransactionManifest(root, manifest);
+      maybeFault(options, "generation_published");
 
-    manifest = { ...manifest, stage: "complete", updated_at: options.now, result };
-    writeTransactionManifest(root, manifest);
-    rmSync(workspace, { recursive: true, force: true });
-    maybeFault(options, "complete");
-    return result;
-  } catch (error) {
-    if (!durableIntent) rmSync(transactionDirectory(root, transactionId), { recursive: true, force: true });
-    throw error;
+      renderMemoryToDisk(root, next);
+      manifest = { ...manifest, stage: "projections_derived", updated_at: options.now };
+      writeTransactionManifest(root, manifest);
+      maybeFault(options, "projections_derived");
+
+      manifest = { ...manifest, stage: "complete", updated_at: options.now, result };
+      writeTransactionManifest(root, manifest);
+      rmSync(workspace, { recursive: true, force: true });
+      maybeFault(options, "complete");
+      return result;
+    } catch (error) {
+      if (!durableIntent) rmSync(transactionDirectory(root, transactionId), { recursive: true, force: true });
+      throw error;
+    }
+  } finally {
+    lock.release();
   }
 }
