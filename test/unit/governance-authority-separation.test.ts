@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendEvidenceRecord } from "../../src/evidence";
 import { buildRecallXray } from "../../src/recall-xray";
+import { buildRetrievalContext, readLastInjectionStats } from "../../src/retriever";
 import { extractHardRules } from "../../src/rules";
 import { unsafeAddMemoryRecord } from "../../src/store";
 import type { EvidenceRecord, GovernanceMode, MemoryRecord } from "../../src/types";
@@ -129,5 +130,19 @@ describe("K5 evidence, belief, and policy authority separation", () => {
 
     expect(report.summary.hard_rule_count).toBe(1);
     expect(report.included.find((item) => item.memory_id === policy.id)?.hard_rule).toBe(true);
+  });
+
+  test("strict retrieval injection uses policy authority rather than compatibility confidence", async () => {
+    const dir = root();
+    writeFileSync(join(dir, "config.json"), JSON.stringify({ governance: { mode: "strict" } }), "utf8");
+    unsafeAddMemoryRecord(dir, record("mem_retrieval_belief", 1.0));
+
+    await buildRetrievalContext(dir, {
+      prompt: "How should this directive candidate be applied safely in this project?",
+      today: "2026-09-28",
+      useQmd: false,
+    });
+
+    expect(readLastInjectionStats(dir)?.hardRuleCount).toBe(0);
   });
 });
