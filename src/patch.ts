@@ -1,4 +1,5 @@
 import { applyPatchDirect } from "./patch-direct";
+import { assertGovernanceRecoveryClear, recoverGovernanceTransactions } from "./governance-recovery";
 import { runGovernanceTransaction, type GovernanceTransactionStage } from "./governance-transaction";
 import type { MemoryPatch } from "./types";
 
@@ -12,6 +13,8 @@ export interface ApplyPatchOptions {
 }
 
 export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatchOptions): MemoryPatch {
+  const recovery = recoverGovernanceTransactions(root, options.now);
+  assertGovernanceRecoveryClear(recovery);
   return runGovernanceTransaction(
     root,
     {
