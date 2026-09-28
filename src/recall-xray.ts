@@ -186,8 +186,9 @@ export function buildRecallXray(root: string, options: RecallXrayOptions): Recal
     const legacyHardRuleCandidate = actionableRule && record.confidence >= 0.85;
     const strictPolicyCandidate = actionableRule && hasValidPolicyRatification(record);
     const isHardRuleCandidate = governanceMode === "strict" ? strictPolicyCandidate : legacyHardRuleCandidate;
+    const diagnosticHardRuleCandidate = legacyHardRuleCandidate || strictPolicyCandidate;
     const evsPresent = evs.length > 0;
-    const strictSafe = governanceMode === "strict" ? evsPresent && !invalidated : true;
+    const strictSafe = governanceMode === "strict" ? strictPolicyCandidate && evsPresent && !invalidated : true;
     const hardRule = hardRuleIds.has(record.id) && strictSafe;
     const notRelevant = !surviving.has(record.id) ? false : score <= 0 && record.layer !== "L1" && !hardRule;
     if (surviving.has(record.id) && !tombstoned && !invalidated && !notRelevant && (included.length < (options.maxRecords ?? 20))) {
@@ -224,9 +225,17 @@ export function buildRecallXray(root: string, options: RecallXrayOptions): Recal
           ? governanceMode === "strict"
             ? "explicit policy authority with valid ratification provenance and live evidence"
             : "active high-confidence hard-rule ruleType with policy filters satisfied"
-          : isHardRuleCandidate ? "directive candidate not attributed as clean hard rule under current governance" : undefined,
-        governance_safe: isHardRuleCandidate ? strictSafe : undefined,
-        warnings: isHardRuleCandidate && !strictSafe ? ["strict governance requires structured live evidence before hard-rule attribution"] : undefined,
+          : diagnosticHardRuleCandidate
+            ? governanceMode === "strict" && !strictPolicyCandidate
+              ? "legacy hard-rule candidate lacks explicit policy ratification under strict governance"
+              : "directive candidate not attributed as clean hard rule under current governance"
+            : undefined,
+        governance_safe: diagnosticHardRuleCandidate ? strictSafe : undefined,
+        warnings: diagnosticHardRuleCandidate && !strictSafe
+          ? [governanceMode === "strict" && !strictPolicyCandidate
+            ? "strict governance requires explicit policy ratification before hard-rule attribution"
+            : "strict governance requires structured live evidence before hard-rule attribution"]
+          : undefined,
         score_provenance: {
           fts_score: Number(score.toFixed(3)),
           semantic_provider: "none",
