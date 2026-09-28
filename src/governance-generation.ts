@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import { resolvePaths } from "./paths";
 
@@ -20,20 +20,26 @@ const LEGACY_CANONICAL_STATE: CanonicalStateMetadata = {
 function writeJsonAtomic(file: string, value: unknown): void {
   mkdirSync(dirname(file), { recursive: true });
   const temporary = `${file}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const fd = openSync(temporary, "wx", 0o600);
   try {
-    writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    renameSync(temporary, file);
+    writeSync(fd, `${JSON.stringify(value, null, 2)}\n`, undefined, "utf8");
+    fsyncSync(fd);
   } catch (error) {
+    closeSync(fd);
     if (existsSync(temporary)) unlinkSync(temporary);
     throw error;
   }
+  closeSync(fd);
+  renameSync(temporary, file);
 }
 
 export function readCanonicalState(root: string): CanonicalStateMetadata {
   const file = resolvePaths(root).governance.canonicalState;
   if (!existsSync(file)) return { ...LEGACY_CANONICAL_STATE };
   const parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<CanonicalStateMetadata>;
-  const generation = Number.isInteger(parsed.generation) && Number(parsed.generation) >= 0 ? Number(parsed.generation) : 0;
+  const generation = typeof parsed.generation === "number" && Number.isInteger(parsed.generation) && parsed.generation >= 0
+    ? parsed.generation
+    : 0;
   return {
     generation,
     last_transaction_id: typeof parsed.last_transaction_id === "string" ? parsed.last_transaction_id : null,
@@ -56,7 +62,7 @@ export function readProjectionGenerations(root: string): ProjectionGenerations {
   const result: ProjectionGenerations = {};
   for (const name of ["rendered", "fts", "qmd"] as const) {
     const value = parsed[name];
-    if (Number.isInteger(value) && Number(value) >= 0) result[name] = Number(value);
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0) result[name] = value;
   }
   return result;
 }
