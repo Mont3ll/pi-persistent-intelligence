@@ -872,7 +872,15 @@ function evalCapturedReplayTemporaryInstructionNotDurable(): EvalResult {
 
 async function evalInjectionStatsAccuracy(): Promise<EvalResult> {
   const root = tempRoot();
-  unsafeAddMemoryRecord(root, record("mem_rule", "Prefer qmd only when useful.", { ruleType: "prefer_pattern" }));
+  unsafeAddMemoryRecord(root, record("mem_rule", "Prefer qmd only when useful.", {
+    ruleType: "prefer_pattern",
+    authority_plane: "policy",
+    policy_ratification: {
+      method: "manual_review",
+      evidence_refs: ["x"],
+      ratified_at: "2026-06-15T00:00:00.000Z",
+    },
+  }));
   const ctx = await buildRetrievalContext(root, { prompt: "qmd retrieval hardening", today: "2026-06-15", useQmd: false });
   const stats = readLastInjectionStats(root);
   const pass = stats?.hardRuleCount === 1 && stats.selectedMemoryCount === ctx.selectedMemory.length && Boolean(stats.timings);
