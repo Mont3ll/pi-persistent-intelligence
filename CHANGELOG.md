@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-28
+
+### Added
+
+- Added canonical generation metadata for governed memory state and rendered/FTS projection freshness.
+- Added durable governance transaction workspaces and receipts, expected-generation validation, deterministic crash recovery, and cross-process writer locking with stale-lock recovery.
+- Added explicit Evidence, Belief, and Policy authority separation with policy ratification and provenance validation.
+- Added canonical `verify:pr` and `release-audit` commands backed by Bun 1.3.13, frozen dependency installation, and consistent CI, prepublish, and package verification.
+
+### Changed
+
+- New stores now default to strict governance, while existing stores retain compatibility behavior for migration; durable store-origin metadata and explicit configuration preserve the intended mode.
+- Recall X-ray and production retrieval now report and enforce authority according to governance mode. Applicable beliefs remain retrievable without becoming directive policy.
+- Current, contested, and historical memory projections now use explicit lifecycle semantics, and deleted records are excluded from generated memory output.
+
+### Fixed
+
+- Completed durable candidate rejection with explicit missing-candidate and idempotent repeat handling.
+- Added supersession validity metadata and high-risk classification while preserving safe patch reapplication semantics.
+- Made FTS rebuilds transactional and rollback-safe so failed replacement cannot corrupt the active search index.
+- Minimized prompt excerpts, bounded diagnostic retention, and extended privacy-purge cleanup across recall, reinforcement, inquiry, runtime diagnostic, and generated report derivatives.
+
+### Governance and safety
+
+- Confidence alone no longer grants directive authority: strict policy requires explicit ratification whose provenance matches supporting evidence, and malformed policy metadata fails closed.
+- Package exports are restricted to the supported root surface, preventing unsafe source deep imports.
+- Governed writes recover deterministically across transaction fault stages, serialize recovery under the same writer lock, and reject stale same-generation writers.
+
 ## [0.16.0] - 2026-09-04
 
 ### Added
