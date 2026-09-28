@@ -1,19 +1,13 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { closeSync, cpSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { readCanonicalState, writeCanonicalStateAtomic } from "./governance-generation";
 import { resolvePaths, ensureMemoryDirs } from "./paths";
 import { renderMemoryToDisk } from "./render";
 import type { MemoryPatch } from "./types";
 
-export type GovernanceTransactionStage =
-  | "validated"
-  | "staged"
-  | "intent_written"
-  | "canonical_published"
-  | "generation_published"
-  | "projections_derived"
-  | "complete";
+export type GovernanceTransactionStage = "validated" | "staged" | "intent_written" | "canonical_published" | "generation_published" | "projections_derived" | "complete";
 
 export interface GovernanceTransactionManifest {
   transaction_id: string;
@@ -52,7 +46,13 @@ function writeManifest(root: string, manifest: GovernanceTransactionManifest): v
   const file = manifestPath(root, manifest.transaction_id);
   mkdirSync(dirname(file), { recursive: true });
   const temporary = `${file}.tmp-${process.pid}-${Date.now()}`;
-  writeFileSync(temporary, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  const fd = openSync(temporary, "wx", 0o600);
+  try {
+    writeSync(fd, `${JSON.stringify(manifest, null, 2)}\n`, undefined, "utf8");
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
   renameSync(temporary, file);
 }
 
@@ -75,10 +75,32 @@ function cloneLiveStore(root: string): string {
   return workspace;
 }
 
-const PUBLISH_ENTRIES = ["memory", "inbox", "patches", "runtime", "reports", "rendered"] as const;
+function walkFiles(root: string, entry: string): string[] {
+  const target = join(root, entry);
+  if (!existsSync(target)) return [];
+  if (!statSync(target).isDirectory()) return [target];
+  return readdirSync(target, { withFileTypes: true }).flatMap((child) => {
+    const childEntry = join(entry, child.name);
+    return child.isDirectory() ? walkFiles(root, childEntry) : [join(root, childEntry)];
+  });
+}
 
-function publishWorkspace(root: string, workspace: string): void {
-  for (const entry of PUBLISH_ENTRIES) {
+function fingerprint(root: string, entries: readonly string[]): string {
+  const hash = createHash("sha256");
+  for (const file of entries.flatMap((entry) => walkFiles(root, entry)).sort()) {
+    hash.update(relative(root, file));
+    hash.update("\0");
+    hash.update(readFileSync(file));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+const CANONICAL_ENTRIES = ["memory", "inbox"] as const;
+const AUXILIARY_ENTRIES = ["patches", "runtime", "reports"] as const;
+
+function publishEntries(root: string, workspace: string, entries: readonly string[]): void {
+  for (const entry of entries) {
     const source = join(workspace, entry);
     const destination = join(root, entry);
     if (!existsSync(source)) continue;
@@ -113,31 +135,37 @@ export function runGovernanceTransaction(
 
   const workspace = cloneLiveStore(root);
   try {
+    const beforeCanonical = fingerprint(root, CANONICAL_ENTRIES);
     const result = mutateWorkspace(workspace);
-    if (result.applied_ops.length === 0) return result;
+    const canonicalChanged = beforeCanonical !== fingerprint(workspace, CANONICAL_ENTRIES);
+
+    if (!canonicalChanged) {
+      publishEntries(root, workspace, AUXILIARY_ENTRIES);
+      return result;
+    }
 
     manifest = { ...manifest, stage: "staged", updated_at: options.now, result };
     maybeFault(options, "staged");
-    manifest = { ...manifest, stage: "intent_written" };
+    manifest = { ...manifest, stage: "intent_written", updated_at: options.now };
     writeManifest(root, manifest);
     maybeFault(options, "intent_written");
 
-    publishWorkspace(root, workspace);
-    manifest = { ...manifest, stage: "canonical_published" };
+    publishEntries(root, workspace, [...CANONICAL_ENTRIES, ...AUXILIARY_ENTRIES]);
+    manifest = { ...manifest, stage: "canonical_published", updated_at: options.now };
     writeManifest(root, manifest);
     maybeFault(options, "canonical_published");
 
     writeCanonicalStateAtomic(root, { generation: next, last_transaction_id: transactionId, updated_at: options.now });
-    manifest = { ...manifest, stage: "generation_published" };
+    manifest = { ...manifest, stage: "generation_published", updated_at: options.now };
     writeManifest(root, manifest);
     maybeFault(options, "generation_published");
 
     renderMemoryToDisk(root, next);
-    manifest = { ...manifest, stage: "projections_derived" };
+    manifest = { ...manifest, stage: "projections_derived", updated_at: options.now };
     writeManifest(root, manifest);
     maybeFault(options, "projections_derived");
 
-    manifest = { ...manifest, stage: "complete", result };
+    manifest = { ...manifest, stage: "complete", updated_at: options.now, result };
     writeManifest(root, manifest);
     maybeFault(options, "complete");
     return result;
