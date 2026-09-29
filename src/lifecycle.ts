@@ -16,6 +16,8 @@ import { createInboxReviewComponent, buildInboxNotification, shouldPromptForInbo
 import { maybeCorrectionSignal } from "./corrections";
 import { actionsFromAgentMessages } from "./capture-activity";
 import { processCaptureTurn } from "./capture-coordinator";
+import { isSyntheticCaptureContext } from "./capture-intent";
+import { buildInboxRejectionPatch } from "./inbox-rejection";
 import { createPatchReviewComponent } from "./tui/PatchReviewPanel";
 import { MemoryFtsIndex } from "./search/fts";
 import { captureReinforcementLink, classifyRecordedToolOutcome, linkExplicitCorrectionToMemory } from "./reinforcement";
@@ -279,6 +281,18 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                 ctx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
               }
 
+            } else if (action === "reject") {
+              const rejectionPatch = buildInboxRejectionPatch(pending, dependencies.nowIso());
+              if (rejectionPatch.ops.length > 0 && ctx.ui.custom) {
+                const selectedIds = await ctx.ui.custom<string[] | null>(
+                  (tui, theme, _kb, done) =>
+                    createPatchReviewComponent(rejectionPatch, done, tui as any, undefined, theme),
+                );
+                if (selectedIds && selectedIds.length > 0) {
+                  const applied = applyPatch(state.root, rejectionPatch, { selectedOpIds: selectedIds, now: dependencies.nowIso() });
+                  ctx.ui.notify(`✓ Rejected ${applied.applied_ops.length} memory candidate(s).`, "success");
+                }
+              }
             } else if (action === "review") {
               // Chain a second ctx.ui.custom() call to show PatchReviewPanel.
               // The first ctx.ui.custom() (inbox overlay) must fully resolve before
@@ -353,7 +367,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
       for (const [messageIndex, msg] of eventMessages.entries()) {
         if (msg.role === "user" && !msg.customType) {
           const text = dependencies.extractText(msg.content);
-          if (text.trim()) {
+          if (text.trim() && !isSyntheticCaptureContext(text)) {
             state.pendingUserMessages.push(text);
             if (state.pendingUserMessages.length > 60) state.pendingUserMessages.shift();
 

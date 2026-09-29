@@ -8,6 +8,7 @@
  * Actions:
  *   [a] / Enter on "Apply"  → approve auto-eligible candidates
  *   [r] / Enter on "Review" → open PatchReviewPanel for per-op selection
+ *   [x] / Enter on "Reject" → open rejection-only PatchReviewPanel
  *   [s] / Enter on "Skip"   → dismiss; candidates stay in inbox
  *   Esc / q                 → same as skip
  *
@@ -29,7 +30,7 @@ import {
   type MemoryPanelTheme,
 } from "./memory-panel";
 
-export type InboxOverlayAction = "approve" | "review" | "skip" | null;
+export type InboxOverlayAction = "approve" | "review" | "reject" | "skip" | null;
 
 export interface InboxOverlayOptions {
   candidates: CaptureCandidate[];
@@ -60,14 +61,15 @@ export function themeFromInbox(theme: unknown): MemoryPanelTheme {
 const ACTIONS = [
   { key: "a", idx: 0 as const, action: "approve" as InboxOverlayAction },
   { key: "r", idx: 1 as const, action: "review"  as InboxOverlayAction },
-  { key: "s", idx: 2 as const, action: "skip"    as InboxOverlayAction },
+  { key: "x", idx: 2 as const, action: "reject"  as InboxOverlayAction },
+  { key: "s", idx: 3 as const, action: "skip"    as InboxOverlayAction },
 ];
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export class InboxReviewOverlay {
   focused = false;
-  private cursor: 0 | 1 | 2 = 0; // which action is highlighted
+  private cursor: 0 | 1 | 2 | 3 = 0; // which action is highlighted
 
   constructor(
     private opts: InboxOverlayOptions,
@@ -81,6 +83,7 @@ export class InboxReviewOverlay {
     // Single-letter shortcuts — immediate resolve regardless of cursor
     if (lower === "a") { this.done("approve"); return; }
     if (lower === "r") { this.done("review");  return; }
+    if (lower === "x") { this.done("reject");  return; }
     if (lower === "s") { this.done("skip");    return; }
 
     // Dismiss
@@ -91,9 +94,9 @@ export class InboxReviewOverlay {
 
     // Arrow / tab navigation
     if (matchesKey(data, "left") || matchesKey(data, "up")) {
-      this.cursor = Math.max(0, this.cursor - 1) as 0 | 1 | 2;
+      this.cursor = Math.max(0, this.cursor - 1) as 0 | 1 | 2 | 3;
     } else if (matchesKey(data, "right") || matchesKey(data, "down") || matchesKey(data, "tab")) {
-      this.cursor = Math.min(2, this.cursor + 1) as 0 | 1 | 2;
+      this.cursor = Math.min(3, this.cursor + 1) as 0 | 1 | 2 | 3;
     } else if (matchesKey(data, "return")) {
       this.done(ACTIONS[this.cursor]?.action ?? null);
     }
@@ -126,13 +129,13 @@ export class InboxReviewOverlay {
     if (count > 7) lines.push(...wrapPanelLine(th.dim(`  … and ${count - 7} more`), width));
     lines.push("");
 
-    const labels = [`Apply ${auto} auto-eligible`, "Review in detail", "Skip for now"];
+    const labels = [`Apply ${auto} auto-eligible`, "Review in detail", "Reject candidates", "Skip for now"];
     const actions = ACTIONS.map(({ key, idx }) => {
       const label = `[${this.cursor === idx ? key.toUpperCase() : key}] ${labels[idx] ?? ""}`;
       return this.cursor === idx ? th.selected(label) : th.dim(label);
     });
     lines.push(...wrapPanelLine(actions.join(th.dim("   ")), width));
-    lines.push(...renderMemoryPanelControls(th, width, ["↑↓ choose", "Enter confirm", "a/r/s shortcuts", "Esc cancel"]));
+    lines.push(...renderMemoryPanelControls(th, width, ["↑↓ choose", "Enter confirm", "a/r/x/s shortcuts", "Esc cancel"]));
     lines.push(renderMemoryPanelSeparator(th, width));
     return lines;
   }

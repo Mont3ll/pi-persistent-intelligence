@@ -53,11 +53,18 @@ function decision(
   return { intent, confidence, durability, global_cues: globalCues, project_cues: projectCues, applicability: applicability(text), reasons };
 }
 
+export function isSyntheticCaptureContext(rawText: string): boolean {
+  return /^\s*<skill(?:\s|>)/i.test(rawText);
+}
+
 export function classifyCaptureIntent(rawText: string): CaptureIntentDecision {
   const text = normalize(rawText);
   const lower = text.toLowerCase();
   if (!text || text.length < 8) return decision("not_memory", 0, "temporary", text, ["too_short"]);
 
+  if (isSyntheticCaptureContext(rawText)) {
+    return decision("not_memory", 0.99, "temporary", text, ["synthetic_harness_context"]);
+  }
   if (/^(?:task:|your goal is|you are a delegated|you are a subagent|<file name=|# instructions)/i.test(text)) {
     return decision("not_memory", 0.98, "temporary", text, ["task_or_agent_wrapper"]);
   }
