@@ -112,6 +112,17 @@ describe("InboxReviewOverlay", () => {
     expect(result).toBe("review");
   });
 
+  test("'x' calls done with reject so ineligible candidates can leave the inbox", () => {
+    let result: string | undefined;
+    const overlay = new InboxReviewOverlay(
+      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      themeFromInbox(undefined),
+      (action) => { result = action ?? "null"; },
+    );
+    overlay.handleInput("x");
+    expect(result).toBe("reject");
+  });
+
   test("'s' calls done with skip", () => {
     let result: string | undefined;
     const overlay = new InboxReviewOverlay(
