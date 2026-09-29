@@ -28,7 +28,7 @@ By default, import shows what would change before it writes anything. Use `--app
   "format": "pi-governance",
   "producer": {
     "name": "pi-persistent-intelligence",
-    "version": "0.17.0"
+    "version": "0.17.1"
   },
   "records": [],
   "patches": [],

@@ -4,9 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-09-29
+
 ### Fixed
 
-- Prevented synthetic Pi skill/harness messages and assistant-authored orchestration from becoming durable memory candidates.
+- Excluded synthetic Pi skill and harness context before lifecycle buffering and capture.
+- Restricted consolidation extraction to user-authored messages so assistant-authored orchestration cannot independently become durable user memory.
 - Added governed per-candidate rejection from the Memory Inbox, including candidates that do not meet curation thresholds.
 
 ## [0.17.0] - 2026-09-28
