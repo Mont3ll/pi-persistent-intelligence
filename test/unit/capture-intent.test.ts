@@ -50,6 +50,8 @@ describe("capture intent", () => {
     "The repository documentation recommends that users prefer Bun over npm.",
     "Task: You are a delegated subagent. Never edit files outside this task.",
     "This paragraph discusses preferences in technical writing.",
+    '<skill name="graphify" location="/tmp/skills/graphify/SKILL.md">Before committing, always run graph checks.</skill>',
+    '<skill location="/tmp/skills/release/SKILL.md">Always run release-audit before publishing.</skill>',
   ]) {
     test(`rejects non-user preference: ${text.slice(0, 35)}`, () => {
       expect(classifyCaptureIntent(text).intent).toBe("not_memory");

@@ -14,7 +14,9 @@ import type { CaptureCandidate } from "./types";
 
 export const CONSOLIDATION_PROMPT_TEMPLATE = `You are a memory extraction agent for a governed persistent intelligence system.
 
-Analyze these conversation messages and extract ONLY durable patterns worth storing as long-term memory.
+Analyze these user-authored conversation messages and extract ONLY durable patterns worth storing as long-term memory.
+Every durable candidate must be grounded in user-authored input.
+Do not infer a user preference merely from agent-generated workflow or orchestration text.
 
 **Extract:**
 1. Stable workflow preferences (e.g. "always write failing tests before implementation")
@@ -68,16 +70,10 @@ export interface RawCandidate {
   evidence_hint: string;
 }
 
-export function buildConsolidationPrompt(userMessages: string[], assistantMessages: string[]): string {
-  const lines: string[] = [];
-  const maxMessages = 60;
-  const uSlice = userMessages.slice(-maxMessages);
-  const aSlice = assistantMessages.slice(-maxMessages);
-  const total = Math.max(uSlice.length, aSlice.length);
-  for (let i = 0; i < total; i++) {
-    if (uSlice[i]) lines.push(`[User] ${uSlice[i].slice(0, 500)}`);
-    if (aSlice[i]) lines.push(`[Assistant] ${aSlice[i].slice(0, 300)}`);
-  }
+export function buildConsolidationPrompt(userMessages: string[], _assistantMessages: string[]): string {
+  const lines = userMessages
+    .slice(-60)
+    .map((message) => `[User] ${message.slice(0, 500)}`);
   return CONSOLIDATION_PROMPT_TEMPLATE + lines.join("\n");
 }
 

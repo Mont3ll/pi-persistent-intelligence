@@ -13,20 +13,24 @@ function tempRoot() {
 }
 
 describe("buildConsolidationPrompt", () => {
-  test("includes template header and message lines", () => {
-    const prompt = buildConsolidationPrompt(["how do I search?", "use qmd"], ["try qmd search", "run qmd query"]);
+  test("includes user-authored messages and excludes assistant-authored text", () => {
+    const prompt = buildConsolidationPrompt(["how do I search?", "use qmd"], ["try qmd search", "always commit before handoff"]);
     expect(prompt).toContain(CONSOLIDATION_PROMPT_TEMPLATE.slice(0, 50));
     expect(prompt).toContain("[User] how do I search?");
-    expect(prompt).toContain("[Assistant] try qmd search");
+    expect(prompt).toContain("[User] use qmd");
+    expect(prompt).not.toContain("[Assistant]");
+    expect(prompt).not.toContain("try qmd search");
+    expect(prompt).not.toContain("always commit before handoff");
   });
 
-  test("caps at 60 messages", () => {
+  test("caps at 60 user messages", () => {
     const user = Array.from({ length: 80 }, (_, i) => `user msg ${i}`);
     const asst = Array.from({ length: 80 }, (_, i) => `asst msg ${i}`);
     const prompt = buildConsolidationPrompt(user, asst);
     // Should not contain very early messages (capped at last 60)
     expect(prompt).not.toContain("user msg 0\n");
     expect(prompt).toContain("user msg 79");
+    expect(prompt).not.toContain("asst msg 79");
   });
 });
 
