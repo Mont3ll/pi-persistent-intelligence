@@ -28,14 +28,18 @@ export function findEquivalentCandidate(root: string, key: string, scopes: Captu
 
 export function appendOrReinforceCandidate(root: string, incoming: CaptureCandidate): { action: "created" | "reinforced"; candidate: CaptureCandidate } {
   const key = incoming.normalized_preference_key ?? normalizedPreferenceKey(incoming.text, incoming.capture_intent ?? "behavior_correction");
-  const existing = findEquivalentCandidate(root, key, incoming.scope_targets);
+  const rows = listCandidates(root);
+  const exactNew = rows.find((candidate) => candidate.id === incoming.id && candidate.status === "new");
+  const exactTerminal = rows.find((candidate) => candidate.id === incoming.id && candidate.status !== "new");
+  const existing = exactNew ?? exactTerminal ?? findEquivalentCandidate(root, key, incoming.scope_targets);
   if (!existing) {
     const candidate = { ...incoming, normalized_preference_key: key, recurrence_count: incoming.recurrence_count ?? 1 };
-    const rows = listCandidates(root);
     rows.push(candidate);
     replaceCandidates(root, rows);
     return { action: "created", candidate };
   }
+
+  if (existing.status !== "new") return { action: "reinforced", candidate: existing };
 
   const updated: CaptureCandidate = {
     ...existing,
@@ -48,6 +52,12 @@ export function appendOrReinforceCandidate(root: string, incoming: CaptureCandid
     primary_trust_class: "repeated_user_preference",
     source_trust_weight: 0.9,
   };
-  replaceCandidates(root, listCandidates(root).map((candidate) => candidate.id === existing.id ? updated : candidate));
+  const existingIndex = rows.findIndex((candidate) =>
+    candidate.id === existing.id
+    && candidate.created_at === existing.created_at
+    && candidate.status === existing.status
+  );
+  if (existingIndex >= 0) rows[existingIndex] = updated;
+  replaceCandidates(root, rows);
   return { action: "reinforced", candidate: updated };
 }

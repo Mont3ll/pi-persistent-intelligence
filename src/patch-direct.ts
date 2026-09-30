@@ -47,7 +47,7 @@ function applyDecision(root: string, op: PatchOp): ApplyDecision {
   return { ok: true };
 }
 
-function markCandidateIfNew(root: string, id: string, status: "patched" | "rejected"): void { const candidate = listCandidates(root).find((item) => item.id === id); if (candidate?.status === "new") updateCandidateStatus(root, id, status); }
+function markCandidateIfNew(root: string, id: string, status: "patched" | "rejected"): void { if (listCandidates(root).some((candidate) => candidate.id === id && candidate.status === "new")) updateCandidateStatus(root, id, status); }
 
 function applyOp(root: string, patchId: string, op: PatchOp, now: string): void {
   for (const evidence of op.supportingEvidence ?? []) appendEvidenceRecordIfMissing(root, evidence);

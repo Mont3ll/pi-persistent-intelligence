@@ -31,7 +31,7 @@ function candidate(overrides: Partial<CaptureCandidate> = {}): CaptureCandidate 
     status: "new",
     capture_intent: "user_preference",
     normalized_preference_key: "user_preference:concise tables status reports",
-    scope_targets: [{ type: "project", project: "pi" }],
+    scope_targets: [{ type: "project", project: "pi", confidence: 0.9, basis: ["test_fixture"] }],
     ...overrides,
   };
 }
@@ -66,6 +66,38 @@ describe("inbox apply integrity", () => {
     expect(result.action).toBe("reinforced");
     expect(listCandidates(dir)).toHaveLength(1);
     expect(listCandidates(dir)[0].status).toBe("patched");
+  });
+
+  test("repeated negative constraints do not supersede an already-negative memory", () => {
+    const dir = root();
+    addMemoryRecord(dir, {
+      id: "mem_negative",
+      layer: "L2",
+      scope: { type: "project", project: "pi" },
+      tags: ["capture", "testing", "implementation"],
+      statement: "Do not modify or push the remote branch during independent verification",
+      evidence: [{ type: "manual", ref: "old", note: "old" }],
+      confidence: 0.9,
+      stability: "semi-stable",
+      created_at: "2026-09-01",
+      updated_at: "2026-09-01",
+      review: { cadence_days: 30, next_review: "2026-10-01", change_condition: "If contradicted, revise." },
+      status: "active",
+      supersedes: [],
+      superseded_by: [],
+      vault_ref: null,
+    });
+    replaceCandidates(dir, [candidate({
+      id: "cap_repeated_negative",
+      text: "Do not modify or push the remote branch; run local verification only",
+      tags: ["capture", "testing", "implementation"],
+      normalized_preference_key: "behavior_correction:local verification",
+    })]);
+
+    const patch = curateInbox(dir, { now: "2026-09-30T02:00:00Z", mode: "propose", minEvidenceCount: 1 });
+
+    expect(patch.ops).toHaveLength(1);
+    expect(patch.ops[0].op).toBe("add");
   });
 
   test("generic capture-tag overlap cannot by itself turn an unrelated negative instruction into a supersession", () => {
