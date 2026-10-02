@@ -7,7 +7,11 @@ import { listCandidates } from "./inbox";
 import { curateInbox } from "./curator";
 import { applyPatch } from "./patch";
 import { buildRetrievalContext, syncFtsIndex } from "./retriever";
-import { setupQmd, updateQmd, runQmd, qmdSearchArgs, qmdCollectionName } from "./qmd";
+import { setupQmd, updateQmd, runQmd, qmdCollectionName } from "./qmd";
+import {
+  refreshSessionSemanticCollection,
+  runSessionSemanticSearch,
+} from "./session-semantic";
 import { runConsolidation, type ConsolidationResult, type ConsolidationRunner } from "./consolidator";
 import { loadConfig } from "./config";
 import { SessionStore, buildSessionSearchTools, buildSessionContextBlock, SESSION_SYNC_INTERVAL_MS } from "./session-search";
@@ -92,6 +96,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
         // Export markdown summaries for qmd semantic indexing
         const summariesDir = join(state.root, "sessions", "summaries");
         state.sessionStore.exportMarkdown(summariesDir);
+        void refreshSessionSemanticCollection(summariesDir);
         if (added + updated > 0 && ctx.hasUI) {
           ctx.ui.notify(`Session index: ${state.sessionStore.size()} sessions (${added} new, ${updated} updated)`, "info");
         }
@@ -113,19 +118,28 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
           mode: Type.Optional(Type.Union([Type.Literal("keyword"), Type.Literal("semantic")], { description: "Search mode: keyword (default, instant) or semantic (requires qmd)" })),
         }),
         async execute(_id, params) {
-          let text: string;
           if (params.mode === "semantic") {
-            // Delegate to qmd over session summaries
-            try {
-              const result = await runQmd(qmdSearchArgs(params.query, "semantic", params.limit ?? 8), 10_000);
-              text = result.stdout || "No semantic results. Ensure qmd embeddings are complete (run: qmd embed).";
-            } catch {
-              text = await sessionTools.session_search(params);
-            }
-          } else {
-            text = await sessionTools.session_search(params);
+            const result = await runSessionSemanticSearch({
+              query: params.query,
+              limit: params.limit ?? 8,
+              qmdRunner: runQmd,
+              keywordFallback: () =>
+                sessionTools.session_search({
+                  ...params,
+                  mode: "keyword",
+                }),
+            });
+
+            return {
+              content: [{ type: "text", text: result.text }],
+              details: result.details,
+            };
           }
-          return { content: [{ type: "text", text }], details: {} };
+
+          return {
+            content: [{ type: "text", text: await sessionTools.session_search(params) }],
+            details: {},
+          };
         },
       });
 
@@ -185,7 +199,9 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                 state.syncDebounce = setTimeout(() => {
                   try {
                     state.sessionStore.sync();
-                    state.sessionStore.exportMarkdown(join(state.root, "sessions", "summaries"));
+                    const summariesDir = join(state.root, "sessions", "summaries");
+                    state.sessionStore.exportMarkdown(summariesDir);
+                    void refreshSessionSemanticCollection(summariesDir);
                   } catch { /* ignore */ }
                 }, 2000);
               });
@@ -198,7 +214,11 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
         state.syncTimer = setInterval(() => {
           try {
             const { added, updated } = state.sessionStore.sync();
-            if (added + updated > 0) state.sessionStore.exportMarkdown(join(state.root, "sessions", "summaries"));
+            if (added + updated > 0) {
+              const summariesDir = join(state.root, "sessions", "summaries");
+              state.sessionStore.exportMarkdown(summariesDir);
+              void refreshSessionSemanticCollection(summariesDir);
+            }
           } catch { /* ignore */ }
         }, SESSION_SYNC_INTERVAL_MS);
       }
