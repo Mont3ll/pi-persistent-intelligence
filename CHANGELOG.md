@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-10-02
+
+### Fixed
+
+- Scoped semantic session-history retrieval to a dedicated session-summary QMD collection while preserving the 10-second search ceiling, non-blocking collection refresh, and explicit native keyword fallback when semantic search is unavailable.
+- Corrected Memory Inbox candidate lifecycle and apply reporting so terminal candidate history is preserved, duplicate recapture does not leave candidates stuck as new, high-confidence candidates are not mislabeled as automatically applicable, and notifications report actual applied versus skipped operations.
+- Tightened heuristic supersession so generic capture metadata cannot independently create high-risk contradictions, while substantive lexical or tag evidence continues to preserve genuine supersession behavior.
+
 ## [0.17.1] - 2026-09-29
 
 ### Fixed
