@@ -1,6 +1,7 @@
 import { loadConfig } from "../config";
 import { curateInbox } from "../curator";
 import { listCandidates } from "../inbox";
+import { buildApplyReceiptNotification } from "../lifecycle";
 import { applyPatch } from "../patch";
 import { updateQmd } from "../qmd";
 import { recordExplicitReinforcement } from "../reinforcement";
@@ -84,7 +85,10 @@ export function createBrowserCommands(dependencies: BrowserDependencies): Browse
               const applied = applyPatch(root, patch, { selectedOpIds: eligibleIds, now: dependencies.nowIso() });
               await updateQmd();
               dependencies.syncFtsAfterPatch(patch, applied);
-              context.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
+              context.ui.notify(
+                buildApplyReceiptNotification(applied, eligibleIds),
+                applied.applied_ops.length > 0 ? "success" : "warning",
+              );
             } else {
               context.ui.notify("No auto-eligible ops above confidence threshold.", "info");
             }
@@ -96,7 +100,10 @@ export function createBrowserCommands(dependencies: BrowserDependencies): Browse
                 const applied = applyPatch(root, reviewPatch, { selectedOpIds: selectedIds, now: dependencies.nowIso() });
                 await updateQmd();
                 dependencies.syncFtsAfterPatch(reviewPatch, applied);
-                context.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
+                context.ui.notify(
+                  buildApplyReceiptNotification(applied, selectedIds),
+                  applied.applied_ops.length > 0 ? "success" : "warning",
+                );
               }
             } else {
               context.ui.notify("No candidates meet curation thresholds.", "info");
