@@ -27,7 +27,7 @@ import { MemoryFtsIndex } from "./search/fts";
 import { captureReinforcementLink, classifyRecordedToolOutcome, linkExplicitCorrectionToMemory } from "./reinforcement";
 import { selectRelevantInquiries, renderInquiryInjectionBlock } from "./inquiries";
 import { appendRuntimeEvent } from "./runtime-events";
-import type { CaptureCandidate } from "./types";
+import type { CaptureCandidate, MemoryPatch } from "./types";
 import type { CommandUiContext } from "./commands/types";
 
 export type LifecycleState = {
@@ -54,6 +54,13 @@ type LifecycleApi = ConsolidationRunner & {
   }): void;
   sendUserMessage(content: string, options?: { deliverAs?: "steer" | "followUp" | "nextTurn" }): void;
 };
+
+export function buildApplyReceiptNotification(applied: MemoryPatch, selectedOpIds: string[]): string {
+  const selected = new Set(selectedOpIds);
+  const skipped = applied.skipped_ops.filter((skip) => selected.has(skip.op_id)).length;
+  const prefix = applied.applied_ops.length > 0 ? "✓ " : "";
+  return `${prefix}Applied ${applied.applied_ops.length} memory op(s)${skipped > 0 ? `; ${skipped} skipped for review` : ""}.`;
+}
 
 type LifecycleDependencies = {
   nowIso(): string;
@@ -269,7 +276,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
         const pending = listCandidates(state.root).filter((c) => c.status === "new");
 
         if (shouldPromptForInbox(pending, { batchThreshold: promptThreshold, singletonDirectReview: cfg.capture.singletonDirectReview })) {
-          const autoEligible = pending.filter((c) => (c.confidence ?? 0) >= threshold);
+          const highConfidence = pending.filter((c) => (c.confidence ?? 0) >= threshold);
           const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
 
           try {
@@ -277,7 +284,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
             const action = await ctx.ui.custom<InboxOverlayAction>(
               (tui, theme, _kb, done) =>
                 createInboxReviewComponent(
-                  { candidates: pending, autoEligibleCount: autoEligible.length, highThreshold: threshold },
+                  { candidates: pending, highConfidenceCount: highConfidence.length, highThreshold: threshold },
                   done,
                   tui as { requestRender(): void },
                   theme,
@@ -298,7 +305,10 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                 const applied = applyPatch(state.root, patch, { selectedOpIds: eligibleIds, now: dependencies.nowIso() });
                 await updateQmd();
                 dependencies.syncFtsAfterPatch(patch, applied);
-                ctx.ui.notify(`✓ Applied ${eligibleIds.length} memory op(s).`, "success");
+                ctx.ui.notify(
+                  buildApplyReceiptNotification(applied, eligibleIds),
+                  applied.applied_ops.length > 0 ? "success" : "warning",
+                );
               }
 
             } else if (action === "reject") {
@@ -332,7 +342,10 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                       const applied = applyPatch(state.root, reviewPatch, { selectedOpIds: selectedIds, now: dependencies.nowIso() });
                       await updateQmd();
                       dependencies.syncFtsAfterPatch(reviewPatch, applied);
-                      ctx.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
+                      ctx.ui.notify(
+                        buildApplyReceiptNotification(applied, selectedIds),
+                        applied.applied_ops.length > 0 ? "success" : "warning",
+                      );
                     }
                   } else {
                     ctx.ui.notify("No candidates meet curation thresholds.", "info");
@@ -346,7 +359,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
             }
             // "skip" / null — candidates stay in inbox, session continues
           } catch {
-            ctx.ui.notify(buildInboxNotification(pending, autoEligible.length), "info");
+            ctx.ui.notify(buildInboxNotification(pending, highConfidence.length), "info");
           }
         }
       }

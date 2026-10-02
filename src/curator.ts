@@ -67,19 +67,54 @@ function hasContradictionCue(text: string): boolean {
   return /\b(no longer|instead of|rather than|replace|replaces|deprecated|do not|don't|avoid|stop)\b/i.test(text);
 }
 
+const STRUCTURAL_CAPTURE_TAGS = new Set([
+  "capture",
+  "user_preference",
+  "behavior_correction",
+  "project_convention",
+  "workflow_playbook",
+  "temporary_instruction",
+  "not_memory",
+  "documentation",
+  "implementation",
+  "release",
+  "testing",
+  "workflow",
+  "writing",
+]);
+
+const SUPERSESSION_STOP_WORDS = new Set([
+  "avoid", "deprecated", "directly", "does", "dont", "include", "instead", "longer",
+  "never", "project", "rather", "replace", "replaces", "should", "stop", "than", "these",
+  "this", "from", "current", "state", "continue",
+]);
+
+function meaningfulTerms(text: string): Set<string> {
+  return new Set(text.toLowerCase().split(/[^a-z0-9]+/)
+    .filter((term) => term.length > 3 && !SUPERSESSION_STOP_WORDS.has(term)));
+}
+
 function heuristicSupersedes(candidate: CaptureCandidate, records: MemoryRecord[]): string | null {
   if (!hasContradictionCue(candidate.text)) return null;
-  const tags = new Set(candidateTags(candidate));
+  const strongCueMatch = candidate.text.match(/\b(no longer|instead of|rather than|replace|replaces|deprecated)\b/i);
+  const strongCue = strongCueMatch?.index !== undefined && strongCueMatch.index <= 120;
+  const weakCueMatch = candidate.text.match(/\b(?:do not|don't|avoid|stop)\b([^.;\n]{1,200})/i);
+  const weakCueTerms = meaningfulTerms(weakCueMatch?.[1] ?? "");
+  const tags = new Set(candidateTags(candidate).filter((tag) => !STRUCTURAL_CAPTURE_TAGS.has(tag)));
+  const candidateTerms = meaningfulTerms(candidate.text);
   let best: { id: string; score: number } | null = null;
   for (const record of records) {
-    const overlap = record.tags.filter((tag) => tags.has(tag)).length;
-    if (overlap === 0) continue;
-    const terms = candidate.text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-    const mentions = terms.filter((term) => term.length > 3 && record.statement.toLowerCase().includes(term)).length;
-    const score = overlap * 2 + mentions;
+    if (!strongCue && hasContradictionCue(record.statement)) continue;
+    const substantiveOverlap = record.tags.filter((tag) => !STRUCTURAL_CAPTURE_TAGS.has(tag) && tags.has(tag)).length;
+    const recordTerms = meaningfulTerms(record.statement);
+    const lexicalMatches = [...candidateTerms].filter((term) => recordTerms.has(term)).length;
+    const weakCueMatches = [...weakCueTerms].filter((term) => recordTerms.has(term)).length;
+    if (substantiveOverlap === 0 && lexicalMatches < 2) continue;
+    if (!strongCue && weakCueMatches < 2) continue;
+    const score = substantiveOverlap * 2 + lexicalMatches;
     if (!best || score > best.score) best = { id: record.id, score };
   }
-  return best && best.score >= 2 ? best.id : null;
+  return best?.id ?? null;
 }
 
 interface LlmContradiction {

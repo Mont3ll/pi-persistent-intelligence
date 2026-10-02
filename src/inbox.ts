@@ -43,6 +43,6 @@ export function replaceCandidates(root: string, candidates: CaptureCandidate[]):
 }
 
 export function updateCandidateStatus(root: string, id: string, status: CaptureCandidate["status"]): void {
-  const candidates = listCandidates(root).map((candidate) => candidate.id === id ? { ...candidate, status } : candidate);
+  const candidates = listCandidates(root).map((candidate) => candidate.id === id && candidate.status === "new" ? { ...candidate, status } : candidate);
   replaceCandidates(root, candidates);
 }

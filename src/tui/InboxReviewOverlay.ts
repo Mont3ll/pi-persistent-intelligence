@@ -6,7 +6,7 @@
  * extension. Same separator style, same accent/success/warning/dim semantics.
  *
  * Actions:
- *   [a] / Enter on "Apply"  → approve auto-eligible candidates
+ *   [a] / Enter on "Apply"  → attempt eligible candidates
  *   [r] / Enter on "Review" → open PatchReviewPanel for per-op selection
  *   [x] / Enter on "Reject" → open rejection-only PatchReviewPanel
  *   [s] / Enter on "Skip"   → dismiss; candidates stay in inbox
@@ -34,7 +34,7 @@ export type InboxOverlayAction = "approve" | "review" | "reject" | "skip" | null
 
 export interface InboxOverlayOptions {
   candidates: CaptureCandidate[];
-  autoEligibleCount: number;
+  highConfidenceCount: number;
   highThreshold: number;
 }
 
@@ -109,14 +109,14 @@ export class InboxReviewOverlay {
     const th = this.th;
     const width = panelWidth(termWidth);
     const count = this.opts.candidates.length;
-    const auto = this.opts.autoEligibleCount;
+    const highConfidence = this.opts.highConfidenceCount;
     const lines = [
       renderMemoryPanelSeparator(th, width),
       ...renderMemoryPanelHeader(
         th,
         width,
         "Memory Inbox",
-        `${count} candidate${count !== 1 ? "s" : ""} · ${auto} auto-eligible`,
+        `${count} candidate${count !== 1 ? "s" : ""} · ${highConfidence} high-confidence`,
       ),
     ];
 
@@ -129,7 +129,7 @@ export class InboxReviewOverlay {
     if (count > 7) lines.push(...wrapPanelLine(th.dim(`  … and ${count - 7} more`), width));
     lines.push("");
 
-    const labels = [`Apply ${auto} auto-eligible`, "Review in detail", "Reject candidates", "Skip for now"];
+    const labels = ["Apply eligible candidates", "Review in detail", "Reject candidates", "Skip for now"];
     const actions = ACTIONS.map(({ key, idx }) => {
       const label = `[${this.cursor === idx ? key.toUpperCase() : key}] ${labels[idx] ?? ""}`;
       return this.cursor === idx ? th.selected(label) : th.dim(label);
@@ -170,7 +170,7 @@ export function createInboxReviewComponent(
 
 // ─── Headless fallback ────────────────────────────────────────────────────────
 
-export function buildInboxNotification(candidates: CaptureCandidate[], autoEligible: number): string {
+export function buildInboxNotification(candidates: CaptureCandidate[], highConfidence: number): string {
   const n = candidates.length;
-  return `📬 ${n} memory candidate${n !== 1 ? "s" : ""} pending (${autoEligible} auto-eligible). Run /curate-memory to review.`;
+  return `📬 ${n} memory candidate${n !== 1 ? "s" : ""} pending (${highConfidence} high-confidence). Run /curate-memory to review.`;
 }

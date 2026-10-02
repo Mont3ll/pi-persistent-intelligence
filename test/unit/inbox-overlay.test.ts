@@ -27,19 +27,21 @@ describe("InboxReviewOverlay", () => {
   test("renders header with candidate count", () => {
     let result: string | null = null;
     const overlay = new InboxReviewOverlay(
-      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      { candidates, highConfidenceCount: 2, highThreshold: 0.85 },
       themeFromInbox(undefined),
       (action) => { result = action; },
     );
     const lines = overlay.render(80);
     const text = lines.join("\n");
     expect(text).toContain("Memory Inbox");
-    expect(text).toContain("3 candidate");
+    expect(text).toContain("3 candidates · 2 high-confidence");
+    expect(text).toContain("Apply eligible candidates");
+    expect(text).not.toContain("auto-eligible");
   });
 
   test("uses one top and one bottom separator without internal rules", () => {
     const overlay = new InboxReviewOverlay(
-      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      { candidates, highConfidenceCount: 2, highThreshold: 0.85 },
       themeFromInbox(undefined),
       () => {},
     );
@@ -57,7 +59,7 @@ describe("InboxReviewOverlay", () => {
 
   test("renders candidates with confidence and statement", () => {
     const overlay = new InboxReviewOverlay(
-      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      { candidates, highConfidenceCount: 2, highThreshold: 0.85 },
       themeFromInbox(undefined),
       () => {},
     );
@@ -68,9 +70,9 @@ describe("InboxReviewOverlay", () => {
     expect(text).toContain("0.78");
   });
 
-  test("shows auto-eligible badge ✓ for high confidence", () => {
+  test("shows high-confidence badge ✓", () => {
     const overlay = new InboxReviewOverlay(
-      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      { candidates, highConfidenceCount: 2, highThreshold: 0.85 },
       themeFromInbox(undefined),
       () => {},
     );
@@ -82,7 +84,7 @@ describe("InboxReviewOverlay", () => {
   test("escape / 'q' calls done with null", () => {
     let result: string | undefined = "not-set";
     const overlay = new InboxReviewOverlay(
-      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      { candidates, highConfidenceCount: 2, highThreshold: 0.85 },
       themeFromInbox(undefined),
       (action) => { result = action ?? "null"; },
     );
@@ -93,7 +95,7 @@ describe("InboxReviewOverlay", () => {
   test("'a' calls done with approve", () => {
     let result: string | undefined;
     const overlay = new InboxReviewOverlay(
-      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      { candidates, highConfidenceCount: 2, highThreshold: 0.85 },
       themeFromInbox(undefined),
       (action) => { result = action ?? "null"; },
     );
@@ -104,7 +106,7 @@ describe("InboxReviewOverlay", () => {
   test("'r' calls done with review", () => {
     let result: string | undefined;
     const overlay = new InboxReviewOverlay(
-      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      { candidates, highConfidenceCount: 2, highThreshold: 0.85 },
       themeFromInbox(undefined),
       (action) => { result = action ?? "null"; },
     );
@@ -115,7 +117,7 @@ describe("InboxReviewOverlay", () => {
   test("'x' calls done with reject so ineligible candidates can leave the inbox", () => {
     let result: string | undefined;
     const overlay = new InboxReviewOverlay(
-      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      { candidates, highConfidenceCount: 2, highThreshold: 0.85 },
       themeFromInbox(undefined),
       (action) => { result = action ?? "null"; },
     );
@@ -126,7 +128,7 @@ describe("InboxReviewOverlay", () => {
   test("'s' calls done with skip", () => {
     let result: string | undefined;
     const overlay = new InboxReviewOverlay(
-      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      { candidates, highConfidenceCount: 2, highThreshold: 0.85 },
       themeFromInbox(undefined),
       (action) => { result = action ?? "null"; },
     );
@@ -137,7 +139,7 @@ describe("InboxReviewOverlay", () => {
   test("arrow navigation updates selection then Enter confirms", () => {
     let result: string | undefined;
     const overlay = new InboxReviewOverlay(
-      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      { candidates, highConfidenceCount: 2, highThreshold: 0.85 },
       themeFromInbox(undefined),
       (action) => { result = action ?? "null"; },
     );
@@ -150,7 +152,7 @@ describe("InboxReviewOverlay", () => {
   test("down navigation updates selection then Enter confirms", () => {
     let result: string | undefined;
     const overlay = new InboxReviewOverlay(
-      { candidates, autoEligibleCount: 2, highThreshold: 0.85 },
+      { candidates, highConfidenceCount: 2, highThreshold: 0.85 },
       themeFromInbox(undefined),
       (action) => { result = action ?? "null"; },
     );
@@ -162,7 +164,7 @@ describe("InboxReviewOverlay", () => {
   test("truncates long candidate list to 6 with overflow indicator", () => {
     const many = Array.from({ length: 9 }, (_, i) => candidate(`cap_${i}`, 0.8, `Pattern ${i}`));
     const overlay = new InboxReviewOverlay(
-      { candidates: many, autoEligibleCount: 0, highThreshold: 0.85 },
+      { candidates: many, highConfidenceCount: 0, highThreshold: 0.85 },
       themeFromInbox(undefined),
       () => {},
     );
@@ -186,7 +188,8 @@ describe("buildInboxNotification", () => {
     ];
     const msg = buildInboxNotification(testCandidates, 2);
     expect(msg).toContain("3 memory candidates");
-    expect(msg).toContain("2 auto-eligible");
+    expect(msg).toContain("2 high-confidence");
+    expect(msg).not.toContain("auto-eligible");
     expect(msg).toContain("/curate-memory");
   });
 });
