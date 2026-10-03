@@ -137,6 +137,7 @@ function heuristicSupersedes(candidate: CaptureCandidate, records: MemoryRecord[
     const matchedIdentity = matchedIds.has(record.id);
     const identityEstablished = matchedIdentity || substantiveOverlap > 0 || (lexicalMatches >= 2 && distinctiveMatches >= 1);
     if (!identityEstablished) continue;
+    if (!strongCue && !matchedIdentity) continue;
     if (!strongCue && weakCueMatches < 2) continue;
     const score = (matchedIdentity ? 4 : 0) + substantiveOverlap * 2 + lexicalMatches + distinctiveMatches;
     if (!best || score > best.score) best = { id: record.id, score };
