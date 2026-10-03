@@ -103,6 +103,9 @@ export function classifyCaptureIntent(rawText: string): CaptureIntentDecision {
     return decision("temporary_instruction", 0.95, "task", text, ["task_bound_operational_scope"]);
   }
 
+  const durableResumeCorrection = hasDurableIntentCue(text) && /\bresume\s+using\b/i.test(text);
+  if (durableResumeCorrection) return decision("behavior_correction", 0.9, "project", text, ["explicit_behavior_correction"]);
+
   const projectConvention = /\bthis (?:project|repository|repo|codebase)\s+(?:always\s+)?(?:uses|requires|runs|keeps|stores)\b/i.test(text);
   if (projectConvention) return decision("project_convention", 0.92, "project", text, ["explicit_project_convention"]);
 
