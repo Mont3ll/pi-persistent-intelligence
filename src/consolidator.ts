@@ -4,6 +4,7 @@
  * Includes Jaccard deduplication: candidates with >0.7 token overlap against
  * existing inbox items or active L2 records are silently skipped.
  */
+import { createHash } from "node:crypto";
 import { appendEvidenceRecordIfMissing, boundSourceExcerpt, boundSourceSummary, createEvidenceId } from "./evidence";
 import { appendCandidate, listCandidates, withMemoryWorth } from "./inbox";
 import { scoreMemoryWorth } from "./memory-worth";
@@ -183,23 +184,32 @@ function evidenceScopeRef(scope: MemoryScope): string | undefined {
   return undefined;
 }
 
+function consolidationSourceSessionId(sessionRef: string, userMessages: string[]): string {
+  const digest = createHash("sha256")
+    .update([sessionRef, ...userMessages.map(normalizeSupportText)].join("\n---\n"))
+    .digest("hex")
+    .slice(0, 24);
+  return `consolidation-${digest}`;
+}
+
 function persistConsolidationEvidence(
   root: string,
   candidateId: string,
   supports: ValidatedSupport[],
-  today: string,
   sessionRef: string,
+  sourceSessionId: string,
   now: string,
 ): { ids: string[]; resource_id: string; profile_id: string; source_ref: string } {
   const profile = resolveMemoryProfile(root, sessionRef, now);
   const scope = inferProjectScope(sessionRef);
   const relatedMemoryId = candidateId.replace(/^cap_/, "mem_");
   const ids = supports.map((support) => {
-    const sourceRef = `consolidation:${today}:user:${support.message_index}`;
+    const sourceRef = `session:${sourceSessionId}:user:${support.message_index}`;
     const sourceExcerpt = boundSourceExcerpt(support.quote) ?? support.quote;
     const sourceSummary = boundSourceSummary(support.quote);
     const id = createEvidenceId({
       profile_id: profile.profile_id,
+      source_session_id: sourceSessionId,
       source_kind: "conversation",
       source_ref: sourceRef,
       source_excerpt: sourceExcerpt,
@@ -209,6 +219,7 @@ function persistConsolidationEvidence(
       id,
       resource_id: profile.resource_id,
       profile_id: profile.profile_id,
+      source_session_id: sourceSessionId,
       created_at: now,
       source_kind: "conversation",
       source_ref: sourceRef,
@@ -229,7 +240,7 @@ function persistConsolidationEvidence(
     ids,
     resource_id: profile.resource_id,
     profile_id: profile.profile_id,
-    source_ref: `consolidation:${today}:user:${supports[0].message_index}`,
+    source_ref: `session:${sourceSessionId}:user:${supports[0].message_index}`,
   };
 }
 
@@ -247,6 +258,7 @@ export function applyConsolidation(
     ...listCandidates(root).filter((c) => c.status === "new").map((c) => c.text),
     ...loadActiveRecords(root).map((r) => r.statement),
   ];
+  const sourceSessionId = consolidationSourceSessionId(sessionRef, userMessages);
 
   let added = 0;
   let skipped = 0;
@@ -285,11 +297,12 @@ export function applyConsolidation(
 
     const now = new Date().toISOString();
     const candidateId = `cap_cons_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const provenance = persistConsolidationEvidence(root, candidateId, supports, today, sessionRef, now);
+    const provenance = persistConsolidationEvidence(root, candidateId, supports, sessionRef, sourceSessionId, now);
     let candidate: CaptureCandidate = withMemoryWorth({
       id: candidateId,
       resource_id: provenance.resource_id,
       profile_id: provenance.profile_id,
+      thread_id: sourceSessionId,
       created_at: now,
       source: { type: "conversation", ref: provenance.source_ref, cwd: sessionRef },
       text: c.statement,
