@@ -78,6 +78,28 @@ describe("heuristic supersede detection", () => {
     expect(patch.ops[0].risk).toBe("low");
   });
 
+  test("falls back to source cwd scope instead of wildcard matching", () => {
+    const dir = root();
+    addMemoryRecord(dir, oldRecord({
+      id: "mem_golf_memory",
+      scope: { type: "project", project: "golf-supplies" },
+      tags: ["memory", "workflow"],
+      statement: "Edit MEMORY.md directly for durable memory in golf-supplies.",
+    }));
+    appendCandidate(dir, candidate({
+      id: "cap_pi_memory",
+      source: { type: "manual", ref: "daily", cwd: "/projects/pi-persistent-intelligence" },
+      scope_targets: undefined,
+      text: "No longer edit MEMORY.md directly; use patch files instead.",
+    }));
+
+    const patch = curateInbox(dir, { now: "2026-05-09T00:00:00Z", mode: "propose" });
+
+    expect(patch.ops).toHaveLength(1);
+    expect(patch.ops[0].op).toBe("add");
+    expect(patch.ops[0].risk).toBe("low");
+  });
+
   test("generic verifier vocabulary does not establish supersession identity", () => {
     const dir = root();
     addMemoryRecord(dir, oldRecord({
