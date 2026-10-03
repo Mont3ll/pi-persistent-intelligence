@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBrowserCommands } from "../../src/commands/browser";
-import { replaceCandidates } from "../../src/inbox";
+import { listCandidates, replaceCandidates } from "../../src/inbox";
 import { unsafeAddMemoryRecord as addMemoryRecord } from "../../src/store";
 import type { CaptureCandidate, MemoryRecord } from "../../src/types";
 
@@ -22,7 +22,7 @@ afterEach(() => {
   roots = [];
 });
 
-function candidate(id: string, text: string): CaptureCandidate {
+function candidate(id: string, text: string, overrides: Partial<CaptureCandidate> = {}): CaptureCandidate {
   return {
     id,
     created_at: "2026-09-03T08:00:00.000Z",
@@ -33,6 +33,7 @@ function candidate(id: string, text: string): CaptureCandidate {
     confidence: 0.9,
     status: "new",
     scope_targets: [{ type: "project", project: "pi", confidence: 0.9, basis: ["test_fixture"] }],
+    ...overrides,
   };
 }
 
@@ -143,5 +144,28 @@ describe("browser command factory", () => {
       message: "Applied 0 memory op(s); 2 skipped for review.",
       kind: "warning",
     });
+  });
+
+  test("interactive inbox approve leaves review-only candidates for explicit review", async () => {
+    const dir = root();
+    replaceCandidates(dir, [candidate("cap_review_only", "Proceed with this one release closure only", {
+      primary_trust_class: "direct_user_instruction",
+      source_trust_weight: 1,
+      durability_signal: "project",
+      promotion_eligibility: "review_only",
+      poisoning_risk: "low",
+      poisoning_risk_reasons: [],
+      capture_intent: "behavior_correction",
+    })]);
+    process.env.PATH = "";
+    const notifications: Notification[] = [];
+
+    await browserCommands(dir).memoryInbox.handler("", interactiveContext([{ action: "approve" }], notifications));
+
+    expect(notifications.at(-1)).toEqual({
+      message: "No auto-eligible ops above confidence threshold.",
+      kind: "info",
+    });
+    expect(listCandidates(dir).find((item) => item.id === "cap_review_only")?.status).toBe("new");
   });
 });
