@@ -91,6 +91,23 @@ describe("capture coordinator", () => {
     expect(listCandidates(dir)).toHaveLength(0);
   });
 
+  test("routes task-bound verifier handoffs to daily-only without a candidate", () => {
+    const dir = root();
+    const result = processCaptureTurn(dir, {
+      session_id: "s1",
+      turn_id: "t1",
+      message: "Verify the RED stage for issue #20. Do not edit production code. Do not implement the fix. Do not tag or publish.",
+      launch_cwd: "/projects/pi-persistent-intelligence",
+      actions: [],
+      resolver,
+      now: "2026-10-03T00:00:00Z",
+    });
+    expect(result.daily_only).toBe(1);
+    expect(result.candidates_created).toBe(0);
+    expect(listCandidates(dir)).toHaveLength(0);
+    expect(readEvidenceRecords(dir)).toHaveLength(0);
+  });
+
   test("blocks secret-bearing preferences", () => {
     const dir = root();
     const result = processCaptureTurn(dir, {
