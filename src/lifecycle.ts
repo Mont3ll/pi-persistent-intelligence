@@ -5,6 +5,7 @@ import { ensureMemoryDirs, resolveRoot } from "./paths";
 import { appendDailyLog, todayString } from "./daily";
 import { listCandidates } from "./inbox";
 import { curateInbox } from "./curator";
+import { selectInboxBatchApplyOpIds } from "./curation-selection";
 import { applyPatch } from "./patch";
 import { buildRetrievalContext, syncFtsIndex } from "./retriever";
 import { setupQmd, updateQmd, runQmd, qmdCollectionName } from "./qmd";
@@ -73,7 +74,6 @@ type LifecycleDependencies = {
 export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState, dependencies: LifecycleDependencies) {
   return {
     sessionStart: async (_event: any, ctx: CommandUiContext) => {
-      // Resolve state.root from cwd settings.json (localPath cascade)
       const newRoot = resolveRoot(ctx.cwd);
       if (newRoot !== state.root) {
         state.root = newRoot;
@@ -82,27 +82,23 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
         state.sessionStore = new SessionStore(state.root);
         state.sessionStore.load();
       }
-      // Sync FTS with current records on session start
       syncFtsIndex(state.root, state.ftsIndex);
 
       ensureMemoryDirs(state.root);
       state.sessionCwd = ctx.cwd ?? process.cwd();
-      state.inboxOverlayShown = false;  // reset per session
+      state.inboxOverlayShown = false;
       await setupQmd(state.root);
 
-      // ── Session index sync ────────────────────────────────────────────
       try {
         const { added, updated } = state.sessionStore.sync();
-        // Export markdown summaries for qmd semantic indexing
         const summariesDir = join(state.root, "sessions", "summaries");
         state.sessionStore.exportMarkdown(summariesDir);
         void refreshSessionSemanticCollection(summariesDir);
         if (added + updated > 0 && ctx.hasUI) {
           ctx.ui.notify(`Session index: ${state.sessionStore.size()} sessions (${added} new, ${updated} updated)`, "info");
         }
-      } catch { /* best-effort */ }
+      } catch { }
 
-      // ── Session tools ─────────────────────────────────────────────────
       const sessionTools = buildSessionSearchTools(state.root, state.sessionStore);
 
       pi.registerTool({
@@ -123,23 +119,11 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
               query: params.query,
               limit: params.limit ?? 8,
               qmdRunner: runQmd,
-              keywordFallback: () =>
-                sessionTools.session_search({
-                  ...params,
-                  mode: "keyword",
-                }),
+              keywordFallback: () => sessionTools.session_search({ ...params, mode: "keyword" }),
             });
-
-            return {
-              content: [{ type: "text", text: result.text }],
-              details: result.details,
-            };
+            return { content: [{ type: "text", text: result.text }], details: result.details };
           }
-
-          return {
-            content: [{ type: "text", text: await sessionTools.session_search(params) }],
-            details: {},
-          };
+          return { content: [{ type: "text", text: await sessionTools.session_search(params) }], details: {} };
         },
       });
 
@@ -186,9 +170,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
         },
       });
 
-      // ── Periodic sync (like pi-session-search, 5min interval) ─────────
       if (!isChildProcess()) {
-        // File-watch for instant detection of new session files
         try {
           const { homedir } = await import("node:os");
           const sessDirs = [join(homedir(), ".pi", "agent", "sessions")];
@@ -202,15 +184,14 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                     const summariesDir = join(state.root, "sessions", "summaries");
                     state.sessionStore.exportMarkdown(summariesDir);
                     void refreshSessionSemanticCollection(summariesDir);
-                  } catch { /* ignore */ }
+                  } catch { }
                 }, 2000);
               });
               state.fsWatchers.push(watcher);
-            } catch { /* fs.watch may not be available for this dir */ }
+            } catch { }
           }
-        } catch { /* dynamic import may fail in some envs */ }
+        } catch { }
 
-        // Fallback periodic sync every 5 minutes
         state.syncTimer = setInterval(() => {
           try {
             const { added, updated } = state.sessionStore.sync();
@@ -219,15 +200,12 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
               state.sessionStore.exportMarkdown(summariesDir);
               void refreshSessionSemanticCollection(summariesDir);
             }
-          } catch { /* ignore */ }
+          } catch { }
         }, SESSION_SYNC_INTERVAL_MS);
       }
 
       if (ctx.hasUI) ctx.ui.notify("Persistent Intelligence ready", "info");
 
-      // ── Version update check ──────────────────────────────────────────
-      // Check npm registry for a newer version once per session, non-blocking.
-      // Skipped in subagents and headless mode.
       if (ctx.hasUI && !isChildProcess()) {
         (async () => {
           try {
@@ -235,39 +213,23 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
             const { join: pathJoin } = await import("node:path");
             const pkgPath = pathJoin(import.meta.dir, "package.json");
             const currentVersion: string = (JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string }).version;
-            const response = await fetch(`https://registry.npmjs.org/pi-persistent-intelligence/latest`, {
-              signal: AbortSignal.timeout(8_000),
-            });
+            const response = await fetch(`https://registry.npmjs.org/pi-persistent-intelligence/latest`, { signal: AbortSignal.timeout(8_000) });
             if (!response.ok) return;
             const data = await response.json() as { version?: string };
             const latestVersion = data.version;
             if (typeof latestVersion !== "string" || !latestVersion.trim()) return;
-
-            // Simple semver comparison: split on . and compare numerically
             const parseVer = (v: string) => v.replace(/^v/, "").split(".").map(Number);
             const current = parseVer(currentVersion);
             const latest = parseVer(latestVersion);
             const isNewer = latest[0] > current[0] || (latest[0] === current[0] && latest[1] > current[1]) || (latest[0] === current[0] && latest[1] === current[1] && latest[2] > current[2]);
-
             if (isNewer) {
-              ctx.ui.notify(
-                `pi-persistent-intelligence ${latestVersion} is available (you have ${currentVersion}).\nRun: pi install npm:pi-persistent-intelligence`,
-                "warning",
-              );
+              ctx.ui.notify(`pi-persistent-intelligence ${latestVersion} is available (you have ${currentVersion}).\nRun: pi install npm:pi-persistent-intelligence`, "warning");
             }
-          } catch { /* best-effort: network unavailable, offline, etc. */ }
+          } catch { }
         })();
       }
     },
     beforeAgentStart: async (event: any, ctx: CommandUiContext) => {
-      // ── Inbox review — first turn only ─────────────────────────────────────
-      // Step 1: InboxReviewOverlay summary — ✓/~ badges, [A]/[R]/[S] actions.
-      //         Uses the same theme color mappings as PatchReviewPanel (via
-      //         themeFromInbox) for visual consistency across the extension.
-      // Step 2: If user picks [R] → open PatchReviewPanel for per-op selection
-      //         (identical to /curate-memory propose mode).
-      // minEvidenceCount: 1 — show all candidates for human review; evidence
-      // gate (≥2) still enforced by the curator at apply time.
       if (!state.inboxOverlayShown && ctx.hasUI && ctx.ui.custom) {
         state.inboxOverlayShown = true;
         const cfg = loadConfig(state.root);
@@ -278,74 +240,43 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
         if (shouldPromptForInbox(pending, { batchThreshold: promptThreshold, singletonDirectReview: cfg.capture.singletonDirectReview })) {
           const highConfidence = pending.filter((c) => (c.confidence ?? 0) >= threshold);
           const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
-
           try {
-            // ── Step 1: summary overlay ──────────────────────────────────
-            const action = await ctx.ui.custom<InboxOverlayAction>(
-              (tui, theme, _kb, done) =>
-                createInboxReviewComponent(
-                  { candidates: pending, highConfidenceCount: highConfidence.length, highThreshold: threshold },
-                  done,
-                  tui as { requestRender(): void },
-                  theme,
-                ),
-            );
+            const action = await ctx.ui.custom<InboxOverlayAction>((tui, theme, _kb, done) => createInboxReviewComponent(
+              { candidates: pending, highConfidenceCount: highConfidence.length, highThreshold: threshold }, done, tui as { requestRender(): void }, theme,
+            ));
 
             if (action === "approve") {
-              // Apply ops for candidates meeting confidence threshold.
-              // Intentionally does not filter on default_selected -- pressing 'a' is an
-              // explicit user approval for all eligible ops, including review_only classified
-              // ones that would otherwise stay in inbox indefinitely.
               const patch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
-              const eligibleIds = patch.ops
-                .filter((op) => op.risk !== "high" &&
-                  (op.record?.confidence ?? op.to_record?.confidence ?? 0) >= threshold)
-                .map((op) => op.op_id);
+              const eligibleIds = selectInboxBatchApplyOpIds(patch, threshold);
               if (eligibleIds.length > 0) {
                 const applied = applyPatch(state.root, patch, { selectedOpIds: eligibleIds, now: dependencies.nowIso() });
                 await updateQmd();
                 dependencies.syncFtsAfterPatch(patch, applied);
-                ctx.ui.notify(
-                  buildApplyReceiptNotification(applied, eligibleIds),
-                  applied.applied_ops.length > 0 ? "success" : "warning",
-                );
+                ctx.ui.notify(buildApplyReceiptNotification(applied, eligibleIds), applied.applied_ops.length > 0 ? "success" : "warning");
               }
 
             } else if (action === "reject") {
               const rejectionPatch = buildInboxRejectionPatch(pending, dependencies.nowIso());
               if (rejectionPatch.ops.length > 0 && ctx.ui.custom) {
-                const selectedIds = await ctx.ui.custom<string[] | null>(
-                  (tui, theme, _kb, done) =>
-                    createPatchReviewComponent(rejectionPatch, done, tui as any, undefined, theme),
-                );
+                const selectedIds = await ctx.ui.custom<string[] | null>((tui, theme, _kb, done) => createPatchReviewComponent(rejectionPatch, done, tui as any, undefined, theme));
                 if (selectedIds && selectedIds.length > 0) {
                   const applied = applyPatch(state.root, rejectionPatch, { selectedOpIds: selectedIds, now: dependencies.nowIso() });
                   ctx.ui.notify(`✓ Rejected ${applied.applied_ops.length} memory candidate(s).`, "success");
                 }
               }
             } else if (action === "review") {
-              // Chain a second ctx.ui.custom() call to show PatchReviewPanel.
-              // The first ctx.ui.custom() (inbox overlay) must fully resolve before
-              // calling the second -- they are sequential, not concurrent.
-              // We are still inside before_agent_start at this point.
               if (ctx.ui.custom) {
                 try {
                   const cfg2 = loadConfig(state.root);
                   const vaultPath2 = cfg2.vault.path ?? process.env.PI_VAULT_PATH;
                   const reviewPatch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "propose", vaultPath: vaultPath2, minEvidenceCount: 1 });
                   if (reviewPatch.ops.length > 0) {
-                    const selectedIds = await ctx.ui.custom<string[] | null>(
-                      (tui, theme, _kb, done) =>
-                        createPatchReviewComponent(reviewPatch, done, tui as any, undefined, theme),
-                    );
+                    const selectedIds = await ctx.ui.custom<string[] | null>((tui, theme, _kb, done) => createPatchReviewComponent(reviewPatch, done, tui as any, undefined, theme));
                     if (selectedIds && selectedIds.length > 0) {
                       const applied = applyPatch(state.root, reviewPatch, { selectedOpIds: selectedIds, now: dependencies.nowIso() });
                       await updateQmd();
                       dependencies.syncFtsAfterPatch(reviewPatch, applied);
-                      ctx.ui.notify(
-                        buildApplyReceiptNotification(applied, selectedIds),
-                        applied.applied_ops.length > 0 ? "success" : "warning",
-                      );
+                      ctx.ui.notify(buildApplyReceiptNotification(applied, selectedIds), applied.applied_ops.length > 0 ? "success" : "warning");
                     }
                   } else {
                     ctx.ui.notify("No candidates meet curation thresholds.", "info");
@@ -357,14 +288,12 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                 ctx.ui.notify("Type /curate-memory to review pending candidates.", "info");
               }
             }
-            // "skip" / null — candidates stay in inbox, session continues
           } catch {
             ctx.ui.notify(buildInboxNotification(pending, highConfidence.length), "info");
           }
         }
       }
 
-      // ── Context injection ───────────────────────────────────────────────
       const context = await buildRetrievalContext(state.root, {
         prompt: event.prompt ?? "",
         today: todayString(),
@@ -382,15 +311,8 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
       });
       const inquiryBlock = renderInquiryInjectionBlock(inquiries);
       const combined = [sessionBlock ? `${context.markdown}\n\n## Today's Sessions\n${sessionBlock}` : context.markdown, inquiryBlock].filter(Boolean).join("\n\n");
-
       if (!combined.trim()) return;
-      return {
-        message: {
-          customType: "pi-persistent-intelligence-context",
-          content: combined,
-          display: false,
-        },
-      };
+      return { message: { customType: "pi-persistent-intelligence-context", content: combined, display: false } };
     },
     agentEnd: async (event: any) => {
       let sawObservableOutcome = false;
@@ -403,7 +325,6 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
           if (text.trim() && !isSyntheticCaptureContext(text)) {
             state.pendingUserMessages.push(text);
             if (state.pendingUserMessages.length > 60) state.pendingUserMessages.shift();
-
             const messageTurnId = String(msg.id ?? msg.messageId ?? msg.timestamp ?? (event as any).turn_id ?? (event as any).turnId ?? (event as any).id ?? `user-${messageIndex}`);
             processCaptureTurn(state.root, {
               session_id: captureSessionId,
@@ -413,12 +334,11 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
               actions: captureActions,
               now: dependencies.nowIso(),
             });
-
             if (maybeCorrectionSignal(text)) {
               try {
                 const selected = JSON.parse((await import("node:fs")).readFileSync(ensureMemoryDirs(state.root).runtime.selected, "utf-8")) as import("./types").MemoryRecord[];
                 linkExplicitCorrectionToMemory(state.root, text, selected, { thread_id: captureSessionId, now: dependencies.nowIso() });
-              } catch { /* best-effort reinforcement linking */ }
+              } catch { }
             }
           }
         } else if (msg.role === "toolResult" || msg.role === "tool") {
@@ -439,7 +359,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                   neutral_exposure_enabled: loadConfig(state.root).reinforcement.neutralExposureEnabled,
                   now: dependencies.nowIso(),
                 });
-              } catch { /* observable reinforcement is best-effort and never mutates memory */ }
+              } catch { }
             }
           }
         } else if (msg.role === "assistant") {
@@ -455,27 +375,20 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
       if (!sawObservableOutcome && loadConfig(state.root).reinforcement.neutralExposureEnabled) {
         try {
           const selected = JSON.parse((await import("node:fs")).readFileSync(ensureMemoryDirs(state.root).runtime.selected, "utf-8")) as import("./types").MemoryRecord[];
-          captureReinforcementLink(state.root, {
-            selected_memory: selected,
-            session_id: "current-session",
-            neutral_exposure_enabled: true,
-            now: dependencies.nowIso(),
-          });
-        } catch { /* neutral exposure is optional and best-effort */ }
+          captureReinforcementLink(state.root, { selected_memory: selected, session_id: "current-session", neutral_exposure_enabled: true, now: dependencies.nowIso() });
+        } catch { }
       }
     },
     sessionShutdown: async (event: any) => {
-      // Clear all timers and watchers
       if (state.syncTimer) { clearInterval(state.syncTimer); state.syncTimer = null; }
       if (state.syncDebounce) { clearTimeout(state.syncDebounce); state.syncDebounce = null; }
-      for (const w of state.fsWatchers) { try { w.close(); } catch { /* ignore */ } }
+      for (const w of state.fsWatchers) { try { w.close(); } catch { } }
       state.fsWatchers.length = 0;
 
       if ((event as { reason?: string }).reason === "reload") return;
 
       appendDailyLog(state.root, todayString(), `<!-- ${dependencies.nowIso()} -->\n## Session ended\n- Persistent Intelligence captured session end marker.`);
 
-      // LLM consolidation — extracts candidates to inbox, deduped by Jaccard
       const cfg = loadConfig(state.root);
       const consolidationModel = dependencies.resolveConsolidationModel(state.lastObservedModel);
       let consolidationResult: ConsolidationResult | null = null;
@@ -489,23 +402,10 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
           const modelLabel = consolidationModel.model ? `${consolidationModel.model} (${consolidationModel.source})` : "Pi CLI default";
           const reason = consolidationResult.failure_reason ?? "unknown failure";
           appendRuntimeEvent(state.root, { type: "warn", severity: "medium", component: "consolidation", message: `session consolidation failed using ${modelLabel}: ${reason}` });
-          appendDailyLog(
-            state.root, todayString(),
-            `<!-- ${dependencies.nowIso()} -->\n## Consolidation skipped\n- Persistent Intelligence could not run session consolidation using ${modelLabel}: ${reason}`,
-          );
+          appendDailyLog(state.root, todayString(), `<!-- ${dependencies.nowIso()} -->\n## Consolidation skipped\n- Persistent Intelligence could not run session consolidation using ${modelLabel}: ${reason}`);
         }
       }
 
-      // ── Tiered auto-curation ──────────────────────────────────────────
-      // Runs after consolidation so freshly extracted candidates are eligible.
-      //
-      // "off"          — never auto-curate; user runs /curate-memory manually
-      // "high-only"    — auto-apply only ops with confidence >= threshold AND
-      //                  not L1 / supersede (default_selected=true, risk=low)
-      // "all-eligible" — auto-apply every default_selected non-high-risk op
-      //
-      // L1 writes and supersede ops are NEVER auto-applied regardless of mode
-      // because they are marked risk="high" / default_selected=false by the curator.
       const autoCurate = cfg.curator.autoCurate ?? "high-only";
       const highThreshold = cfg.curator.autoCurateHighThreshold ?? 0.85;
 
@@ -513,9 +413,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
         try {
           const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
           const patch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "auto", vaultPath, governanceMode: cfg.governance.mode });
-
           if (patch.ops.length > 0) {
-            // Filter ops to apply based on the autoCurate tier
             const eligibleIds = patch.ops
               .filter((op) => {
                 if (!op.default_selected || op.risk === "high") return false;
@@ -523,31 +421,23 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                   const confidence = op.record?.confidence ?? op.to_record?.confidence ?? 0;
                   return confidence >= highThreshold;
                 }
-                return true; // "all-eligible"
+                return true;
               })
               .map((op) => op.op_id);
-
             if (eligibleIds.length > 0) {
               const applied = applyPatch(state.root, patch, { selectedOpIds: eligibleIds, now: dependencies.nowIso() });
-              dependencies.syncFtsAfterPatch(patch, applied); // F-03 fix: sync immediately after auto-curation patch plus post-sync diagnostics
+              dependencies.syncFtsAfterPatch(patch, applied);
               const skipped = patch.ops.length - eligibleIds.length;
-              appendDailyLog(
-                state.root, todayString(),
-                `<!-- ${dependencies.nowIso()} -->\n## Auto-curation\n- Applied ${applied.applied_ops.length} L2 op(s) automatically (${skipped} held for /curate-memory review).`,
-              );
+              appendDailyLog(state.root, todayString(), `<!-- ${dependencies.nowIso()} -->\n## Auto-curation\n- Applied ${applied.applied_ops.length} L2 op(s) automatically (${skipped} held for /curate-memory review).`);
             }
           }
-        } catch { /* best-effort — never crash shutdown */ }
+        } catch { }
       }
 
-      // Log consolidation result (after curation, so it appears below auto-curation note)
       if (consolidationResult && consolidationResult.candidates_added > 0) {
         const held = listCandidates(state.root).filter((c) => c.status === "new").length;
         if (held > 0) {
-          appendDailyLog(
-            state.root, todayString(),
-            `<!-- ${dependencies.nowIso()} -->\n## Consolidation\n- ${consolidationResult.candidates_added} candidate(s) in inbox (${consolidationResult.candidates_skipped_dedup} deduped). ${held} await /curate-memory review.`,
-          );
+          appendDailyLog(state.root, todayString(), `<!-- ${dependencies.nowIso()} -->\n## Consolidation\n- ${consolidationResult.candidates_added} candidate(s) in inbox (${consolidationResult.candidates_skipped_dedup} deduped). ${held} await /curate-memory review.`);
         }
       }
 
@@ -556,7 +446,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
       state.lastObservedModel = null;
 
       await updateQmd();
-        syncFtsIndex(state.root, state.ftsIndex);
+      syncFtsIndex(state.root, state.ftsIndex);
     },
   };
 }
