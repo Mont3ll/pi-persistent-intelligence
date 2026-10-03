@@ -4,13 +4,18 @@
  * Includes Jaccard deduplication: candidates with >0.7 token overlap against
  * existing inbox items or active L2 records are silently skipped.
  */
+import { createHash } from "node:crypto";
+import { appendEvidenceRecordIfMissing, boundSourceExcerpt, boundSourceSummary, createEvidenceId } from "./evidence";
 import { appendCandidate, listCandidates, withMemoryWorth } from "./inbox";
+import { scoreMemoryWorth } from "./memory-worth";
+import { resolveMemoryProfile } from "./profile";
+import { inferProjectScope } from "./project";
 import { loadActiveRecords } from "./store";
 import { tokenize } from "./sessions/bm25";
 import { buildCandidateTrustMetadata } from "./trust";
-import { scoreMemoryWorth } from "./memory-worth";
+import { attachVerification } from "./verifier";
 import { upsertInquiryRecord } from "./inquiries";
-import type { CaptureCandidate } from "./types";
+import type { CaptureCandidate, MemoryScope } from "./types";
 
 export const CONSOLIDATION_PROMPT_TEMPLATE = `You are a memory extraction agent for a governed persistent intelligence system.
 
@@ -34,6 +39,12 @@ Do not infer a user preference merely from agent-generated workflow or orchestra
 For each item, assign a confidence score (0–1). Only include items with confidence >= 0.75.
 Aim for concise, falsifiable statements of 20–120 characters.
 
+Every candidate MUST include at least one evidence item pointing to the numbered user messages below.
+- message_index is the integer N from [User N].
+- quote must be copied from that exact user message, not paraphrased or invented.
+- Use the shortest quote that actually supports the candidate.
+- If no exact user-authored quote supports a candidate, omit that candidate.
+
 Respond ONLY with valid JSON, no commentary:
 {
   "candidates": [
@@ -41,7 +52,9 @@ Respond ONLY with valid JSON, no commentary:
       "statement": "concise durable statement",
       "tags": ["tag1", "tag2"],
       "confidence": 0.85,
-      "evidence_hint": "brief note about what conversation turn supports this"
+      "evidence": [
+        { "message_index": 0, "quote": "exact supporting text copied from [User 0]" }
+      ]
     }
   ]
 }
@@ -51,11 +64,17 @@ If nothing worth extracting, return: {"candidates": []}
 ===MESSAGES===
 `;
 
+export interface ConsolidationEvidenceRef {
+  message_index: number;
+  quote: string;
+}
+
 export interface ConsolidationResult {
   candidates_extracted: number;
   candidates_added: number;
   candidates_skipped_dedup: number;
   candidates_rejected_worth?: number;
+  candidates_rejected_provenance?: number;
   candidates_daily_only?: number;
   inquiries_created?: number;
   status?: "ok" | "failed";
@@ -67,14 +86,29 @@ export interface RawCandidate {
   statement: string;
   tags: string[];
   confidence: number;
-  evidence_hint: string;
+  evidence: ConsolidationEvidenceRef[];
+  /** Legacy model field retained only so old output can be parsed and rejected for missing verifiable provenance. */
+  evidence_hint?: string;
+}
+
+function consolidationUserMessages(userMessages: string[]): string[] {
+  return userMessages.slice(-60).map((message) => message.slice(0, 500));
 }
 
 export function buildConsolidationPrompt(userMessages: string[], _assistantMessages: string[]): string {
-  const lines = userMessages
-    .slice(-60)
-    .map((message) => `[User] ${message.slice(0, 500)}`);
+  const lines = consolidationUserMessages(userMessages)
+    .map((message, index) => `[User ${index}] ${message}`);
   return CONSOLIDATION_PROMPT_TEMPLATE + lines.join("\n");
+}
+
+function parseEvidenceRefs(value: unknown): ConsolidationEvidenceRef[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item !== "object" || item === null) return [];
+    const ref = item as { message_index?: unknown; quote?: unknown };
+    if (!Number.isInteger(ref.message_index) || typeof ref.quote !== "string" || !ref.quote.trim()) return [];
+    return [{ message_index: ref.message_index as number, quote: ref.quote }];
+  });
 }
 
 export function parseConsolidationResponse(raw: string): RawCandidate[] {
@@ -84,13 +118,19 @@ export function parseConsolidationResponse(raw: string): RawCandidate[] {
   try {
     const parsed = JSON.parse(raw.slice(start, end + 1)) as { candidates?: unknown[] };
     if (!Array.isArray(parsed.candidates)) return [];
-    return parsed.candidates.filter((c): c is RawCandidate =>
-      typeof c === "object" && c !== null &&
-      typeof (c as RawCandidate).statement === "string" &&
-      (c as RawCandidate).statement.trim().length > 0 &&
-      typeof (c as RawCandidate).confidence === "number" &&
-      (c as RawCandidate).confidence >= 0.75
-    );
+    return parsed.candidates.flatMap((value) => {
+      if (typeof value !== "object" || value === null) return [];
+      const item = value as Record<string, unknown>;
+      if (typeof item.statement !== "string" || !item.statement.trim()) return [];
+      if (typeof item.confidence !== "number" || item.confidence < 0.75) return [];
+      return [{
+        statement: item.statement,
+        tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === "string") : [],
+        confidence: item.confidence,
+        evidence: parseEvidenceRefs(item.evidence),
+        evidence_hint: typeof item.evidence_hint === "string" ? item.evidence_hint : undefined,
+      }];
+    });
   } catch {
     return [];
   }
@@ -113,23 +153,115 @@ function isDuplicate(statement: string, existing: string[]): boolean {
   return existing.some((e) => jaccardSim(statement, e) >= DEDUP_THRESHOLD);
 }
 
+function normalizeSupportText(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+interface ValidatedSupport {
+  message_index: number;
+  quote: string;
+}
+
+function validatedSupports(candidate: RawCandidate, userMessages: string[]): ValidatedSupport[] {
+  const seen = new Set<string>();
+  const validated: ValidatedSupport[] = [];
+  for (const ref of candidate.evidence) {
+    if (!Number.isInteger(ref.message_index) || ref.message_index < 0 || ref.message_index >= userMessages.length) continue;
+    const message = normalizeSupportText(userMessages[ref.message_index] ?? "");
+    const quote = normalizeSupportText(ref.quote);
+    if (!quote || !message.includes(quote)) continue;
+    const key = `${ref.message_index}\n${quote}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    validated.push({ message_index: ref.message_index, quote });
+  }
+  return validated;
+}
+
+function evidenceScopeRef(scope: MemoryScope): string | undefined {
+  if (scope.type === "project") return scope.project;
+  if (scope.type === "domain") return scope.domains?.join(",");
+  return undefined;
+}
+
+function consolidationSourceWindowId(sessionRef: string, userMessages: string[]): string {
+  const digest = createHash("sha256")
+    .update([sessionRef, ...userMessages.map(normalizeSupportText)].join("\n---\n"))
+    .digest("hex")
+    .slice(0, 24);
+  return `consolidation-window-${digest}`;
+}
+
+function persistConsolidationEvidence(
+  root: string,
+  candidateId: string,
+  supports: ValidatedSupport[],
+  sessionRef: string,
+  sourceWindowId: string,
+  now: string,
+): { ids: string[]; resource_id: string; profile_id: string; source_ref: string } {
+  const profile = resolveMemoryProfile(root, sessionRef, now);
+  const scope = inferProjectScope(sessionRef);
+  const relatedMemoryId = candidateId.replace(/^cap_/, "mem_");
+  const ids = supports.map((support) => {
+    const sourceRef = `${sourceWindowId}:user:${support.message_index}`;
+    const sourceExcerpt = boundSourceExcerpt(support.quote) ?? support.quote;
+    const sourceSummary = boundSourceSummary(support.quote);
+    const id = createEvidenceId({
+      profile_id: profile.profile_id,
+      source_kind: "conversation",
+      source_ref: sourceRef,
+      source_excerpt: sourceExcerpt,
+      source_summary: sourceSummary,
+    });
+    const evidence = appendEvidenceRecordIfMissing(root, {
+      id,
+      resource_id: profile.resource_id,
+      profile_id: profile.profile_id,
+      created_at: now,
+      source_kind: "conversation",
+      source_ref: sourceRef,
+      source_excerpt: sourceExcerpt,
+      source_summary: sourceSummary,
+      trust_class: "single_session_observation",
+      polarity: "supports",
+      durability_signal: "project",
+      related_memory_ids: [relatedMemoryId],
+      scope_level: scope.type,
+      scope_ref: evidenceScopeRef(scope),
+      tags: ["consolidation-provenance"],
+      notes: `Validated against user-authored consolidation input [User ${support.message_index}].`,
+    });
+    return evidence.id;
+  });
+  return {
+    ids,
+    resource_id: profile.resource_id,
+    profile_id: profile.profile_id,
+    source_ref: `${sourceWindowId}:user:${supports[0].message_index}`,
+  };
+}
+
 // ─── Apply ────────────────────────────────────────────────────────────
 
 export function applyConsolidation(
   root: string,
   candidates: RawCandidate[],
-  today: string,
+  _today: string,
   sessionRef: string,
+  userMessages: string[] = [],
 ): ConsolidationResult {
   // Build dedup corpus from existing inbox + active L2 records
   const existingStatements: string[] = [
     ...listCandidates(root).filter((c) => c.status === "new").map((c) => c.text),
     ...loadActiveRecords(root).map((r) => r.statement),
   ];
+  const sourceWindowId = consolidationSourceWindowId(sessionRef, userMessages);
 
   let added = 0;
   let skipped = 0;
   let rejectedWorth = 0;
+  let rejectedProvenance = 0;
   let dailyOnly = 0;
   let inquiriesCreated = 0;
 
@@ -139,8 +271,14 @@ export function applyConsolidation(
       continue;
     }
 
+    const supports = validatedSupports(c, userMessages);
+    if (supports.length === 0) {
+      rejectedProvenance++;
+      continue;
+    }
+
     const durableWorkflowTag = c.tags?.some((tag) => /testing|workflow/.test(tag)) ?? false;
-    const worth = scoreMemoryWorth({ observation: c.statement, explicitUserRequest: durableWorkflowTag, evidenceStrength: 0.7, operationalImpact: c.tags?.some((tag) => /testing|workflow|release|security/.test(tag)) ? 0.8 : undefined, durability: "project", scope: sessionRef, existingStatements });
+    const worth = scoreMemoryWorth({ observation: c.statement, explicitUserRequest: durableWorkflowTag, evidenceStrength: 0.8, operationalImpact: c.tags?.some((tag) => /testing|workflow|release|security/.test(tag)) ? 0.8 : undefined, durability: "project", scope: sessionRef, existingStatements });
     if (worth.decision === "reject") {
       rejectedWorth++;
       continue;
@@ -155,26 +293,41 @@ export function applyConsolidation(
       continue;
     }
 
-    const candidate: CaptureCandidate = withMemoryWorth({
-      id: `cap_cons_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      created_at: new Date().toISOString(),
-      source: { type: "conversation", ref: `daily/${today}.md`, cwd: sessionRef },
+    const now = new Date().toISOString();
+    const candidateId = `cap_cons_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const provenance = persistConsolidationEvidence(root, candidateId, supports, sessionRef, sourceWindowId, now);
+    let candidate: CaptureCandidate = withMemoryWorth({
+      id: candidateId,
+      resource_id: provenance.resource_id,
+      profile_id: provenance.profile_id,
+      created_at: now,
+      source: { type: "conversation", ref: provenance.source_ref, cwd: sessionRef },
       text: c.statement,
       tags: c.tags ?? [],
-      evidence_refs: [`daily/${today}.md`],
+      evidence_refs: provenance.ids,
+      evidence_ids: provenance.ids,
       confidence: c.confidence,
       status: "new",
       ...buildCandidateTrustMetadata("agent_inference", "project"),
     }, existingStatements);
+    candidate = attachVerification(root, candidate);
     appendCandidate(root, candidate);
     existingStatements.push(c.statement); // prevent within-batch dups too
     added++;
   }
 
-  return { candidates_extracted: candidates.length, candidates_added: added, candidates_skipped_dedup: skipped, candidates_rejected_worth: rejectedWorth, candidates_daily_only: dailyOnly, inquiries_created: inquiriesCreated };
+  return {
+    candidates_extracted: candidates.length,
+    candidates_added: added,
+    candidates_skipped_dedup: skipped,
+    candidates_rejected_worth: rejectedWorth,
+    candidates_rejected_provenance: rejectedProvenance,
+    candidates_daily_only: dailyOnly,
+    inquiries_created: inquiriesCreated,
+  };
 }
 
-// ─── Runner ───────────────────────────────────────────────────────────
+// ─── Runner ──────────────────────────────────────────────────────────
 
 export interface ConsolidationRunner {
   exec(command: string, args: string[], options?: { timeout?: number; cwd?: string }): Promise<{ stdout: string; stderr?: string; code: number }>;
@@ -206,7 +359,8 @@ export async function runConsolidation(
   runner: ConsolidationRunner,
   model?: string | null,
 ): Promise<ConsolidationResult> {
-  const prompt = buildConsolidationPrompt(userMessages, assistantMessages);
+  const promptMessages = consolidationUserMessages(userMessages);
+  const prompt = buildConsolidationPrompt(promptMessages, assistantMessages);
 
   let result: { stdout: string; stderr?: string; code: number };
   try {
@@ -231,5 +385,5 @@ export async function runConsolidation(
   }
 
   const parsed = parseConsolidationResponse(result.stdout);
-  return { ...applyConsolidation(root, parsed, today, sessionRef), status: "ok", model_used: model?.trim() || undefined };
+  return { ...applyConsolidation(root, parsed, today, sessionRef, promptMessages), status: "ok", model_used: model?.trim() || undefined };
 }
