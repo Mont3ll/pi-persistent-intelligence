@@ -316,17 +316,14 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
     });
   });
 
-  const selectedOps = options.mode === "auto"
-    ? ops.filter((op) => op.default_selected === true && op.risk !== "high")
-    : ops;
   const stamp = options.now.replace(/[-:T]/g, "").slice(0, 12);
   return {
     patch_id: `patch_${stamp}_001`,
     created_at: options.now,
     generated_by: "curator",
     mode: options.mode,
-    summary: selectedOps.length ? `Promote ${selectedOps.length} captured candidate(s) to L2.` : "No candidates met curation thresholds.",
-    ops: selectedOps,
+    summary: ops.length ? `Promote ${ops.length} captured candidate(s) to L2.` : "No candidates met curation thresholds.",
+    ops,
     status: "proposed",
     applied_at: null,
     applied_ops: [],
