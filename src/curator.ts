@@ -106,7 +106,12 @@ function meaningfulTerms(text: string): Set<string> {
 function scopeCompatibleForHeuristic(candidate: CaptureCandidate, record: MemoryRecord): boolean {
   if (candidate.profile_id && record.profile_id && candidate.profile_id !== record.profile_id) return false;
   const targets = candidate.scope_targets?.filter((target) => target.type !== "session") ?? [];
-  if (targets.length === 0) return true;
+  if (targets.length === 0) {
+    const fallbackScope: MemoryScope = candidate.source.cwd ? inferProjectScope(candidate.source.cwd) : { type: "global" };
+    if (fallbackScope.type === "global") return record.scope.type === "global";
+    if (fallbackScope.type === "project") return record.scope.type === "project" && record.scope.project === fallbackScope.project;
+    return record.scope.type === "domain" && (fallbackScope.domains ?? []).some((domain) => record.scope.domains?.includes(domain));
+  }
   return targets.some((target) => {
     if (target.type === "global") return record.scope.type === "global";
     if (target.type === "project") return record.scope.type === "project" && record.scope.project === target.project;
