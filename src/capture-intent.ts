@@ -58,8 +58,16 @@ function hasDurableIntentCue(text: string): boolean {
     || /\bthis (?:project|repository|repo|codebase)\b[^.]{0,80}\b(always|requires|uses|never)\b/i.test(text);
 }
 
+function hasVerifierTaskWrapper(text: string): boolean {
+  if (!/^(?:resume|verify)\b/i.test(text)) return false;
+  const operationalContext = /\b(?:verification|worktree|head|sha|branch|source|live (?:pi )?store|checkout|pull request|\bpr\b|typecheck|test|eval|stress)\b/i.test(text);
+  const taskConstraints = text.match(/\b(?:do not|don't)\b/gi)?.length ?? 0;
+  return operationalContext && taskConstraints >= 2;
+}
+
 function hasTaskBoundOperationalCue(text: string): boolean {
-  return /\bduring this task\b/i.test(text)
+  return hasVerifierTaskWrapper(text)
+    || /\bduring this task\b/i.test(text)
     || /\bthis (?:slice|stage|run|audit|exercise)\b[^.]{0,80}\b(?:only|limited|bounded)\b/i.test(text)
     || /\bthis is (?:implementation|verification|implementation and verification) work only\b/i.test(text)
     || /\b(?:red|green) stage\b[^.]{0,120}\b(?:issue|fix|verification)\b/i.test(text)
@@ -94,6 +102,9 @@ export function classifyCaptureIntent(rawText: string): CaptureIntentDecision {
   if (!hasDurableIntentCue(text) && hasTaskBoundOperationalCue(text)) {
     return decision("temporary_instruction", 0.95, "task", text, ["task_bound_operational_scope"]);
   }
+
+  const durableResumeCorrection = hasDurableIntentCue(text) && /\bresume\s+using\b/i.test(text);
+  if (durableResumeCorrection) return decision("behavior_correction", 0.9, "project", text, ["explicit_behavior_correction"]);
 
   const projectConvention = /\bthis (?:project|repository|repo|codebase)\s+(?:always\s+)?(?:uses|requires|runs|keeps|stores)\b/i.test(text);
   if (projectConvention) return decision("project_convention", 0.92, "project", text, ["explicit_project_convention"]);

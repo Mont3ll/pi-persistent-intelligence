@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { processCaptureTurn } from "../../src/capture-coordinator";
+import { listCaptureEvents, processCaptureTurn } from "../../src/capture-coordinator";
 import { listCandidates } from "../../src/inbox";
 import { readEvidenceRecords } from "../../src/evidence";
 import type { ProjectIdentity } from "../../src/types";
@@ -106,6 +106,24 @@ describe("capture coordinator", () => {
     expect(result.candidates_created).toBe(0);
     expect(listCandidates(dir)).toHaveLength(0);
     expect(readEvidenceRecords(dir)).toHaveLength(0);
+  });
+
+  test("honors a daily-only memory-worth decision before evidence or candidate persistence", () => {
+    const dir = root();
+    const result = processCaptureTurn(dir, {
+      session_id: "s1",
+      turn_id: "t1",
+      message: "Do not modify source today.",
+      launch_cwd: "/projects/pi-persistent-intelligence",
+      actions: [],
+      resolver,
+      now: "2026-10-03T00:00:00Z",
+    });
+    expect(result.daily_only).toBe(1);
+    expect(result.candidates_created).toBe(0);
+    expect(listCandidates(dir)).toHaveLength(0);
+    expect(readEvidenceRecords(dir)).toHaveLength(0);
+    expect(listCaptureEvents(dir).at(-1)?.reason).toBe("memory_worth_daily_only");
   });
 
   test("blocks secret-bearing preferences", () => {

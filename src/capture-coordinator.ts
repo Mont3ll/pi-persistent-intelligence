@@ -131,62 +131,69 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
       evidenceStrength: 0.9,
       operationalImpact: intent.intent === "user_preference" ? 0.6 : 0.8,
     });
-    const key = normalizedPreferenceKey(input.message, intent.intent);
-    const groupHash = hash(`${messageHash}:${input.session_id}`).slice(0, 20);
-    const sourceRef = `session:${input.session_id}:turn:${input.turn_id}`;
-    const evidence = appendEvidenceRecord(root, {
-      id: "",
-      resource_id: "curation",
-      profile_id: "legacy-default",
-      created_at: now,
-      source_kind: "conversation",
-      source_session_id: input.session_id,
-      source_ref: sourceRef,
-      source_summary: input.message.trim().slice(0, 300).replace(/\s+/g, " "),
-      trust_class: trustClass,
-      polarity: "supports",
-      durability_signal: durability,
-      related_memory_ids: [],
-      scope_level: scopes.length === 1 ? scopes[0].type : "multi",
-      tags: ["capture-evidence"],
-      notes: "capture_evidence_v1",
-    });
-    const candidate: CaptureCandidate = {
-      id: `cap_pref_${groupHash}`,
-      created_at: now,
-      source: { type: trustClass, ref: sourceRef },
-      text: input.message.trim().slice(0, 300).replace(/\s+/g, " "),
-      tags: [...new Set(["capture", intent.intent, ...intent.applicability])],
-      evidence_refs: [evidence.id],
-      evidence_ids: [evidence.id],
-      confidence: intent.confidence,
-      status: "new",
-      ruleType: candidateRuleType(intent.intent, input.message),
-      memory_kind: "instruction",
-      worth_decision: worth.decision,
-      worth_score: worth.worth_score,
-      worth_reasons: worth.reasons,
-      ...trust,
-      promotion_eligibility: globalTarget(scopes) ? "review_only" : trust.promotion_eligibility,
-      capture_group_id: `capture_group_${groupHash}`,
-      capture_intent: intent.intent,
-      scope_targets: scopes,
-      normalized_preference_key: key,
-      recurrence_count: 1,
-      source_session_ids: [input.session_id],
-      source_turn_ids: [`${input.session_id}:${input.turn_id}`],
-      activity_evidence_ids: [activity.id],
-      proposed_applies_when: intent.applicability,
-    };
-    const persisted = appendOrReinforceCandidate(root, candidate);
-    if (persisted.action === "created") {
-      result.candidates_created++;
-      outcome = "candidate_created";
+    if (worth.decision === "daily_only") {
+      appendDailyLog(root, now.slice(0, 10), `<!-- ${now} -->\n## Temporary preference\n- ${input.message.trim().slice(0, 300)}`);
+      result.daily_only++;
+      outcome = "daily_only";
+      reason = "memory_worth_daily_only";
     } else {
-      result.candidates_reinforced++;
-      outcome = "candidate_reinforced";
+      const key = normalizedPreferenceKey(input.message, intent.intent);
+      const groupHash = hash(`${messageHash}:${input.session_id}`).slice(0, 20);
+      const sourceRef = `session:${input.session_id}:turn:${input.turn_id}`;
+      const evidence = appendEvidenceRecord(root, {
+        id: "",
+        resource_id: "curation",
+        profile_id: "legacy-default",
+        created_at: now,
+        source_kind: "conversation",
+        source_session_id: input.session_id,
+        source_ref: sourceRef,
+        source_summary: input.message.trim().slice(0, 300).replace(/\s+/g, " "),
+        trust_class: trustClass,
+        polarity: "supports",
+        durability_signal: durability,
+        related_memory_ids: [],
+        scope_level: scopes.length === 1 ? scopes[0].type : "multi",
+        tags: ["capture-evidence"],
+        notes: "capture_evidence_v1",
+      });
+      const candidate: CaptureCandidate = {
+        id: `cap_pref_${groupHash}`,
+        created_at: now,
+        source: { type: trustClass, ref: sourceRef },
+        text: input.message.trim().slice(0, 300).replace(/\s+/g, " "),
+        tags: [...new Set(["capture", intent.intent, ...intent.applicability])],
+        evidence_refs: [evidence.id],
+        evidence_ids: [evidence.id],
+        confidence: intent.confidence,
+        status: "new",
+        ruleType: candidateRuleType(intent.intent, input.message),
+        memory_kind: "instruction",
+        worth_decision: worth.decision,
+        worth_score: worth.worth_score,
+        worth_reasons: worth.reasons,
+        ...trust,
+        promotion_eligibility: globalTarget(scopes) ? "review_only" : trust.promotion_eligibility,
+        capture_group_id: `capture_group_${groupHash}`,
+        capture_intent: intent.intent,
+        scope_targets: scopes,
+        normalized_preference_key: key,
+        recurrence_count: 1,
+        source_session_ids: [input.session_id],
+        source_turn_ids: [`${input.session_id}:${input.turn_id}`],
+        activity_evidence_ids: [activity.id],
+        proposed_applies_when: intent.applicability,
+      };
+      const persisted = appendOrReinforceCandidate(root, candidate);
+      if (persisted.action === "created") {
+        result.candidates_created++;
+        outcome = "candidate_created";
+      } else {
+        result.candidates_reinforced++;
+        outcome = "candidate_reinforced";
+      }
+      reason = intent.reasons[0] ?? "captured";
     }
-    reason = intent.reasons[0] ?? "captured";
   }
 
   appendCaptureEvent(root, {

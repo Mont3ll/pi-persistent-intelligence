@@ -51,6 +51,8 @@ describe("capture intent", () => {
     "Continue the two approved bounded PI fixes. This is implementation and verification work only. Do not merge, release or publish.",
     "Verify the RED stage for issue #20. Do not edit production code. Do not implement the fix. Do not tag or publish.",
     "Do not rerun the PI curation audit. Do not invoke PI. Use only the already-created audit artifacts.",
+    "Resume the consolidation-evidence provenance verification from a fresh detached worktree. The previous typecheck failure was corrected by a test-only commit. Do not reuse the old verification worktree. Do not mutate the live PI store. Do not modify the divergent configured checkout.",
+    "Verify the final consolidation-evidence provenance head after secondary-review corrections. Do not modify source. Do not mutate the live PI store. Do not modify the divergent configured checkout. Do not create a PR.",
   ]) {
     test(`routes task-bound operational instruction to daily-only: ${text.slice(0, 38)}`, () => {
       const result = classifyCaptureIntent(text);
@@ -61,6 +63,12 @@ describe("capture intent", () => {
 
   test("preserves explicit durable release boundaries", () => {
     const result = classifyCaptureIntent("Going forward, do not merge, release, or publish unless I explicitly authorize it.");
+    expect(result.intent).toBe("behavior_correction");
+    expect(result.durability).toBe("project");
+  });
+
+  test("preserves durable resume-using corrections", () => {
+    const result = classifyCaptureIntent("Resume using Bun for this project going forward.");
     expect(result.intent).toBe("behavior_correction");
     expect(result.durability).toBe("project");
   });
