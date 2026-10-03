@@ -138,7 +138,8 @@ describe("applyConsolidation provenance", () => {
     expect(inbox).toHaveLength(2);
     expect(inbox[0].status).toBe("new");
     expect(inbox[0].source.type).toBe("conversation");
-    expect(inbox[0].source.ref).toBe("consolidation:2026-05-12:user:0");
+    expect(inbox[0].source.ref).toMatch(/^session:consolidation-[a-f0-9]{24}:user:0$/);
+    expect(inbox[0].thread_id).toMatch(/^consolidation-[a-f0-9]{24}$/);
     expect(inbox[0].evidence_ids).toEqual(inbox[0].evidence_refs);
     expect(inbox[0].evidence_refs[0]).not.toStartWith("daily/");
     expect(inbox[0].primary_trust_class).toBe("agent_inference");
@@ -148,7 +149,28 @@ describe("applyConsolidation provenance", () => {
     expect(evidence[0].source_kind).toBe("conversation");
     expect(evidence[0].source_excerpt).toBe(messages[0]);
     expect(evidence[0].trust_class).toBe("single_session_observation");
+    expect(evidence[0].source_session_id).toBe(inbox[0].thread_id);
     cleanup();
+  });
+
+  test("separates same-day provenance across distinct consolidation input windows", () => {
+    const first = tempRoot();
+    const second = tempRoot();
+    ensureMemoryDirs(first.dir);
+    ensureMemoryDirs(second.dir);
+    const statement = "Always run typecheck before committing.";
+
+    applyConsolidation(first.dir, [supportedCandidate(statement)], "2026-05-12", "/workspace/project", [statement, "Use bun for package scripts."]);
+    applyConsolidation(second.dir, [supportedCandidate(statement)], "2026-05-12", "/workspace/project", [statement, "Use npm for package scripts."]);
+
+    const firstEvidence = readEvidenceRecords(first.dir)[0];
+    const secondEvidence = readEvidenceRecords(second.dir)[0];
+    expect(firstEvidence.source_session_id).toMatch(/^consolidation-[a-f0-9]{24}$/);
+    expect(secondEvidence.source_session_id).toMatch(/^consolidation-[a-f0-9]{24}$/);
+    expect(firstEvidence.source_session_id).not.toBe(secondEvidence.source_session_id);
+    expect(firstEvidence.id).not.toBe(secondEvidence.id);
+    first.cleanup();
+    second.cleanup();
   });
 
   test("rejects fabricated or missing provenance before inbox persistence", () => {
