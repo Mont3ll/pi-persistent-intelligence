@@ -99,4 +99,26 @@ describe("heuristic supersede detection", () => {
     expect(patch.ops[0].op).toBe("add");
     expect(patch.ops[0].risk).toBe("low");
   });
+
+  test("weak negation requires an established matched-memory identity", () => {
+    const dir = root();
+    addMemoryRecord(dir, oldRecord({
+      id: "mem_garagepro_report",
+      scope: { type: "project", project: "garagepro" },
+      tags: ["release", "verification"],
+      statement: "The GaragePro release evidence report is complete and archived.",
+    }));
+    appendCandidate(dir, candidate({
+      id: "cap_garagepro_correction",
+      text: "Do not use the previous GaragePro report as release evidence for this verification.",
+      tags: ["release", "verification"],
+      scope_targets: [{ type: "project", project: "garagepro", confidence: 0.95, basis: ["explicit_project"] }],
+    }));
+
+    const patch = curateInbox(dir, { now: "2026-05-09T00:00:00Z", mode: "propose" });
+
+    expect(patch.ops).toHaveLength(1);
+    expect(patch.ops[0].op).toBe("add");
+    expect(patch.ops[0].risk).toBe("low");
+  });
 });
