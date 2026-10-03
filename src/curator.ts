@@ -79,6 +79,8 @@ const STRUCTURAL_CAPTURE_TAGS = new Set([
   "implementation",
   "release",
   "testing",
+  "verification",
+  "verifier",
   "workflow",
   "writing",
 ]);
@@ -89,9 +91,33 @@ const SUPERSESSION_STOP_WORDS = new Set([
   "this", "from", "current", "state", "continue",
 ]);
 
+const GENERIC_OPERATION_IDENTITY_TERMS = new Set([
+  "action", "actions", "artifact", "artifacts", "branch", "code", "commit", "commits",
+  "github", "implementation", "local", "merge", "modify", "package", "previous", "publish",
+  "release", "remote", "report", "reports", "repository", "rerun", "result", "results", "source",
+  "stage", "task", "test", "tests", "verification", "verifier", "verify", "workflow", "work",
+]);
+
 function meaningfulTerms(text: string): Set<string> {
   return new Set(text.toLowerCase().split(/[^a-z0-9]+/)
     .filter((term) => term.length > 3 && !SUPERSESSION_STOP_WORDS.has(term)));
+}
+
+function scopeCompatibleForHeuristic(candidate: CaptureCandidate, record: MemoryRecord): boolean {
+  if (candidate.profile_id && record.profile_id && candidate.profile_id !== record.profile_id) return false;
+  const targets = candidate.scope_targets?.filter((target) => target.type !== "session") ?? [];
+  if (targets.length === 0) {
+    const fallbackScope: MemoryScope = candidate.source.cwd ? inferProjectScope(candidate.source.cwd) : { type: "global" };
+    if (fallbackScope.type === "global") return record.scope.type === "global";
+    if (fallbackScope.type === "project") return record.scope.type === "project" && record.scope.project === fallbackScope.project;
+    return record.scope.type === "domain" && (fallbackScope.domains ?? []).some((domain) => record.scope.domains?.includes(domain));
+  }
+  return targets.some((target) => {
+    if (target.type === "global") return record.scope.type === "global";
+    if (target.type === "project") return record.scope.type === "project" && record.scope.project === target.project;
+    if (target.type === "domain") return record.scope.type === "domain" && Boolean(target.domain && record.scope.domains?.includes(target.domain));
+    return false;
+  });
 }
 
 function heuristicSupersedes(candidate: CaptureCandidate, records: MemoryRecord[]): string | null {
@@ -102,16 +128,23 @@ function heuristicSupersedes(candidate: CaptureCandidate, records: MemoryRecord[
   const weakCueTerms = meaningfulTerms(weakCueMatch?.[1] ?? "");
   const tags = new Set(candidateTags(candidate).filter((tag) => !STRUCTURAL_CAPTURE_TAGS.has(tag)));
   const candidateTerms = meaningfulTerms(candidate.text);
+  const matchedIds = new Set(candidate.matched_memory_ids ?? []);
   let best: { id: string; score: number } | null = null;
   for (const record of records) {
+    if (!scopeCompatibleForHeuristic(candidate, record)) continue;
     if (!strongCue && hasContradictionCue(record.statement)) continue;
     const substantiveOverlap = record.tags.filter((tag) => !STRUCTURAL_CAPTURE_TAGS.has(tag) && tags.has(tag)).length;
     const recordTerms = meaningfulTerms(record.statement);
-    const lexicalMatches = [...candidateTerms].filter((term) => recordTerms.has(term)).length;
+    const overlappingTerms = [...candidateTerms].filter((term) => recordTerms.has(term));
+    const lexicalMatches = overlappingTerms.length;
+    const distinctiveMatches = overlappingTerms.filter((term) => !GENERIC_OPERATION_IDENTITY_TERMS.has(term)).length;
     const weakCueMatches = [...weakCueTerms].filter((term) => recordTerms.has(term)).length;
-    if (substantiveOverlap === 0 && lexicalMatches < 2) continue;
+    const matchedIdentity = matchedIds.has(record.id);
+    const identityEstablished = matchedIdentity || substantiveOverlap > 0 || (lexicalMatches >= 2 && distinctiveMatches >= 1);
+    if (!identityEstablished) continue;
+    if (!strongCue && !matchedIdentity) continue;
     if (!strongCue && weakCueMatches < 2) continue;
-    const score = substantiveOverlap * 2 + lexicalMatches;
+    const score = (matchedIdentity ? 4 : 0) + substantiveOverlap * 2 + lexicalMatches + distinctiveMatches;
     if (!best || score > best.score) best = { id: record.id, score };
   }
   return best?.id ?? null;
@@ -162,7 +195,6 @@ function candidateToRecord(candidate: CaptureCandidate, now: string, target?: Ca
     supersedes: [],
     superseded_by: [],
     vault_ref: null,
-    // Propagate typed metadata from candidate (set by correction detection, memory-worth scoring, or manual capture)
     ruleType: candidate.ruleType,
     memory_kind: candidate.memory_kind,
     applies_when: candidate.proposed_applies_when,
@@ -191,7 +223,6 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
   let opIndex = 0;
   const ops: PatchOp[] = eligible.flatMap((rawCandidate) => {
     const candidate = attachVerification(root, applyCandidateMatch(rawCandidate, activeRecords));
-    // Automatically create open inquiry for ambiguous/conflict matches where human resolution is needed
     createInquiryFromCandidate(root, candidate, { profile_id: candidate.profile_id ?? options.vaultPath });
     const llm = llmContradictions.get(candidate.id);
     const explicitTarget = explicitSupersedes(candidate);
@@ -246,48 +277,47 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
         requiresStructuredEvidence: STRUCTURED_EVIDENCE_REQUIRED_SOURCE_TYPES.has(candidate.source.type),
       };
 
-    if (targetId && activeIds.has(targetId) && requestedTargets.length === 1) {
-      const reason = explicitTarget
-        ? `Candidate ${candidate.id} explicitly supersedes ${targetId}.`
-        : heuristicTarget
-          ? `Candidate ${candidate.id} appears to supersede ${targetId} based on contradiction cues and overlapping tags.`
-          : llm?.reason ?? `LLM review suggested ${candidate.id} supersedes ${targetId}.`;
+      if (targetId && activeIds.has(targetId) && requestedTargets.length === 1) {
+        const reason = explicitTarget
+          ? `Candidate ${candidate.id} explicitly supersedes ${targetId}.`
+          : heuristicTarget
+            ? `Candidate ${candidate.id} appears to supersede ${targetId} based on contradiction cues and substantive identity overlap.`
+            : llm?.reason ?? `LLM review suggested ${candidate.id} supersedes ${targetId}.`;
+        return {
+          ...base,
+          op: "supersede" as const,
+          target_id: targetId,
+          to_record: { ...record, supersedes: [targetId] },
+          reason,
+          rationale: `Supersede ${targetId} with ${candidate.id}.`,
+          risk: "high" as const,
+          default_selected: false,
+        };
+      }
+
+      const vaultHint = (() => {
+        const vaultPath = options.vaultPath ?? process.env.PI_VAULT_PATH;
+        if (!vaultPath) return "";
+        const suggestions = suggestVaultRefs(candidateTags(candidate), vaultPath);
+        return suggestions.length > 0 ? ` Possible vault_ref: ${suggestions.map((s) => `[[${s}]]`).join(", ")}.` : "";
+      })();
+
+      const isGlobalPreference = scopeTarget?.type === "global" && candidate.capture_intent === "user_preference";
+      const autoApplyEligible = !isGlobalPreference && isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
+      const trustGateNote = autoApplyEligible ? "" : " Trust/match gate requires human review before auto-apply.";
+      const matchNote = candidate.match_kind && candidate.match_kind !== "new"
+        ? ` Match: ${candidate.match_kind}; matched memories: ${(candidate.matched_memory_ids ?? []).join(", ") || "none"}; reasons: ${(candidate.match_reasons ?? []).join("; ") || "none"}. Suggested path: ${candidate.match_kind === "potential_conflict" ? "contest or add_exception" : candidate.match_kind === "supersedes_existing" ? "supersede after review" : candidate.match_kind === "ambiguous" ? "manual merge/review" : "review/update"}.`
+        : "";
+
       return {
         ...base,
-        op: "supersede" as const,
-        target_id: targetId,
-        to_record: { ...record, supersedes: [targetId] },
-        reason,
-        rationale: `Supersede ${targetId} with ${candidate.id}.`,
-        risk: "high" as const,
-        default_selected: false,
+        op: "add" as const,
+        target: "memory/L2.playbooks.jsonl",
+        record,
+        rationale: `Candidate ${candidate.id} meets L2 threshold (${candidate.evidence_refs.length} evidence refs, confidence ${candidate.confidence ?? 0}).${vaultHint}${matchNote}${trustGateNote}`,
+        risk: candidate.poisoning_risk === "high" ? "high" as const : "low" as const,
+        default_selected: autoApplyEligible,
       };
-    }
-
-    // Build vault_ref hint from configured vault path
-    const vaultHint = (() => {
-      const vaultPath = options.vaultPath ?? process.env.PI_VAULT_PATH;
-      if (!vaultPath) return "";
-      const suggestions = suggestVaultRefs(candidateTags(candidate), vaultPath);
-      return suggestions.length > 0 ? ` Possible vault_ref: ${suggestions.map((s) => `[[${s}]]`).join(", ")}.` : "";
-    })();
-
-    const isGlobalPreference = scopeTarget?.type === "global" && candidate.capture_intent === "user_preference";
-    const autoApplyEligible = !isGlobalPreference && isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
-    const trustGateNote = autoApplyEligible ? "" : " Trust/match gate requires human review before auto-apply.";
-    const matchNote = candidate.match_kind && candidate.match_kind !== "new"
-      ? ` Match: ${candidate.match_kind}; matched memories: ${(candidate.matched_memory_ids ?? []).join(", ") || "none"}; reasons: ${(candidate.match_reasons ?? []).join("; ") || "none"}. Suggested path: ${candidate.match_kind === "potential_conflict" ? "contest or add_exception" : candidate.match_kind === "supersedes_existing" ? "supersede after review" : candidate.match_kind === "ambiguous" ? "manual merge/review" : "review/update"}.`
-      : "";
-
-    return {
-      ...base,
-      op: "add" as const,
-      target: "memory/L2.playbooks.jsonl",
-      record,
-      rationale: `Candidate ${candidate.id} meets L2 threshold (${candidate.evidence_refs.length} evidence refs, confidence ${candidate.confidence ?? 0}).${vaultHint}${matchNote}${trustGateNote}`,
-      risk: candidate.poisoning_risk === "high" ? "high" as const : "low" as const,
-      default_selected: autoApplyEligible,
-    };
     });
   });
 

@@ -46,6 +46,26 @@ describe("capture intent", () => {
   });
 
   for (const text of [
+    "Proceed with the formal v0.17.0 release closure. Do not begin v0.18 work during this task.",
+    "GaragePro Task 0 BaseModal hardening handoff. This slice is only Task 0. Do not begin Task 7.",
+    "Continue the two approved bounded PI fixes. This is implementation and verification work only. Do not merge, release or publish.",
+    "Verify the RED stage for issue #20. Do not edit production code. Do not implement the fix. Do not tag or publish.",
+    "Do not rerun the PI curation audit. Do not invoke PI. Use only the already-created audit artifacts.",
+  ]) {
+    test(`routes task-bound operational instruction to daily-only: ${text.slice(0, 38)}`, () => {
+      const result = classifyCaptureIntent(text);
+      expect(result.intent).toBe("temporary_instruction");
+      expect(result.durability).toBe("task");
+    });
+  }
+
+  test("preserves explicit durable release boundaries", () => {
+    const result = classifyCaptureIntent("Going forward, do not merge, release, or publish unless I explicitly authorize it.");
+    expect(result.intent).toBe("behavior_correction");
+    expect(result.durability).toBe("project");
+  });
+
+  for (const text of [
     "The article says: Avoid em dashes entirely.",
     "The repository documentation recommends that users prefer Bun over npm.",
     "Task: You are a delegated subagent. Never edit files outside this task.",

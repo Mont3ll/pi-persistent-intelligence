@@ -5,6 +5,7 @@ import { ensureMemoryDirs, resolveRoot } from "./paths";
 import { appendDailyLog, todayString } from "./daily";
 import { listCandidates } from "./inbox";
 import { curateInbox } from "./curator";
+import { selectInboxBatchApplyOpIds } from "./curation-selection";
 import { applyPatch } from "./patch";
 import { buildRetrievalContext, syncFtsIndex } from "./retriever";
 import { setupQmd, updateQmd, runQmd, qmdCollectionName } from "./qmd";
@@ -292,15 +293,10 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
             );
 
             if (action === "approve") {
-              // Apply ops for candidates meeting confidence threshold.
-              // Intentionally does not filter on default_selected -- pressing 'a' is an
-              // explicit user approval for all eligible ops, including review_only classified
-              // ones that would otherwise stay in inbox indefinitely.
+              // Apply only curator-approved operations that meet the confidence threshold.
+              // Review-only and high-risk candidates remain pending for explicit Review.
               const patch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
-              const eligibleIds = patch.ops
-                .filter((op) => op.risk !== "high" &&
-                  (op.record?.confidence ?? op.to_record?.confidence ?? 0) >= threshold)
-                .map((op) => op.op_id);
+              const eligibleIds = selectInboxBatchApplyOpIds(patch, threshold);
               if (eligibleIds.length > 0) {
                 const applied = applyPatch(state.root, patch, { selectedOpIds: eligibleIds, now: dependencies.nowIso() });
                 await updateQmd();

@@ -48,6 +48,8 @@ const APPLICABILITY_TAGS = new Set([
   "release",
   "testing",
   "implementation",
+  "verification",
+  "verifier",
 ]);
 
 const STOPWORDS = new Set([

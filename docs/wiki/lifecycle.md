@@ -120,12 +120,12 @@ After session-end consolidation, the tiered auto-curation step runs. Controlled 
 | `autoCurate` setting | Behavior |
 |---|---|
 | `"off"` | Nothing auto-applies; use `/curate-memory` for everything |
-| `"high-only"` (default) | Auto-apply ops where `confidence >= autoCurateHighThreshold` (default 0.85), `risk != high`, and not L1 or supersede |
+| `"high-only"` (default) | Auto-apply ops where `default_selected: true`, `confidence >= autoCurateHighThreshold` (default 0.85), `risk != high`, and not L1 or supersede |
 | `"all-eligible"` | Auto-apply all `default_selected: true`, `risk != high` ops |
 
 L1 candidates, supersede ops, delete ops, high poisoning risk candidates, and `rejected`/`review_required` candidates are never auto-applied.
 
-The inbox overlay (before the first agent turn of a new session) shows pending candidates. Pressing `a` applies all candidates above the confidence threshold that are not `risk: high`. This is an explicit user approval and bypasses the `default_selected` gate.
+The inbox overlay (before the first agent turn of a new session) shows pending candidates. Pressing `a` applies only candidates represented by `default_selected: true` operations that meet the confidence threshold and are not `risk: high`. Review-only, conflicting, ambiguous, and other held candidates stay in the inbox until explicitly handled through Review.
 
 ---
 

@@ -53,6 +53,20 @@ function decision(
   return { intent, confidence, durability, global_cues: globalCues, project_cues: projectCues, applicability: applicability(text), reasons };
 }
 
+function hasDurableIntentCue(text: string): boolean {
+  return /\b(going forward|from now on|across projects|my preference|i prefer|for (?:all )?my writing|when writing for me)\b/i.test(text)
+    || /\bthis (?:project|repository|repo|codebase)\b[^.]{0,80}\b(always|requires|uses|never)\b/i.test(text);
+}
+
+function hasTaskBoundOperationalCue(text: string): boolean {
+  return /\bduring this task\b/i.test(text)
+    || /\bthis (?:slice|stage|run|audit|exercise)\b[^.]{0,80}\b(?:only|limited|bounded)\b/i.test(text)
+    || /\bthis is (?:implementation|verification|implementation and verification) work only\b/i.test(text)
+    || /\b(?:red|green) stage\b[^.]{0,120}\b(?:issue|fix|verification)\b/i.test(text)
+    || /\bdo not rerun\b[^.]{0,160}\b(?:audit|verification|test|check)\b/i.test(text)
+    || /\buse only\b[^.]{0,160}\b(?:already-created|existing|provided)?\s*(?:audit )?(?:artifacts|logs|files|results)\b/i.test(text);
+}
+
 export function isSyntheticCaptureContext(rawText: string): boolean {
   return /^\s*<skill(?:\s|>)/i.test(rawText);
 }
@@ -76,6 +90,9 @@ export function classifyCaptureIntent(rawText: string): CaptureIntentDecision {
   }
   if (/\b(for this (?:response|task|session)|right now|for now|temporarily|only this time)\b/i.test(text)) {
     return decision("temporary_instruction", 0.95, "task", text, ["explicit_temporary_scope"]);
+  }
+  if (!hasDurableIntentCue(text) && hasTaskBoundOperationalCue(text)) {
+    return decision("temporary_instruction", 0.95, "task", text, ["task_bound_operational_scope"]);
   }
 
   const projectConvention = /\bthis (?:project|repository|repo|codebase)\s+(?:always\s+)?(?:uses|requires|runs|keeps|stores)\b/i.test(text);

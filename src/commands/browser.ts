@@ -1,5 +1,6 @@
 import { loadConfig } from "../config";
 import { curateInbox } from "../curator";
+import { selectInboxBatchApplyOpIds } from "../curation-selection";
 import { listCandidates } from "../inbox";
 import { buildApplyReceiptNotification } from "../lifecycle";
 import { applyPatch } from "../patch";
@@ -80,7 +81,7 @@ export function createBrowserCommands(dependencies: BrowserDependencies): Browse
           const action = result?.action as InboxOverlayAction | undefined;
           if (action === "approve") {
             const patch = curateInbox(root, { now: dependencies.nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
-            const eligibleIds = patch.ops.filter((operation) => operation.risk !== "high" && (operation.record?.confidence ?? operation.to_record?.confidence ?? 0) >= threshold).map((operation) => operation.op_id);
+            const eligibleIds = selectInboxBatchApplyOpIds(patch, threshold);
             if (eligibleIds.length > 0) {
               const applied = applyPatch(root, patch, { selectedOpIds: eligibleIds, now: dependencies.nowIso() });
               await updateQmd();

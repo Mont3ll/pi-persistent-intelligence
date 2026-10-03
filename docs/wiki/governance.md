@@ -107,9 +107,9 @@ Under `autoCurate: "off"`, nothing auto-applies. You manage curation entirely th
 
 ## The inbox overlay and explicit approval
 
-When the inbox overlay appears and you press `a`, you are explicitly approving candidates. In this mode, the `default_selected` gate does not apply. All candidates above the confidence threshold that are not `risk: high` are applied.
+When the inbox overlay appears and you press `a`, PI applies only operations that are already `default_selected: true`, are not `risk: high`, and meet the configured confidence threshold. Candidates classified `review_only`, `review_required`, ambiguous, conflicting, or otherwise ineligible remain in the inbox for explicit Review.
 
-This is an intentional distinction: background auto-curation (session end, no user present) is more conservative. Explicit user approval at the inbox overlay is less conservative because you are actively reviewing.
+The Apply action is therefore a batch acceptance of PI's already-safe selection, not a substitute for per-candidate review. Use Review when you want to explicitly approve an operation that PI deliberately held back.
 
 ---
 
