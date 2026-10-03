@@ -67,6 +67,12 @@ describe("capture intent", () => {
     expect(result.durability).toBe("project");
   });
 
+  test("preserves durable resume-using corrections", () => {
+    const result = classifyCaptureIntent("Resume using Bun for this project going forward.");
+    expect(result.intent).toBe("behavior_correction");
+    expect(result.durability).toBe("project");
+  });
+
   for (const text of [
     "The article says: Avoid em dashes entirely.",
     "The repository documentation recommends that users prefer Bun over npm.",
