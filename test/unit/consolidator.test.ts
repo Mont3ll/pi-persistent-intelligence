@@ -139,7 +139,7 @@ describe("applyConsolidation provenance", () => {
     expect(inbox[0].status).toBe("new");
     expect(inbox[0].source.type).toBe("conversation");
     expect(inbox[0].source.ref).toBe("consolidation:2026-05-12:user:0");
-    expect(inbox[0].evidence_refs).toEqual(inbox[0].evidence_ids);
+    expect(inbox[0].evidence_ids).toEqual(inbox[0].evidence_refs);
     expect(inbox[0].evidence_refs[0]).not.toStartWith("daily/");
     expect(inbox[0].primary_trust_class).toBe("agent_inference");
     expect(inbox[0].promotion_eligibility).toBe("review_only");
