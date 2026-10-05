@@ -5,6 +5,7 @@ import { inferProjectScope } from "./project";
 import { runConfiguredLlmAssist, type LlmAssistConfig } from "./llmAssist";
 import { suggestVaultRefs } from "./retriever";
 import { isAutoApplyEligibleCandidate } from "./trust";
+import { classifyCaptureIntent } from "./capture-intent";
 import { loadConfig } from "./config";
 import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
@@ -214,6 +215,19 @@ function eligibleCandidates(root: string, options: CurateOptions): CaptureCandid
   );
 }
 
+function currentPolicyAllowsAutoApply(candidate: CaptureCandidate): boolean {
+  // Legacy/manual candidates without capture-intent provenance retain the
+  // existing compatibility contract.
+  if (!candidate.capture_intent) return true;
+
+  // Capture-pipeline worth decisions are authoritative for auto-apply.
+  if (candidate.worth_decision && candidate.worth_decision !== "candidate") return false;
+
+  const current = classifyCaptureIntent(candidate.text);
+  if (current.intent === "temporary_instruction" || current.intent === "not_memory") return false;
+  return current.durability !== "temporary" && current.durability !== "task";
+}
+
 function buildPatch(root: string, options: CurateOptions, llmContradictions = new Map<string, LlmContradiction>()): MemoryPatch {
   const eligible = eligibleCandidates(root, options);
   const activeRecords = loadActiveRecords(root);
@@ -303,7 +317,9 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       })();
 
       const isGlobalPreference = scopeTarget?.type === "global" && candidate.capture_intent === "user_preference";
-      const autoApplyEligible = !isGlobalPreference && isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
+      const autoApplyEligible = !isGlobalPreference
+        && currentPolicyAllowsAutoApply(candidate)
+        && isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
       const trustGateNote = autoApplyEligible ? "" : " Trust/match gate requires human review before auto-apply.";
       const matchNote = candidate.match_kind && candidate.match_kind !== "new"
         ? ` Match: ${candidate.match_kind}; matched memories: ${(candidate.matched_memory_ids ?? []).join(", ") || "none"}; reasons: ${(candidate.match_reasons ?? []).join("; ") || "none"}. Suggested path: ${candidate.match_kind === "potential_conflict" ? "contest or add_exception" : candidate.match_kind === "supersedes_existing" ? "supersede after review" : candidate.match_kind === "ambiguous" ? "manual merge/review" : "review/update"}.`

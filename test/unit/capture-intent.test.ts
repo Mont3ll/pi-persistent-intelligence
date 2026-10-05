@@ -61,6 +61,36 @@ describe("capture intent", () => {
     });
   }
 
+  for (const text of [
+    "Verify the GREEN implementation for the fresh task-bound capture pollution defects. Do not modify source. Do not mutate the live PI store. Do not modify the divergent configured checkout. False-positive control: Going forward, do not merge, release, or publish unless I explicitly authorize it. Stop after the report.",
+    "Resume verification of the capture task-wrapper integrity fix at the new exact SHA. Do not modify source. Do not mutate the live PI store. Do not create a PR. Durable-control fixture: Going forward, do not merge, release, or publish unless I explicitly authorize it. Stop after the report.",
+  ]) {
+    test(`keeps verifier handoff task-bound when durable cues appear only in embedded fixtures: ${text.slice(0, 38)}`, () => {
+      const result = classifyCaptureIntent(text);
+      expect(result.intent).toBe("temporary_instruction");
+      expect(result.durability).toBe("task");
+    });
+  }
+
+  for (const text of [
+    "Verify the GREEN implementation for the task-bound capture fix. Do not modify source. Do not mutate the live PI store. Do not create a PR. False-positive controls: Going forward, do not merge without explicit authorization. Expected classification: behavior_correction/project. Stop after the report.",
+    "Resume verification at the exact SHA. Do not modify source. Do not mutate the live PI store. Do not modify the configured checkout. Also confirm the durable control still behaves correctly: Going forward, do not merge, release, or publish unless explicitly authorized. Expected classification: behavior_correction/project. Stop after the report.",
+  ]) {
+    test(`keeps historical verifier section shapes task-bound after task constraints: ${text.slice(0, 38)}`, () => {
+      const result = classifyCaptureIntent(text);
+      expect(result.intent).toBe("temporary_instruction");
+      expect(result.durability).toBe("task");
+    });
+  }
+
+  test("preserves top-level durable corrections inside verifier-shaped messages", () => {
+    const result = classifyCaptureIntent(
+      "Verify this repository test setup before continuing. Going forward, do not merge or publish without explicit authorization. Do not use npm for this project. Do not bypass the release checks.",
+    );
+    expect(result.intent).toBe("behavior_correction");
+    expect(result.durability).toBe("project");
+  });
+
   test("preserves explicit durable release boundaries", () => {
     const result = classifyCaptureIntent("Going forward, do not merge, release, or publish unless I explicitly authorize it.");
     expect(result.intent).toBe("behavior_correction");

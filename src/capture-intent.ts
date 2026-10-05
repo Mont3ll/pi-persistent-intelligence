@@ -58,6 +58,12 @@ function hasDurableIntentCue(text: string): boolean {
     || /\bthis (?:project|repository|repo|codebase)\b[^.]{0,80}\b(always|requires|uses|never)\b/i.test(text);
 }
 
+function hasTopLevelDurableIntentCue(text: string): boolean {
+  const firstTaskConstraint = text.search(/\b(?:do not|don't)\b/i);
+  if (firstTaskConstraint < 0) return hasDurableIntentCue(text);
+  return hasDurableIntentCue(text.slice(0, firstTaskConstraint));
+}
+
 function hasVerifierTaskWrapper(text: string): boolean {
   if (!/^(?:resume|verify)\b/i.test(text)) return false;
   const operationalContext = /\b(?:verification|worktree|head|sha|branch|source|live (?:pi )?store|checkout|pull request|\bpr\b|typecheck|test|eval|stress)\b/i.test(text);
@@ -98,6 +104,9 @@ export function classifyCaptureIntent(rawText: string): CaptureIntentDecision {
   }
   if (/\b(for this (?:response|task|session)|right now|for now|temporarily|only this time)\b/i.test(text)) {
     return decision("temporary_instruction", 0.95, "task", text, ["explicit_temporary_scope"]);
+  }
+  if (hasVerifierTaskWrapper(text) && !hasTopLevelDurableIntentCue(text)) {
+    return decision("temporary_instruction", 0.95, "task", text, ["task_bound_operational_scope"]);
   }
   if (!hasDurableIntentCue(text) && hasTaskBoundOperationalCue(text)) {
     return decision("temporary_instruction", 0.95, "task", text, ["task_bound_operational_scope"]);
