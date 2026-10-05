@@ -61,6 +61,17 @@ describe("capture intent", () => {
     });
   }
 
+  for (const text of [
+    "Verify the GREEN implementation for the fresh task-bound capture pollution defects. Do not modify source. Do not mutate the live PI store. Do not modify the divergent configured checkout. False-positive control: Going forward, do not merge, release, or publish unless I explicitly authorize it. Stop after the report.",
+    "Resume verification of the capture task-wrapper integrity fix at the new exact SHA. Do not modify source. Do not mutate the live PI store. Do not create a PR. Durable-control fixture: Going forward, do not merge, release, or publish unless I explicitly authorize it. Stop after the report.",
+  ]) {
+    test(`keeps verifier handoff task-bound when durable cues appear only in embedded fixtures: ${text.slice(0, 38)}`, () => {
+      const result = classifyCaptureIntent(text);
+      expect(result.intent).toBe("temporary_instruction");
+      expect(result.durability).toBe("task");
+    });
+  }
+
   test("preserves explicit durable release boundaries", () => {
     const result = classifyCaptureIntent("Going forward, do not merge, release, or publish unless I explicitly authorize it.");
     expect(result.intent).toBe("behavior_correction");
