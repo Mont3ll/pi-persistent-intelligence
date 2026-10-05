@@ -99,6 +99,9 @@ export function classifyCaptureIntent(rawText: string): CaptureIntentDecision {
   if (/\b(for this (?:response|task|session)|right now|for now|temporarily|only this time)\b/i.test(text)) {
     return decision("temporary_instruction", 0.95, "task", text, ["explicit_temporary_scope"]);
   }
+  if (hasVerifierTaskWrapper(text)) {
+    return decision("temporary_instruction", 0.95, "task", text, ["task_bound_operational_scope"]);
+  }
   if (!hasDurableIntentCue(text) && hasTaskBoundOperationalCue(text)) {
     return decision("temporary_instruction", 0.95, "task", text, ["task_bound_operational_scope"]);
   }
