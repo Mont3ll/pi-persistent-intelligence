@@ -72,6 +72,14 @@ describe("capture intent", () => {
     });
   }
 
+  test("preserves top-level durable corrections inside verifier-shaped messages", () => {
+    const result = classifyCaptureIntent(
+      "Verify this repository setup before continuing. Going forward, do not merge or publish without explicit authorization. Do not use npm for this project. Do not bypass the release checks.",
+    );
+    expect(result.intent).toBe("behavior_correction");
+    expect(result.durability).toBe("project");
+  });
+
   test("preserves explicit durable release boundaries", () => {
     const result = classifyCaptureIntent("Going forward, do not merge, release, or publish unless I explicitly authorize it.");
     expect(result.intent).toBe("behavior_correction");
