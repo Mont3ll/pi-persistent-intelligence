@@ -7,6 +7,7 @@ import { appendCandidate } from "../../src/inbox";
 import { appendEvidenceRecord } from "../../src/evidence";
 import { curateInbox } from "../../src/curator";
 import { selectInboxBatchApplyOpIds } from "../../src/curation-selection";
+import type { MemoryWorthDecision } from "../../src/types";
 
 const dirs: string[] = [];
 
@@ -22,7 +23,12 @@ afterEach(() => {
   dirs.length = 0;
 });
 
-function appendPersistedCaptureCandidate(rootDir: string, id: string, text: string): void {
+function appendPersistedCaptureCandidate(
+  rootDir: string,
+  id: string,
+  text: string,
+  worthDecision: MemoryWorthDecision = "candidate",
+): void {
   const evidenceId = `ev_${id}`;
   appendEvidenceRecord(rootDir, {
     id: evidenceId,
@@ -52,6 +58,7 @@ function appendPersistedCaptureCandidate(rootDir: string, id: string, text: stri
     status: "new",
     ruleType: "correction",
     memory_kind: "instruction",
+    worth_decision: worthDecision,
     capture_intent: "behavior_correction",
     primary_trust_class: "user_correction",
     source_trust_weight: 1,
@@ -81,6 +88,28 @@ describe("curation current-policy revalidation", () => {
     expect(patch.ops).toHaveLength(1);
     expect(patch.ops[0].candidate_id).toBe("cap_stale_task");
     expect(patch.ops[0].op).toBe("add");
+    expect(patch.ops[0].default_selected).toBe(false);
+    expect(selectInboxBatchApplyOpIds(patch, 0.75)).toEqual([]);
+  });
+
+  test("does not auto-select a captured candidate already scored daily-only", () => {
+    const dir = root();
+    appendPersistedCaptureCandidate(
+      dir,
+      "cap_daily_only",
+      "Going forward, do not merge, release, or publish unless I explicitly authorize it.",
+      "daily_only",
+    );
+
+    const patch = curateInbox(dir, {
+      now: "2026-10-05T05:00:00Z",
+      mode: "auto",
+      minEvidenceCount: 1,
+      governanceMode: "compatibility",
+    });
+
+    expect(patch.ops).toHaveLength(1);
+    expect(patch.ops[0].candidate_id).toBe("cap_daily_only");
     expect(patch.ops[0].default_selected).toBe(false);
     expect(selectInboxBatchApplyOpIds(patch, 0.75)).toEqual([]);
   });
