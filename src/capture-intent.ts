@@ -115,8 +115,13 @@ export function classifyCaptureIntent(rawText: string): CaptureIntentDecision {
   const durableResumeCorrection = hasDurableIntentCue(text) && /\bresume\s+using\b/i.test(text);
   if (durableResumeCorrection) return decision("behavior_correction", 0.9, "project", text, ["explicit_behavior_correction"]);
 
-  const projectConvention = /\bthis (?:project|repository|repo|codebase)\s+(?:always\s+)?(?:uses|requires|runs|keeps|stores)\b/i.test(text);
-  if (projectConvention) return decision("project_convention", 0.92, "project", text, ["explicit_project_convention"]);
+  const declarativeProjectConvention = /\bthis (?:project|repository|repo|codebase)\s+(?:always\s+)?(?:uses|requires|runs|keeps|stores)\b/i.test(text);
+  const imperativeProjectConvention = /\bfor this (?:project|repository|repo|codebase)\s*,?\s*always\s+(?:use|keep|store|run|require)\b/i.test(text)
+    || (/\bfor this (?:project|repository|repo|codebase)\s*,?\s*(?:use|keep|store|run|require)\b/i.test(text)
+      && /\b(?:going forward|from now on)\b/i.test(text));
+  if (declarativeProjectConvention || imperativeProjectConvention) {
+    return decision("project_convention", 0.92, "project", text, ["explicit_project_convention"]);
+  }
 
   const workflow = /\b(before|after|when)\s+(?:publishing|releasing|committing|pushing|deploying|testing)\b[^.]*\b(run|use|check|verify|write|update|build)\b/i.test(text)
     || /\b(?:always|never)\s+(?:run|check|verify|build|test)\b/i.test(text);
