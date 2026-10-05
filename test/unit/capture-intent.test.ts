@@ -74,7 +74,7 @@ describe("capture intent", () => {
 
   test("preserves top-level durable corrections inside verifier-shaped messages", () => {
     const result = classifyCaptureIntent(
-      "Verify this repository setup before continuing. Going forward, do not merge or publish without explicit authorization. Do not use npm for this project. Do not bypass the release checks.",
+      "Verify this repository test setup before continuing. Going forward, do not merge or publish without explicit authorization. Do not use npm for this project. Do not bypass the release checks.",
     );
     expect(result.intent).toBe("behavior_correction");
     expect(result.durability).toBe("project");
