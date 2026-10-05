@@ -58,24 +58,10 @@ function hasDurableIntentCue(text: string): boolean {
     || /\bthis (?:project|repository|repo|codebase)\b[^.]{0,80}\b(always|requires|uses|never)\b/i.test(text);
 }
 
-function durableCueIsFixtureScoped(text: string, cueIndex: number): boolean {
-  const prefix = text.slice(Math.max(0, cueIndex - 180), cueIndex);
-  const clauseStart = Math.max(prefix.lastIndexOf("."), prefix.lastIndexOf(";"), prefix.lastIndexOf("\n"));
-  const clause = prefix.slice(clauseStart + 1);
-  return /\b(?:false[- ]positive(?:\s+(?:control|fixture|example))?|durable[- ]control(?:\s+(?:fixture|example))?|durable\s+(?:test\s+)?fixture|test\s+(?:control|fixture|example)|control\s+fixture|example)\s*:\s*["'`]?\s*$/i.test(clause);
-}
-
 function hasTopLevelDurableIntentCue(text: string): boolean {
-  const simpleCue = /\b(?:going forward|from now on|across projects|my preference|i prefer|for (?:all )?my writing|when writing for me)\b/gi;
-  for (const match of text.matchAll(simpleCue)) {
-    if (!durableCueIsFixtureScoped(text, match.index ?? 0)) return true;
-  }
-
-  const projectCue = /\bthis (?:project|repository|repo|codebase)\b[^.]{0,80}\b(?:always|requires|uses|never)\b/gi;
-  for (const match of text.matchAll(projectCue)) {
-    if (!durableCueIsFixtureScoped(text, match.index ?? 0)) return true;
-  }
-  return false;
+  const firstTaskConstraint = text.search(/\b(?:do not|don't)\b/i);
+  if (firstTaskConstraint < 0) return hasDurableIntentCue(text);
+  return hasDurableIntentCue(text.slice(0, firstTaskConstraint));
 }
 
 function hasVerifierTaskWrapper(text: string): boolean {
