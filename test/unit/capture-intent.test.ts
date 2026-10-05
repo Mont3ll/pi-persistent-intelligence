@@ -72,6 +72,17 @@ describe("capture intent", () => {
     });
   }
 
+  for (const text of [
+    "Verify the GREEN implementation for the task-bound capture fix. Do not modify source. Do not mutate the live PI store. Do not create a PR. False-positive controls: Going forward, do not merge without explicit authorization. Expected classification: behavior_correction/project. Stop after the report.",
+    "Resume verification at the exact SHA. Do not modify source. Do not mutate the live PI store. Do not modify the configured checkout. Also confirm the durable control still behaves correctly: Going forward, do not merge, release, or publish unless explicitly authorized. Expected classification: behavior_correction/project. Stop after the report.",
+  ]) {
+    test(`keeps historical verifier section shapes task-bound after task constraints: ${text.slice(0, 38)}`, () => {
+      const result = classifyCaptureIntent(text);
+      expect(result.intent).toBe("temporary_instruction");
+      expect(result.durability).toBe("task");
+    });
+  }
+
   test("preserves top-level durable corrections inside verifier-shaped messages", () => {
     const result = classifyCaptureIntent(
       "Verify this repository test setup before continuing. Going forward, do not merge or publish without explicit authorization. Do not use npm for this project. Do not bypass the release checks.",
