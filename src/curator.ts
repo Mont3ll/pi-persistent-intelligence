@@ -216,8 +216,13 @@ function eligibleCandidates(root: string, options: CurateOptions): CaptureCandid
 }
 
 function currentPolicyAllowsAutoApply(candidate: CaptureCandidate): boolean {
-  if (candidate.worth_decision && candidate.worth_decision !== "candidate") return false;
+  // Legacy/manual candidates without capture-intent provenance retain the
+  // existing compatibility contract.
   if (!candidate.capture_intent) return true;
+
+  // Capture-pipeline worth decisions are authoritative for auto-apply.
+  if (candidate.worth_decision && candidate.worth_decision !== "candidate") return false;
+
   const current = classifyCaptureIntent(candidate.text);
   if (current.intent === "temporary_instruction" || current.intent === "not_memory") return false;
   return current.durability !== "temporary" && current.durability !== "task";
