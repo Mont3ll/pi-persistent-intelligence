@@ -76,9 +76,9 @@
     "release-audit": "bun run verify:pr && bun run test:stress && npm pack --dry-run",
     "prepublishOnly": "bun run verify:pr"
   },
-  "dependencies": {
-    "@earendil-works/pi-tui": "^0.74.0",
-    "@sinclair/typebox": "latest"
+  "peerDependencies": {
+    "@earendil-works/pi-tui": "*",
+    "@sinclair/typebox": "*"
   },
   "devDependencies": {
     "@types/bun": "^1.3.13",
