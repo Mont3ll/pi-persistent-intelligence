@@ -137,7 +137,7 @@ describe("memory key utilities", () => {
 
   test("generates a v2 runtime key for legacy records without normalized_key", () => {
     const legacy = record({ normalized_key: undefined, profile_id: undefined });
-    expect(getRecordMemoryKey(legacy)).toBe("v2|legacy|project|pi-persistent-intelligence|memory|workflow");
+    expect(getRecordMemoryKey(legacy)).toBe("v2|legacy|project|pi-persistent-intelligence|memory-canonical-jsonl-structured-data|workflow");
   });
 
   test("uses explicit normalized_key when present", () => {
