@@ -123,7 +123,13 @@ export function inferLegacyMemoryTopic(input: { tags?: string[]; statement: stri
 
 export function inferMemoryTopic(input: { tags?: string[]; statement: string }): string {
   const tag = (input.tags ?? []).find((item) => !isExcludedTopicTag(item));
-  return normalizeMemoryKeyInput(tag ?? topicFromStatement(input.statement));
+  const statementTopic = topicFromStatement(input.statement);
+  if (!tag) return normalizeMemoryKeyInput(statementTopic);
+
+  const tagTopic = normalizeMemoryKeyInput(tag);
+  if (tagTopic.includes("-") || statementTopic === "general") return tagTopic;
+  if (statementTopic === tagTopic || statementTopic.startsWith(`${tagTopic}-`)) return statementTopic;
+  return normalizeMemoryKeyInput(`${tagTopic}-${statementTopic}`);
 }
 
 function scopeParts(scope: MemoryRecord["scope"] | undefined): { scope_level: string; scope_ref: string } {
@@ -164,9 +170,15 @@ function structuralV1Topic(key: string): string | null {
   return parts.length === 5 ? parts[3] : null;
 }
 
-export function isStructuralMemoryKey(key: string): boolean {
+function structuralMemoryTopic(key: string): { version: "v1" | "v2"; topic: string } | null {
   const parts = key.split("|");
-  return parts.length === 5 || (parts.length === 6 && parts[0] === "v2");
+  if (parts.length === 5) return { version: "v1", topic: parts[3] };
+  if (parts.length === 6 && parts[0] === "v2") return { version: "v2", topic: parts[4] };
+  return null;
+}
+
+export function isStructuralMemoryKey(key: string): boolean {
+  return structuralMemoryTopic(key) !== null;
 }
 
 export function isExcludedLegacyMemoryKey(key: string): boolean {
@@ -176,12 +188,11 @@ export function isExcludedLegacyMemoryKey(key: string): boolean {
 
 export function getRecordMemoryKeys(record: MemoryRecord): NormalizedMemoryKey[] {
   if (!record.normalized_key) return [getDerivedRecordMemoryKeyV2(record)];
-  const topic = structuralV1Topic(record.normalized_key);
-  if (topic === null) return [record.normalized_key];
+  const structural = structuralMemoryTopic(record.normalized_key);
+  if (structural === null) return [record.normalized_key];
   const derived = getDerivedRecordMemoryKeyV2(record);
-  return isExcludedTopicTag(topic)
-    ? [derived]
-    : [...new Set([record.normalized_key, derived])];
+  if (structural.version === "v1" && isExcludedTopicTag(structural.topic)) return [derived];
+  return [...new Set([record.normalized_key, derived])];
 }
 
 export function memoryIdFromCandidateId(candidateId: string): string {
@@ -218,10 +229,9 @@ export function getCandidateMemoryKey(candidate: CaptureCandidate, fallbackScope
 
 export function getCandidateMemoryKeys(candidate: CaptureCandidate, fallbackScope?: MemoryRecord["scope"]): NormalizedMemoryKey[] {
   if (!candidate.normalized_key) return [getDerivedCandidateMemoryKeyV2(candidate, fallbackScope)];
-  const topic = structuralV1Topic(candidate.normalized_key);
-  if (topic === null) return [candidate.normalized_key];
+  const structural = structuralMemoryTopic(candidate.normalized_key);
+  if (structural === null) return [candidate.normalized_key];
   const derived = getDerivedCandidateMemoryKeyV2(candidate, fallbackScope);
-  return isExcludedTopicTag(topic)
-    ? [derived]
-    : [...new Set([candidate.normalized_key, derived])];
+  if (structural.version === "v1" && isExcludedTopicTag(structural.topic)) return [derived];
+  return [...new Set([candidate.normalized_key, derived])];
 }
