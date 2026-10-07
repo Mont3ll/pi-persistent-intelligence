@@ -65,7 +65,7 @@ function hasTopLevelDurableIntentCue(text: string): boolean {
 }
 
 function hasVerifierTaskWrapper(text: string): boolean {
-  const prefix = text.match(/^(resume|verify|complete)\b/i)?.[1]?.toLowerCase();
+  const prefix = text.match(/^(resume|verify|reverify|complete)\b/i)?.[1]?.toLowerCase();
   if (!prefix) return false;
 
   const taskConstraints = text.match(/\b(?:do not|don't)\b/gi)?.length ?? 0;
