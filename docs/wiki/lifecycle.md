@@ -77,7 +77,7 @@ Project-scoped imperative guidance is durable when the language itself makes tha
 
 ### Session-end LLM extraction
 
-When a session closes with enough messages, a lightweight LLM call extracts durable patterns from user-authored conversation messages. Assistant-authored orchestration, verifier instructions, and generated workflow text cannot independently establish a durable user preference or project rule. These candidates are classified as `agent_inference` with `promotion_eligibility: "review_only"`. They are deduplicated against existing inbox and active records before entering the pipeline.
+When a session closes with enough messages, a lightweight LLM call extracts durable patterns from user-authored conversation messages. Assistant-authored orchestration and generated workflow text are not included as source material and cannot independently establish a durable user preference or project rule. Each extracted candidate must point to an exact supporting quote from the numbered user messages or it is rejected for missing verifiable provenance. These candidates are classified as `agent_inference` with `promotion_eligibility: "review_only"`. They are deduplicated against existing inbox and active records before entering the pipeline.
 
 ### Context-compaction consolidation
 
