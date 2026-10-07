@@ -91,6 +91,10 @@ describe("governed retrieval planner", () => {
     }
   });
 
+  test("fails closed on empty retrieval queries", () => {
+    expect(() => planRetrieval("   ")).toThrow("retrieval query must not be empty");
+  });
+
   test("is deterministic and normalizes surrounding query whitespace", () => {
     const first = planRetrieval("  Audit history for the release policy.  ");
     const second = planRetrieval("  Audit history for the release policy.  ");
