@@ -73,13 +73,15 @@ Detected patterns include:
 
 The key distinction: temporal phrases like "before the meeting" or "before lunch" are not treated as corrections. Durable-intent prefixes ("going forward", "from now on") trigger detection.
 
+Project-scoped imperative guidance is durable when the language itself makes that intent clear. For example, `For this project, always use YAML for fixture manifests` and `For this project, use TOML for fixture manifests going forward` are project conventions. The shorter `For this project, use TOML for fixture manifests` does not become durable solely because it mentions a project. Task-scoped forms such as `For this task, always use YAML` remain temporary even when they contain words like `always`.
+
 ### Session-end LLM extraction
 
-When a session closes with enough messages, a lightweight LLM call extracts durable patterns from the conversation. These candidates are classified as `agent_inference` with `promotion_eligibility: "review_only"`. They are deduplicated against existing inbox and active records before entering the pipeline.
+When a session closes with enough messages, a lightweight LLM call extracts durable patterns from user-authored conversation messages. Assistant-authored orchestration, verifier instructions, and generated workflow text cannot independently establish a durable user preference or project rule. These candidates are classified as `agent_inference` with `promotion_eligibility: "review_only"`. They are deduplicated against existing inbox and active records before entering the pipeline.
 
 ### Context-compaction consolidation
 
-`runContextCompactionConsolidation()` can create evidence records and verified candidates before context is lost. This does not mutate L1 or L2 memory directly. It only adds to the inbox for review.
+`runContextCompactionConsolidation()` can create evidence records and verified candidates before context is lost. Consolidation evidence is tied back to the user-authored source messages that support the candidate. Unresolved legacy references do not silently become structured support. This does not mutate L1 or L2 memory directly. It only adds to the inbox for review.
 
 ---
 
@@ -124,6 +126,10 @@ After session-end consolidation, the tiered auto-curation step runs. Controlled 
 | `"all-eligible"` | Auto-apply all `default_selected: true`, `risk != high` ops |
 
 L1 candidates, supersede ops, delete ops, high poisoning risk candidates, and `rejected`/`review_required` candidates are never auto-applied.
+
+Before a capture-derived candidate is default-selected for auto-apply, PI reclassifies its text with the current capture policy. If a stale inbox item now resolves to `temporary_instruction`, `not_memory`, `temporary`, or `task`, it is held from auto-apply. Legacy or manual candidates without capture-intent provenance retain the compatibility behavior they were created under. This check prevents old inbox state from bypassing newer capture safeguards while keeping explicit human review available.
+
+Apply receipts report the operations that actually applied and the reviewed operations that were skipped. Candidate state changes follow the result of the governed apply, not the user's attempted action.
 
 The inbox overlay (before the first agent turn of a new session) shows pending candidates. Pressing `a` applies only candidates represented by `default_selected: true` operations that meet the confidence threshold and are not `risk: high`. Review-only, conflicting, ambiguous, and other held candidates stay in the inbox until explicitly handled through Review.
 
