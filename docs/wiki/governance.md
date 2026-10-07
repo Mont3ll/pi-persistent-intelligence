@@ -98,6 +98,7 @@ Under `autoCurate: "high-only"` (default), the following can auto-apply at sessi
   - `risk != "high"`
   - `confidence >= autoCurateHighThreshold` (default: 0.85)
   - Governance mode allows it (compatibility: legacy candidates also eligible; strict: trust metadata, verified status, and evidence IDs are required)
+  - For capture-derived candidates, the current capture policy still classifies the text as durable rather than temporary, task-bound, or non-memory
 
 Under `autoCurate: "all-eligible"`, all `default_selected: true` non-high-risk operations apply.
 
@@ -107,7 +108,7 @@ Under `autoCurate: "off"`, nothing auto-applies. You manage curation entirely th
 
 ## The inbox overlay and explicit approval
 
-When the inbox overlay appears and you press `a`, PI applies only operations that are already `default_selected: true`, are not `risk: high`, and meet the configured confidence threshold. Candidates classified `review_only`, `review_required`, ambiguous, conflicting, or otherwise ineligible remain in the inbox for explicit Review.
+When the inbox overlay appears and you press `a`, PI applies only operations that are already `default_selected: true`, are not `risk: high`, meet the configured confidence threshold, and still pass current capture-policy revalidation when they came through the capture pipeline. Candidates classified `review_only`, `review_required`, temporary, task-bound, ambiguous, conflicting, or otherwise ineligible remain in the inbox for explicit Review.
 
 The Apply action is therefore a batch acceptance of PI's already-safe selection, not a substitute for per-candidate review. Use Review when you want to explicitly approve an operation that PI deliberately held back.
 
