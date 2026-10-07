@@ -91,6 +91,14 @@ describe("capture intent", () => {
     expect(result.durability).toBe("task");
   });
 
+  test("preserves top-level durable correction in a reverify handoff", () => {
+    const result = classifyCaptureIntent(
+      "Reverify the release checks. Going forward, do not publish without explicit authorization. Do not bypass the release audit.",
+    );
+    expect(result.intent).toBe("behavior_correction");
+    expect(result.durability).toBe("project");
+  });
+
   test("keeps complete-release handoffs task-bound", () => {
     const result = classifyCaptureIntent(
       "Complete the final verification and release of pi-persistent-intelligence v0.17.3 from the post-documentation merged main commit. This supersedes all earlier v0.17.3 publication prompts. The release must be based only on the exact commit below. Do not mutate the live PI canonical store. Stop immediately on any failed invariant.",
