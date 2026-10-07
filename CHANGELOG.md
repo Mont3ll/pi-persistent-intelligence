@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-10-07
+
+### Fixed
+
+- Hardened durable capture so explicit project-scoped imperative conventions such as “always use” and “going forward” are retained without weakening task/session wrapper rejection.
+- Prevented task-bound verifier, operational, and long-message fixture content from becoming durable memory, and revalidated stale inbox candidates against current capture policy before curation.
+- Corrected consolidation provenance so derived candidates preserve verifiable supporting evidence instead of relying on unverifiable legacy references.
+- Made normalized memory identity statement-sensitive for broad single-token tags, preserving exact-duplicate identity while eliminating false key collisions between distinct propositions and retaining structural-v2 compatibility during migration.
+- Tightened interactive apply reporting and candidate lifecycle handling so receipts reflect actual applied/skipped operations and terminal candidates cannot be silently recaptured.
+
+### Changed
+
+- Declared Pi host runtime packages as wildcard peer dependencies so packaged extensions reuse host-provided runtime modules instead of bundling duplicate copies.
+- Preserved multi-token semantic topics while combining broad category tags with statement-derived proposition identity for newly derived v2 memory keys.
+
+### Governance and safety
+
+- Supervised and startup curation now revalidate candidates under current policy before durable mutation.
+- Stored structural-v2 keys can coexist with current derived keys during migration, allowing safe governed rekeying without bypassing historical compatibility.
+- Product acceptance now covers durable project instructions, task-wrapper exclusion, governed add/delete/rejection lifecycles, stale-writer rejection, crash recovery, restart persistence, session search, and normalized-key collision health.
+
 ## [0.17.2] - 2026-10-02
 
 ### Fixed
