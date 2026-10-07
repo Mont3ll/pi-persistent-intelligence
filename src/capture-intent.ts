@@ -65,9 +65,18 @@ function hasTopLevelDurableIntentCue(text: string): boolean {
 }
 
 function hasVerifierTaskWrapper(text: string): boolean {
-  if (!/^(?:resume|verify)\b/i.test(text)) return false;
-  const operationalContext = /\b(?:verification|worktree|head|sha|branch|source|live (?:pi )?store|checkout|pull request|\bpr\b|typecheck|test|eval|stress)\b/i.test(text);
+  const prefix = text.match(/^(resume|verify|complete)\b/i)?.[1]?.toLowerCase();
+  if (!prefix) return false;
+
   const taskConstraints = text.match(/\b(?:do not|don't)\b/gi)?.length ?? 0;
+
+  if (prefix === "complete") {
+    const releaseCompletionContext = /\b(?:verification|release|publish|publication|tag|registry|live (?:pi )?store|checkout)\b/i.test(text);
+    const stopConstraint = /\b(?:do not|don't|stop immediately|stop after)\b/i.test(text);
+    return releaseCompletionContext && stopConstraint;
+  }
+
+  const operationalContext = /\b(?:verification|worktree|head|sha|branch|source|live (?:pi )?store|checkout|pull request|\bpr\b|typecheck|test|eval|stress)\b/i.test(text);
   return operationalContext && taskConstraints >= 2;
 }
 

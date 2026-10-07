@@ -108,6 +108,25 @@ describe("capture coordinator", () => {
     expect(readEvidenceRecords(dir)).toHaveLength(0);
   });
 
+  test("routes complete-release handoffs to daily-only without candidate or evidence persistence", () => {
+    const dir = root();
+    const result = processCaptureTurn(dir, {
+      session_id: "release-session",
+      turn_id: "release-turn",
+      message: "Complete the final verification and release of pi-persistent-intelligence v0.17.3 from the post-documentation merged main commit. This supersedes all earlier v0.17.3 publication prompts. The release must be based only on the exact commit below. Do not mutate the live PI canonical store. Stop immediately on any failed invariant.",
+      launch_cwd: "/projects/pi-persistent-intelligence",
+      actions: [],
+      resolver,
+      now: "2026-10-07T08:00:00Z",
+    });
+    expect(result.daily_only).toBe(1);
+    expect(result.candidates_created).toBe(0);
+    expect(result.candidates_reinforced).toBe(0);
+    expect(listCandidates(dir)).toHaveLength(0);
+    expect(readEvidenceRecords(dir)).toHaveLength(0);
+    expect(listCaptureEvents(dir).at(-1)?.reason).toBe("temporary_instruction");
+  });
+
   test("honors a daily-only memory-worth decision before evidence or candidate persistence", () => {
     const dir = root();
     const result = processCaptureTurn(dir, {

@@ -83,6 +83,22 @@ describe("capture intent", () => {
     });
   }
 
+  test("keeps complete-release handoffs task-bound", () => {
+    const result = classifyCaptureIntent(
+      "Complete the final verification and release of pi-persistent-intelligence v0.17.3 from the post-documentation merged main commit. This supersedes all earlier v0.17.3 publication prompts. The release must be based only on the exact commit below. Do not mutate the live PI canonical store. Stop immediately on any failed invariant.",
+    );
+    expect(result.intent).toBe("temporary_instruction");
+    expect(result.durability).toBe("task");
+  });
+
+  test("preserves top-level durable correction in a complete-release handoff", () => {
+    const result = classifyCaptureIntent(
+      "Complete the release verification. Going forward, do not publish without explicit authorization. Do not bypass the release audit.",
+    );
+    expect(result.intent).toBe("behavior_correction");
+    expect(result.durability).toBe("project");
+  });
+
   test("preserves top-level durable corrections inside verifier-shaped messages", () => {
     const result = classifyCaptureIntent(
       "Verify this repository test setup before continuing. Going forward, do not merge or publish without explicit authorization. Do not use npm for this project. Do not bypass the release checks.",
