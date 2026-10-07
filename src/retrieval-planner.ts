@@ -129,6 +129,7 @@ function requiresPolicyValidation(intent: RetrievalIntent): boolean {
 
 export function planRetrieval(query: string, options: RetrievalPlannerOptions = {}): RetrievalPlan {
   const normalizedQuery = query.trim();
+  if (!normalizedQuery) throw new Error("retrieval query must not be empty");
   const surface = options.surface ?? "explicit";
 
   const classified = surface === "injection"
