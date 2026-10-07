@@ -165,7 +165,7 @@ export interface PiGovernanceDoctorReport {
   checks: Array<{ name: string; ok: boolean; message: string }>;
 }
 
-const PRODUCER_VERSION = "0.17.3";
+const PRODUCER_VERSION = "0.17.4";
 
 function normalizeTimestamp(value?: string): string {
   if (!value) return new Date().toISOString();

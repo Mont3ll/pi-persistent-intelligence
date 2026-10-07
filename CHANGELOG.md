@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.4] - 2026-10-07
+
+### Fixed
+
+- Prevented task-bound release completion handoffs beginning with `Complete` from being misclassified as durable project behavior.
+- Prevented task-bound verifier handoffs beginning with `Reverify` from creating durable candidates or evidence while preserving the existing `Verify` and `Resume` behavior.
+- Preserved genuine top-level durable corrections inside verifier-shaped messages so the task-wrapper guard remains narrow rather than suppressing valid project policy.
+
+### Governance and safety
+
+- Added focused classifier and coordinator regression coverage for both task-bound wrappers and durable false-positive controls.
+- Rejected the two polluted v0.17.3 inbox candidates through the governed rejection path after exact-SHA verification, retained their supporting evidence for audit history, and left canonical L1/L2 memory unchanged.
+
 ## [0.17.3] - 2026-10-07
 
 ### Fixed

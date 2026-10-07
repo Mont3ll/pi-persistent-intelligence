@@ -1,6 +1,6 @@
 # pi-persistent-intelligence Wiki
 
-Welcome to the documentation wiki for `pi-persistent-intelligence` v0.17.3.
+Welcome to the documentation wiki for `pi-persistent-intelligence` v0.17.4.
 
 This wiki is the deeper operating manual for the package. The README covers installation and quick start. This wiki covers how the system works, why it is designed the way it is, and how to operate it effectively.
 
