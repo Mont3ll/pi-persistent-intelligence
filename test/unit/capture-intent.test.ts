@@ -83,6 +83,14 @@ describe("capture intent", () => {
     });
   }
 
+  test("keeps reverify handoffs task-bound", () => {
+    const result = classifyCaptureIntent(
+      "Reverify the corrected GREEN implementation for the release-handoff task-bound capture regression. Do not modify source. Do not modify tests. Do not modify the development checkout. Do not modify the pinned runtime. Do not mutate canonical L1/L2 memory. Stop after the report.",
+    );
+    expect(result.intent).toBe("temporary_instruction");
+    expect(result.durability).toBe("task");
+  });
+
   test("keeps complete-release handoffs task-bound", () => {
     const result = classifyCaptureIntent(
       "Complete the final verification and release of pi-persistent-intelligence v0.17.3 from the post-documentation merged main commit. This supersedes all earlier v0.17.3 publication prompts. The release must be based only on the exact commit below. Do not mutate the live PI canonical store. Stop immediately on any failed invariant.",
