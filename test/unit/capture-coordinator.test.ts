@@ -124,7 +124,7 @@ describe("capture coordinator", () => {
     expect(result.candidates_reinforced).toBe(0);
     expect(listCandidates(dir)).toHaveLength(0);
     expect(readEvidenceRecords(dir)).toHaveLength(0);
-    expect(listCaptureEvents(dir).at(-1)?.reason).toBe("task_bound_operational_scope");
+    expect(listCaptureEvents(dir).at(-1)?.reason).toBe("temporary_instruction");
   });
 
   test("honors a daily-only memory-worth decision before evidence or candidate persistence", () => {
