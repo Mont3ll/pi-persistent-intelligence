@@ -122,7 +122,11 @@ Verification outcomes:
 
 ## Candidate matching
 
-Before verification, each candidate is matched against existing active records using normalized memory keys. Match kinds:
+Before verification, each candidate is matched against existing active records using normalized memory keys. Current v2 keys encode profile, scope, proposition topic, and rule type. Broad single-token tags are category context, so PI refines them with a statement-derived topic when the statement is more specific. This prevents unrelated propositions from becoming ambiguous merely because both are tagged `git`, `tooling`, `payments`, or another broad category.
+
+Stored structural v2 keys remain usable during migration. When a stored structural key differs from the key the current derivation would produce, matching can consider both the persisted key and the current derived key. Legacy v1 keys with excluded structural topics use the current derived identity instead. This compatibility behavior is only for matching. Canonical key changes still require governed mutation.
+
+Match kinds:
 
 | Match kind | Meaning | Auto-apply? |
 |---|---|---|

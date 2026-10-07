@@ -57,7 +57,7 @@ Each L1 and L2 record contains:
   "id": "mem_20260520_abc",
   "layer": "L2",
   "profile_id": "project:my-project",
-  "scope": { "type": "global" },
+  "scope": { "type": "project", "project": "my-project" },
   "tags": ["tooling", "workflow"],
   "statement": "Use bun not npm for local development in this project.",
   "evidence": [
@@ -66,7 +66,7 @@ Each L1 and L2 record contains:
   "confidence": 0.92,
   "stability": "semi-stable",
   "status": "active",
-  "normalized_key": "project-my-project|global|global|tooling|prefer_pattern",
+  "normalized_key": "v2|project-my-project|project|my-project|tooling-bun-npm-local-development-project|prefer-pattern",
   "applies_when": [],
   "does_not_apply_when": ["publishing to npm registry"],
   "known_exceptions": ["CI publish step uses npm explicitly"],
@@ -86,11 +86,23 @@ Each L1 and L2 record contains:
 Key fields explained:
 
 - `profile_id`: which memory profile this record belongs to; cross-profile injection is blocked
-- `normalized_key`: deterministic key used for conflict detection and candidate matching
+- `normalized_key`: deterministic proposition identity used for conflict detection and candidate matching
 - `applies_when` / `does_not_apply_when` / `known_exceptions`: exception and negative scope fields; used by the processor pipeline to exclude records when the context matches
 - `stability`: `low`, `semi-stable`, or `stable`; affects decay rate and maintenance recommendations
 - `status`: `active`, `contested`, `deprecated`, `superseded`, or `deleted`
 - `memory_kind`: optional public taxonomy (`fact`, `event`, `instruction`, `task`); legacy records without it are inferred in reports
+
+### Normalized memory keys
+
+Current keys use this six-part v2 shape:
+
+```text
+v2|<profile>|<scope-level>|<scope-ref>|<topic>|<rule-type>
+```
+
+The topic identifies the proposition, not just its broad category. A single-token semantic tag such as `git`, `tooling`, or `payments` is combined with a statement-derived topic when the statement carries more specific meaning. This keeps two different propositions from collapsing into the same identity simply because they share a category tag. Stable multi-token semantic tags such as `memory-governance` keep their existing topic identity.
+
+Exact duplicate propositions still derive the same key. During migration, records and candidates with a stored structural v2 key expose both the stored key and the current derived key to matching. That compatibility path lets older persisted keys continue to match while a governed update moves canonical data to the current derivation. It does not grant authority and it does not rewrite canonical memory by itself.
 
 ---
 

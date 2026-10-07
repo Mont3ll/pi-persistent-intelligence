@@ -108,6 +108,8 @@ Scope follows intent and observed work, not the shell location. The launch direc
 
 Global preferences use positive, context-sensitive applicability. A writing preference can appear for editing or documentation work and stay out of unrelated debugging. This filtering keeps the existing 14 KB default context budget and the bounded hard-rule section unchanged.
 
+Project instructions also need clear durable intent. Forms such as `For this project, always use YAML` or `For this project, use YAML going forward` can become project-scoped candidates. Task-scoped instructions remain temporary even when they use words such as `always`. Before capture-derived candidates are default-selected for auto-apply, PI checks them again against the current capture policy so stale inbox state cannot bypass newer safeguards.
+
 Use `/memory-capture-quality` for aggregate capture health, `/memory-capture-audit` for report-only historical findings, and `/memory-capture-backfill` for fingerprinted candidate-only recovery. Backfill preview is the default and does not activate memories or apply cleanup proposals.
 
 ## Relationship to [pi-governance-rs](https://github.com/Mont3ll/pi-governance-rs)
@@ -209,7 +211,7 @@ The repository includes a fingerprint-gated harness for AMA-Bench, LongMemEval-V
 
 ## Development
 
-PI uses Bun `1.3.13`, pinned in `package.json` and the GitHub Actions workflows.
+PI uses Bun `1.3.13`, pinned in `package.json` and the GitHub Actions workflows. Host-provided Pi runtime packages are declared as wildcard peer dependencies so the extension reuses the host's runtime modules instead of installing private copies.
 
 ```bash
 bun install --frozen-lockfile

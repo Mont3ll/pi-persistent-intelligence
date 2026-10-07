@@ -24,9 +24,9 @@ To lower the threshold or always show the overlay:
 
 ## Pressing `a` in the inbox overlay does nothing
 
-**Cause:** All pending candidates have `confidence < 0.85` (below `autoCurateHighThreshold`), or all are `risk: high`.
+**Cause:** None of the pending operations are currently eligible for batch apply. Common reasons are low confidence, `risk: high`, `default_selected: false`, review-only verification, conflict or ambiguity, or current capture-policy revalidation holding a stale candidate as temporary, task-bound, or non-memory.
 
-Pressing `a` applies candidates above the confidence threshold that are not `risk: high`. If all candidates are below threshold, none are applied. The inbox stays populated.
+Pressing `a` applies only operations that are already safe and default-selected. It does not override a hold. If nothing qualifies, the inbox stays populated.
 
 **Fix:** Run the full review panel:
 
@@ -167,6 +167,14 @@ If the JSONL itself appears corrupted, check the patches directory for the last 
 
 ---
 
+## Health audit reports duplicate normalized keys
+
+A `duplicate_normalized_key` warning means more than one active record in the same profile has the same persisted proposition key. This can make candidate matching ambiguous even when search results still look correct.
+
+First inspect the affected records rather than deleting one by assumption. Exact duplicates, stale persisted keys, and genuine policy conflicts need different treatment. Current v2 derivation is statement-sensitive for broad category tags, but changing a stored key still requires a governed update. Historical records should be deprecated, superseded, or audit-preserving deleted only when the lifecycle reason is clear.
+
+---
+
 ## Evidence migration or inquiry stale-scan rejects apply
 
 **Cause:** The canonical inputs changed after preview, or the fingerprint was copied incorrectly.
@@ -177,7 +185,11 @@ If the JSONL itself appears corrupted, check the patches directory for the last 
 
 ## A correction was not added to the inbox
 
-Task, delegated-agent, and one-off implementation wrappers are intentionally excluded from durable correction capture. Temporary guidance may be written daily-only, and ambiguous high-impact guidance may become an inquiry. Use `/memory-inquiries list --status open` to inspect review questions; use `memory_write target=long_term` when durable capture is explicitly intended.
+Task, delegated-agent, verifier, and one-off implementation wrappers are intentionally excluded from durable correction capture. Temporary guidance may be written daily-only, and ambiguous high-impact guidance may become an inquiry.
+
+For project conventions, make the durable intent explicit. `For this project, always use YAML for fixture manifests` and `For this project, use YAML for fixture manifests going forward` are durable project instructions. `For this task, always use YAML` remains temporary, and `For this project, use YAML` by itself is not treated as durable merely because it names a project.
+
+Use `/memory-inquiries list --status open` to inspect review questions. Use `memory_write target=long_term` when you intentionally want to submit durable memory for review.
 
 ---
 
