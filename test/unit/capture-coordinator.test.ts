@@ -108,6 +108,25 @@ describe("capture coordinator", () => {
     expect(readEvidenceRecords(dir)).toHaveLength(0);
   });
 
+  test("routes reverify handoffs to daily-only without candidate or evidence persistence", () => {
+    const dir = root();
+    const result = processCaptureTurn(dir, {
+      session_id: "reverify-session",
+      turn_id: "reverify-turn",
+      message: "Reverify the corrected GREEN implementation for the release-handoff task-bound capture regression. Do not modify source. Do not modify tests. Do not modify the development checkout. Do not modify the pinned runtime. Do not mutate canonical L1/L2 memory. Stop after the report.",
+      launch_cwd: "/projects/pi-persistent-intelligence",
+      actions: [],
+      resolver,
+      now: "2026-10-07T09:10:23.637Z",
+    });
+    expect(result.daily_only).toBe(1);
+    expect(result.candidates_created).toBe(0);
+    expect(result.candidates_reinforced).toBe(0);
+    expect(listCandidates(dir)).toHaveLength(0);
+    expect(readEvidenceRecords(dir)).toHaveLength(0);
+    expect(listCaptureEvents(dir).at(-1)?.reason).toBe("temporary_instruction");
+  });
+
   test("routes complete-release handoffs to daily-only without candidate or evidence persistence", () => {
     const dir = root();
     const result = processCaptureTurn(dir, {
