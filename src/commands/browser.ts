@@ -107,6 +107,8 @@ export function createBrowserCommands(dependencies: BrowserDependencies): Browse
                   buildApplyReceiptNotification(applied, selectedIds),
                   applied.applied_ops.length > 0 ? "success" : "warning",
                 );
+              } else if (selectedIds?.length === 0) {
+                context.ui.notify("No operations selected; use Space to select before Enter.", "warning");
               }
             } else {
               const summary = summarizeInboxCuration(candidates, reviewPatch, config.curator.minConfidence, 1, threshold);
