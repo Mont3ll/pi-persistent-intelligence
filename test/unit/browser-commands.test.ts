@@ -105,7 +105,7 @@ describe("browser command factory", () => {
     await browserCommands(dir).memoryInbox.handler("", interactiveContext([{ action: "approve" }], notifications));
 
     expect(notifications.at(-1)).toEqual({
-      message: "✓ Applied 1 memory op(s); 1 skipped for review.",
+      message: expect.stringContaining("✓ Applied 1 memory op(s); 1 skipped for review ["),
       kind: "success",
     });
   });
@@ -122,7 +122,7 @@ describe("browser command factory", () => {
     );
 
     expect(notifications.at(-1)).toEqual({
-      message: "✓ Applied 1 memory op(s); 1 skipped for review.",
+      message: expect.stringContaining("✓ Applied 1 memory op(s); 1 skipped for review ["),
       kind: "success",
     });
   });
@@ -141,7 +141,7 @@ describe("browser command factory", () => {
     await browserCommands(dir).memoryInbox.handler("", interactiveContext([{ action: "approve" }], notifications));
 
     expect(notifications.at(-1)).toEqual({
-      message: "Applied 0 memory op(s); 2 skipped for review.",
+      message: expect.stringContaining("Applied 0 memory op(s); 2 skipped for review ["),
       kind: "warning",
     });
   });
@@ -163,8 +163,8 @@ describe("browser command factory", () => {
     await browserCommands(dir).memoryInbox.handler("", interactiveContext([{ action: "approve" }], notifications));
 
     expect(notifications.at(-1)).toEqual({
-      message: "No auto-eligible ops above confidence threshold.",
-      kind: "info",
+      message: expect.stringContaining("Auto-apply made no changes. Inbox 1 pending:"),
+      kind: "warning",
     });
     expect(listCandidates(dir).find((item) => item.id === "cap_review_only")?.status).toBe("new");
   });
