@@ -307,7 +307,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                   applied.applied_ops.length > 0 ? "success" : "warning",
                 );
               } else {
-                const summary = summarizeInboxCuration(pending, patch, 0.75, 1, threshold);
+                const summary = summarizeInboxCuration(pending, patch, cfg.curator.minConfidence, 1, threshold);
                 ctx.ui.notify(`Auto-apply made no changes. ${renderInboxCurationSummary(summary)}`, "warning");
               }
 
@@ -348,7 +348,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                       );
                     }
                   } else {
-                    const summary = summarizeInboxCuration(pending, reviewPatch, 0.75, 1, threshold);
+                    const summary = summarizeInboxCuration(pending, reviewPatch, cfg.curator.minConfidence, 1, threshold);
                     ctx.ui.notify(renderInboxCurationSummary(summary), "warning");
                   }
                 } catch {
