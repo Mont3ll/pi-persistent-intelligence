@@ -42,7 +42,7 @@ describe("reviewed inbox retain to recall", () => {
       confidence: 0.92,
       status: "new",
       primary_trust_class: "direct_user_instruction",
-      durability_signal: "permanent",
+      durability_signal: "long_term",
       scope_targets: [{ type: "global", confidence: 0.92, basis: ["test_fixture"] }],
     });
     const patch = curateInbox(root, {
