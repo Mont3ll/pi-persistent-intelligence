@@ -1,6 +1,8 @@
 import { type ConsolidationRunner, runConsolidation } from "../consolidator";
 import { loadConfig } from "../config";
 import { curateInbox } from "../curator";
+import { renderInboxCurationSummary, summarizeInboxCuration } from "../inbox-curation-summary";
+import { listCandidates } from "../inbox";
 import { todayString } from "../daily";
 import { renderGovernanceSimulationReport, simulatePatchImpact } from "../governance-simulation";
 import { maintainMemory as buildMaintenancePatch } from "../maintainer";
@@ -56,13 +58,26 @@ export function createMaintenanceCommands(dependencies: MaintenanceDependencies)
         const root = dependencies.getRoot();
         const mode = args.includes("--mode=auto") ? "auto" : args.includes("--mode=supervised") ? "supervised" : "propose";
         const patch = curateInbox(root, { now: dependencies.nowIso(), mode, vaultPath: process.env.PI_VAULT_PATH });
+        const cfg = loadConfig(root).curator;
+        const pending = listCandidates(root).filter((candidate) => candidate.status === "new");
+        const summary = summarizeInboxCuration(pending, patch, cfg.minConfidence, cfg.minEvidenceCount, cfg.autoCurateHighThreshold);
         if (mode === "auto") {
-          const applied = applyPatch(root, patch, { selectedOpIds: patch.ops.filter((operation) => operation.default_selected && operation.risk !== "high").map((operation) => operation.op_id), now: dependencies.nowIso() });
-          await updateQmd();
-          dependencies.syncFtsAfterPatch(patch, applied);
-          context.ui.notify(`Applied ${applied.applied_ops.length} memory op(s) from ${applied.patch_id}`, "success");
+          const selectedIds = patch.ops
+            .filter((operation) => operation.default_selected && operation.risk !== "high")
+            .map((operation) => operation.op_id);
+          if (selectedIds.length === 0) {
+            context.ui.notify(`Auto-curation made no changes. ${renderInboxCurationSummary(summary)}`, "warning");
+          } else {
+            const applied = applyPatch(root, patch, { selectedOpIds: selectedIds, now: dependencies.nowIso() });
+            if (applied.applied_ops.length > 0) {
+              await updateQmd();
+              dependencies.syncFtsAfterPatch(patch, applied);
+            }
+            const skipped = applied.skipped_ops.filter((op) => selectedIds.includes(op.op_id));
+            context.ui.notify(`Applied ${applied.applied_ops.length} of ${selectedIds.length} selected memory op(s) from ${applied.patch_id}; ${skipped.length} selected op(s) skipped. ${renderInboxCurationSummary(summary)}`, applied.applied_ops.length > 0 ? "success" : "warning");
+          }
         } else if (patch.ops.length === 0) {
-          context.ui.notify("No candidates meet curation thresholds.", "info");
+          context.ui.notify(`No materializable proposals. ${renderInboxCurationSummary(summary)}`, "warning");
         } else if (context.ui.custom) {
           const { createPatchReviewComponent } = await import("../tui/PatchReviewPanel");
           const selectedIds = await context.ui.custom<string[] | null>((tui, theme, _keybindings, done) => createPatchReviewComponent(patch, done, tui as any, undefined, theme));
@@ -70,7 +85,8 @@ export function createMaintenanceCommands(dependencies: MaintenanceDependencies)
             const applied = applyPatch(root, patch, { selectedOpIds: selectedIds, now: dependencies.nowIso() });
             await updateQmd();
             dependencies.syncFtsAfterPatch(patch, applied);
-            context.ui.notify(`✓ Applied ${selectedIds.length} memory op(s).`, "success");
+            const skipped = applied.skipped_ops.filter((op) => selectedIds.includes(op.op_id));
+            context.ui.notify(`Applied ${applied.applied_ops.length} of ${selectedIds.length} selected memory op(s); ${skipped.length} skipped. ${skipped.map((op) => `${op.op_id}: ${op.reason}`).join("; ") || "No skipped operations."}`, applied.applied_ops.length > 0 ? "success" : "warning");
           } else if (selectedIds === null) {
             context.ui.notify("Curation cancelled — no changes made.", "info");
           }
