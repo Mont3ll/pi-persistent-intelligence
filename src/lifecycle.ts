@@ -6,6 +6,7 @@ import { appendDailyLog, todayString } from "./daily";
 import { listCandidates } from "./inbox";
 import { curateInbox } from "./curator";
 import { selectInboxBatchApplyOpIds } from "./curation-selection";
+import { renderInboxCurationSummary, summarizeInboxCuration } from "./inbox-curation-summary";
 import { applyPatch } from "./patch";
 import { buildRetrievalContext, syncFtsIndex } from "./retriever";
 import { setupQmd, updateQmd, runQmd, qmdCollectionName } from "./qmd";
@@ -305,6 +306,9 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                   buildApplyReceiptNotification(applied, eligibleIds),
                   applied.applied_ops.length > 0 ? "success" : "warning",
                 );
+              } else {
+                const summary = summarizeInboxCuration(pending, patch, 0.75, 1, threshold);
+                ctx.ui.notify(`Auto-apply made no changes. ${renderInboxCurationSummary(summary)}`, "warning");
               }
 
             } else if (action === "reject") {
@@ -344,7 +348,8 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                       );
                     }
                   } else {
-                    ctx.ui.notify("No candidates meet curation thresholds.", "info");
+                    const summary = summarizeInboxCuration(pending, reviewPatch, 0.75, 1, threshold);
+                    ctx.ui.notify(renderInboxCurationSummary(summary), "warning");
                   }
                 } catch {
                   ctx.ui.notify("Type /curate-memory to review pending candidates.", "info");
