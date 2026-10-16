@@ -59,9 +59,10 @@ type LifecycleApi = ConsolidationRunner & {
 
 export function buildApplyReceiptNotification(applied: MemoryPatch, selectedOpIds: string[]): string {
   const selected = new Set(selectedOpIds);
-  const skipped = applied.skipped_ops.filter((skip) => selected.has(skip.op_id)).length;
+  const skipped = applied.skipped_ops.filter((skip) => selected.has(skip.op_id));
   const prefix = applied.applied_ops.length > 0 ? "✓ " : "";
-  return `${prefix}Applied ${applied.applied_ops.length} memory op(s)${skipped > 0 ? `; ${skipped} skipped for review` : ""}.`;
+  const reasons = [...new Set(skipped.map((item) => item.reason))];
+  return `${prefix}Applied ${applied.applied_ops.length} memory op(s)${skipped.length > 0 ? `; ${skipped.length} skipped for review [${reasons.join(", ")}]` : ""}.`;
 }
 
 type LifecycleDependencies = {
