@@ -129,7 +129,7 @@ export class InboxReviewOverlay {
     if (count > 7) lines.push(...wrapPanelLine(th.dim(`  … and ${count - 7} more`), width));
     lines.push("");
 
-    const labels = ["Apply eligible candidates", "Review in detail", "Reject candidates", "Skip for now"];
+    const labels = ["Auto-apply safe only", "Review proposals", "Reject candidates", "Skip for now"];
     const actions = ACTIONS.map(({ key, idx }) => {
       const label = `[${this.cursor === idx ? key.toUpperCase() : key}] ${labels[idx] ?? ""}`;
       return this.cursor === idx ? th.selected(label) : th.dim(label);
