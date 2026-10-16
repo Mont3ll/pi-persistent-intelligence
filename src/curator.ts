@@ -206,8 +206,9 @@ function candidateToRecord(candidate: CaptureCandidate, now: string, target?: Ca
 }
 
 function eligibleCandidates(root: string, options: CurateOptions): CaptureCandidate[] {
-  const minConfidence = options.minConfidence ?? 0.75;
-  const minEvidenceCount = options.minEvidenceCount ?? 2;
+  const config = loadConfig(root).curator;
+  const minConfidence = options.minConfidence ?? config.minConfidence;
+  const minEvidenceCount = options.minEvidenceCount ?? config.minEvidenceCount;
   return listCandidates(root).filter((candidate) =>
     candidate.status === "new" &&
     (candidate.confidence ?? 0) >= minConfidence &&
