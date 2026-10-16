@@ -68,7 +68,7 @@ export function candidateBrowserOptions(candidates: CaptureCandidate[]): Browser
         `Worth: ${c.worth_decision ?? "unknown"} ${(c.worth_reasons ?? []).join("; ")}`,
       ],
     })),
-    pageSize: 20,
+    pageSize: 8,
     sortBy: "confidence",
     columns: [
       { key: "id", label: "ID", width: 18, minWidth: 10, priority: 1, render: (c) => c.id, sortValue: (c) => c.id },
