@@ -347,6 +347,8 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                         buildApplyReceiptNotification(applied, selectedIds),
                         applied.applied_ops.length > 0 ? "success" : "warning",
                       );
+                    } else if (selectedIds?.length === 0) {
+                      ctx.ui.notify("No operations selected; use Space to select before Enter.", "warning");
                     }
                   } else {
                     const summary = summarizeInboxCuration(pending, reviewPatch, cfg.curator.minConfidence, 1, threshold);
