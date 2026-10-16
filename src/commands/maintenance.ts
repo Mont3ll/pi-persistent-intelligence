@@ -60,7 +60,7 @@ export function createMaintenanceCommands(dependencies: MaintenanceDependencies)
         const patch = curateInbox(root, { now: dependencies.nowIso(), mode, vaultPath: process.env.PI_VAULT_PATH });
         const cfg = loadConfig(root).curator;
         const pending = listCandidates(root).filter((candidate) => candidate.status === "new");
-        const summary = summarizeInboxCuration(pending, patch, cfg.minConfidence, cfg.minEvidenceCount, cfg.autoCurateHighThreshold);
+        const summary = summarizeInboxCuration(pending, patch, cfg.minConfidence, cfg.minEvidenceCount, cfg.minConfidence);
         if (mode === "auto") {
           const selectedIds = patch.ops
             .filter((operation) => operation.default_selected && operation.risk !== "high")
@@ -88,7 +88,9 @@ export function createMaintenanceCommands(dependencies: MaintenanceDependencies)
             const skipped = applied.skipped_ops.filter((op) => selectedIds.includes(op.op_id));
             context.ui.notify(`Applied ${applied.applied_ops.length} of ${selectedIds.length} selected memory op(s); ${skipped.length} skipped. ${skipped.map((op) => `${op.op_id}: ${op.reason}`).join("; ") || "No skipped operations."}`, applied.applied_ops.length > 0 ? "success" : "warning");
           } else if (selectedIds === null) {
-            context.ui.notify("Curation cancelled — no changes made.", "info");
+            context.ui.notify("Curation cancelled; no changes made.", "info");
+          } else {
+            context.ui.notify("No operations selected; no memory changes made. Use Space to select an operation before Enter.", "warning");
           }
         } else {
           context.ui.notify(`${patch.patch_id}: ${patch.summary}`, "info");
