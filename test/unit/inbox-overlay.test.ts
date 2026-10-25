@@ -35,7 +35,7 @@ describe("InboxReviewOverlay", () => {
     const text = lines.join("\n");
     expect(text).toContain("Memory Inbox");
     expect(text).toContain("3 candidates · 2 high-confidence");
-    expect(text).toContain("Apply eligible candidates");
+    expect(text).toContain("Auto-apply safe only");
     expect(text).not.toContain("auto-eligible");
   });
 
