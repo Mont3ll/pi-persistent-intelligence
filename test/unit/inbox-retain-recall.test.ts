@@ -7,9 +7,9 @@ import { appendCandidate, listCandidates } from "../../src/inbox";
 import { appendEvidenceRecord } from "../../src/evidence";
 import { curateInbox } from "../../src/curator";
 import { applyPatchAndSync } from "../../index";
-import { loadActiveRecords } from "../../src/store";
+import { loadActiveRecords, unsafeAddMemoryRecord } from "../../src/store";
 import { MemoryFtsIndex } from "../../src/search/fts";
-import { buildRetrievalContext } from "../../src/retriever";
+import { buildRetrievalContext, syncFtsIndex } from "../../src/retriever";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots) rmSync(root, { recursive: true, force: true }); roots.length = 0; });
@@ -68,6 +68,26 @@ describe("reviewed inbox retain to recall", () => {
         useQmd: false,
       });
       expect(recalled.selectedMemory.some((record) => record.statement.includes("lemonmetric"))).toBe(true);
+
+      // The fallback is discovery, not authority. A record from another
+      // project can be present in the index but must never be selected.
+      const accepted = loadActiveRecords(root).find((record) => record.statement.includes("lemonmetric"));
+      expect(accepted).toBeDefined();
+      unsafeAddMemoryRecord(root, {
+        ...accepted!,
+        id: "mem_other_project",
+        statement: "Always use excludedmetric fixtures for release checks",
+        scope: { type: "project", project: "unrelated-project" },
+      });
+      syncFtsIndex(root, fts);
+      const excluded = await buildRetrievalContext(root, {
+        prompt: "Which excludedmetric fixtures should we use for release checks in this project?",
+        today: "2026-10-16",
+        cwd: root,
+        ftsIndex: fts,
+        useQmd: false,
+      });
+      expect(excluded.selectedMemory.some((record) => record.id === "mem_other_project")).toBe(false);
     } finally {
       fts.close();
     }
