@@ -32,6 +32,13 @@ function candidate(id: string, text: string, overrides: Partial<CaptureCandidate
     evidence_refs: ["test-evidence", "test-evidence-2"],
     confidence: 0.9,
     status: "new",
+    // Legacy/manual fixture with explicit approved trust metadata. Without
+    // these fields strict-mode auto-curation must correctly select nothing.
+    primary_trust_class: "direct_user_instruction",
+    durability_signal: "project",
+    promotion_eligibility: "auto_candidate",
+    poisoning_risk: "low",
+    verification_status: "verified",
     scope_targets: [{ type: "project", project: "pi", confidence: 0.9, basis: ["test_fixture"] }],
     ...overrides,
   };
