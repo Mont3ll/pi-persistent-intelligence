@@ -85,8 +85,10 @@ export function createBrowserCommands(dependencies: BrowserDependencies): Browse
             const eligibleIds = selectInboxBatchApplyOpIds(patch, threshold);
             if (eligibleIds.length > 0) {
               const applied = applyPatch(root, patch, { selectedOpIds: eligibleIds, now: dependencies.nowIso() });
-              await updateQmd();
-              dependencies.syncFtsAfterPatch(patch, applied);
+              if (applied.applied_ops.length > 0) {
+                await updateQmd();
+                dependencies.syncFtsAfterPatch(patch, applied);
+              }
               context.ui.notify(
                 buildApplyReceiptNotification(applied, eligibleIds),
                 applied.applied_ops.length > 0 ? "success" : "warning",
@@ -101,8 +103,10 @@ export function createBrowserCommands(dependencies: BrowserDependencies): Browse
               const selectedIds = await context.ui.custom<string[] | null>((tui, theme, _keybindings, done) => createPatchReviewComponent(reviewPatch, done, tui as any, undefined, theme));
               if (selectedIds && selectedIds.length > 0) {
                 const applied = applyPatch(root, reviewPatch, { selectedOpIds: selectedIds, now: dependencies.nowIso() });
-                await updateQmd();
-                dependencies.syncFtsAfterPatch(reviewPatch, applied);
+                if (applied.applied_ops.length > 0) {
+                  await updateQmd();
+                  dependencies.syncFtsAfterPatch(reviewPatch, applied);
+                }
                 context.ui.notify(
                   buildApplyReceiptNotification(applied, selectedIds),
                   applied.applied_ops.length > 0 ? "success" : "warning",
