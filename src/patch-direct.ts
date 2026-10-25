@@ -24,14 +24,19 @@ function hasInvalidatedEvidence(root: string, op: PatchOp): boolean { const ids 
 type ApplyDecision = { ok: true } | { ok: false; reason: PatchSkipReason; detail: string };
 function reject(reason: PatchSkipReason, detail: string): ApplyDecision { return { ok: false, reason, detail }; }
 
-function applyDecision(root: string, op: PatchOp): ApplyDecision {
+function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["generated_by"]): ApplyDecision {
   const records = loadAllRecords(root); const byId = new Map(records.map((record) => [record.id, record]));
   if (op.op === "add" && !op.record) return reject("malformed_operation", `Add operation ${op.op_id} is missing its record.`);
   if (op.op === "supersede" && (!op.target_id || !op.to_record)) return reject("malformed_operation", `Supersede operation ${op.op_id} is missing its target or replacement record.`);
   if (op.op === "reject_candidate" && !op.candidate_id) return reject("malformed_operation", `Reject-candidate operation ${op.op_id} is missing its candidate.`);
   if (op.candidate_id && (op.op === "add" || op.op === "supersede")) {
-    const candidate = listCandidates(root).find((item) => item.id === op.candidate_id && item.status === "new");
-    if (!candidate) return reject("missing_candidate", `No pending candidate ${op.candidate_id} exists for promotion.`);
+    const matching = listCandidates(root).filter((item) => item.id === op.candidate_id);
+    const candidate = matching.find((item) => item.status === "new");
+    if (matching.length > 0 && !candidate) return reject("target_terminal", `Candidate ${op.candidate_id} is terminal and cannot be promoted.`);
+    // Legacy manually composed patches may carry only an informational
+    // candidate_id, whereas curator-generated patches must link to NEW inbox.
+    if (!candidate && generatedBy === "curator") return reject("missing_candidate", `No pending candidate ${op.candidate_id} exists for promotion.`);
+    if (candidate) {
     // Revalidate against the current capture policy at the actual governed
     // mutation boundary, including manual selection and replay of old patches.
     // Evidence/confidence alone never converts a rejected or task-bound
@@ -53,6 +58,7 @@ function applyDecision(root: string, op: PatchOp): ApplyDecision {
           return reject("capture_policy_hold", `Edited statement for candidate ${candidate.id} is ${edited.intent}/${edited.durability}; cannot bypass capture policy by editing a patch.`);
         }
       }
+    }
     }
   }
   const updateOps = ["update", "update_stability", "flag_for_review", "decay"];
@@ -105,7 +111,7 @@ export function applyPatchDirect(root: string, patch: MemoryPatch, options: Appl
   writePatchFile(root, redactPrivacyPatchForPersistence(patch, privacyTargets, correlatedCandidateIds));
   for (const targetId of privacyTargets) purgeCorrelatedPrivacyArtifacts(root, targetId);
   const applied_ops: string[] = []; const skipped_ops: PatchSkip[] = [];
-  for (const op of executionPatch.ops) { const selected = isSelected(op, options.selectedOpIds); const decision = selected ? applyDecision(root, op) : reject("not_selected", `Operation ${op.op_id} was not selected for application.`); if (decision.ok) { applyOp(root, patch.patch_id, op, options.now); applied_ops.push(op.op_id); } else skipped_ops.push({ op_id: op.op_id, ...(op.candidate_id ? { candidate_id: op.candidate_id } : {}), reason: decision.reason, detail: decision.detail }); }
+  for (const op of executionPatch.ops) { const selected = isSelected(op, options.selectedOpIds); const decision = selected ? applyDecision(root, op, executionPatch.generated_by) : reject("not_selected", `Operation ${op.op_id} was not selected for application.`); if (decision.ok) { applyOp(root, patch.patch_id, op, options.now); applied_ops.push(op.op_id); } else skipped_ops.push({ op_id: op.op_id, ...(op.candidate_id ? { candidate_id: op.candidate_id } : {}), reason: decision.reason, detail: decision.detail }); }
   const candidateIds = [...new Set(executionPatch.ops.flatMap((op) => op.candidate_id ? [op.candidate_id] : []))];
   for (const candidateId of candidateIds) { const candidateOps = executionPatch.ops.filter((op) => op.candidate_id === candidateId); const appliedCount = candidateOps.filter((op) => applied_ops.includes(op.op_id)).length; const selectedCount = candidateOps.filter((op) => isSelected(op, options.selectedOpIds)).length; if (appliedCount === candidateOps.length) markCandidateIfNew(root, candidateId, "patched"); else if (selectedCount > 0 && appliedCount === 0) { const selectedSkips = skipped_ops.filter((skip) => skip.candidate_id === candidateId && candidateOps.some((op) => op.op_id === skip.op_id)); if (!selectedSkips.every((skip) => skip.reason === "unresolved_evidence" || skip.reason === "capture_policy_hold")) markCandidateIfNew(root, candidateId, "rejected"); } }
   const status: MemoryPatch["status"] = applied_ops.length === 0 && skipped_ops.length > 0 ? "rejected_at_apply" : skipped_ops.length > 0 ? "partially_applied" : "applied";
