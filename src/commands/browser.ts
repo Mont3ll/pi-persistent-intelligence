@@ -81,7 +81,7 @@ export function createBrowserCommands(dependencies: BrowserDependencies): Browse
           const result = await openBrowser(context, candidateBrowserOptions(candidates), plain);
           const action = result?.action as InboxOverlayAction | undefined;
           if (action === "approve") {
-            const patch = curateInbox(root, { now: dependencies.nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
+            const patch = curateInbox(root, { now: dependencies.nowIso(), mode: "auto", vaultPath, governanceMode: config.governance.mode });
             const eligibleIds = selectInboxBatchApplyOpIds(patch, threshold);
             if (eligibleIds.length > 0) {
               const applied = applyPatch(root, patch, { selectedOpIds: eligibleIds, now: dependencies.nowIso() });
@@ -92,11 +92,11 @@ export function createBrowserCommands(dependencies: BrowserDependencies): Browse
                 applied.applied_ops.length > 0 ? "success" : "warning",
               );
             } else {
-              const summary = summarizeInboxCuration(candidates, patch, config.curator.minConfidence, 1, threshold);
+              const summary = summarizeInboxCuration(candidates, patch, config.curator.minConfidence, config.curator.minEvidenceCount, threshold);
               context.ui.notify(`Auto-apply made no changes. ${renderInboxCurationSummary(summary)}`, "warning");
             }
           } else if (action === "review") {
-            const reviewPatch = curateInbox(root, { now: dependencies.nowIso(), mode: "propose", vaultPath, minEvidenceCount: 1 });
+            const reviewPatch = curateInbox(root, { now: dependencies.nowIso(), mode: "supervised", vaultPath, minEvidenceCount: 1, governanceMode: config.governance.mode });
             if (reviewPatch.ops.length > 0 && context.ui.custom) {
               const selectedIds = await context.ui.custom<string[] | null>((tui, theme, _keybindings, done) => createPatchReviewComponent(reviewPatch, done, tui as any, undefined, theme));
               if (selectedIds && selectedIds.length > 0) {
