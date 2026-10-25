@@ -24,19 +24,17 @@ To lower the threshold or always show the overlay:
 
 ## Pressing `a` in the inbox overlay does nothing
 
-**Cause:** None of the pending operations are currently eligible for batch apply. Common reasons are low confidence, `risk: high`, `default_selected: false`, review-only verification, conflict or ambiguity, or current capture-policy revalidation holding a stale candidate as temporary, task-bound, or non-memory.
+**Cause:** "Auto-apply safe only" deliberately applies operations that meet the configured confidence and evidence floors, current capture policy, verification, trust, scope, and match requirements. High confidence is not sufficient. In particular, the default evidence floor is two references, while a newly captured instruction may have one resolved structured evidence reference.
 
-Pressing `a` applies only operations that are already safe and default-selected. It does not override a hold. If nothing qualifies, the inbox stays populated.
+When there are no auto-eligible operations, PI reports counts and hold reasons instead of silently doing nothing.
 
-**Fix:** Run the full review panel:
+**Fix:** Select **Review proposals** or run `/curate-memory`. The manual review path may display single-reference candidates for **explicit human selection** even when the configured automatic floor is two. Those operations start unchecked and still require governed evidence verification when applied. Inspect each candidate's statement, provenance and hold codes before selecting it with Space. Do not approve a policy-held, temporary, or untrustworthy instruction just to empty the inbox.
 
-```bash
-/curate-memory
-```
+If manual review results in a governed skip, inspect the reported skip reason; an applied count of zero means no canonical memory was created.
 
-In the review panel you can select and apply any op, including below-threshold ones.
+You can deliberately change the **automatic** evidence floor in configuration after reviewing the trust trade-off. An existing explicit value of two must never be bypassed silently.
 
-Alternatively, lower the threshold temporarily:
+Alternatively, lower the confidence threshold temporarily:
 
 ```json
 {
