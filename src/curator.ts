@@ -326,10 +326,21 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
         && !isGlobalPreference
         && currentPolicyAllowsAutoApply(candidate)
         && isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
+      const holdCodes: string[] = [];
+      if (!evidenceCountMeetsConfiguredFloor) holdCodes.push("below_configured_evidence_floor");
+      if (isGlobalPreference) holdCodes.push("global_preference_review");
+      if (!currentPolicyAllowsAutoApply(candidate)) holdCodes.push("current_capture_policy");
+      if (candidate.verification_status === "review_required") holdCodes.push("verification_review_required");
+      if (candidate.verification_status === "rejected") holdCodes.push("verification_rejected");
+      if (candidate.promotion_eligibility === "review_only" || candidate.promotion_eligibility === "l1_review_only") holdCodes.push("promotion_review_only");
+      if (candidate.poisoning_risk === "high") holdCodes.push("high_poisoning_risk");
+      if (candidate.match_kind === "potential_conflict" || candidate.match_kind === "supersedes_existing" || candidate.match_kind === "ambiguous") holdCodes.push("match_requires_review");
+      if (!isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility") && holdCodes.length === 0) holdCodes.push("trust_or_provenance_gate");
       const trustGateNote = autoApplyEligible ? ""
-        : !evidenceCountMeetsConfiguredFloor
-          ? ` Below configured auto-apply evidence floor (${candidate.evidence_refs.length}/${configuredEvidenceFloor}); requires explicit human selection and governed evidence verification.`
-          : " Trust/match gate requires human review before auto-apply.";
+        : ` Auto-apply held [${[...new Set(holdCodes)].join(", ")}].`
+          + (!evidenceCountMeetsConfiguredFloor
+            ? ` Below configured auto-apply evidence floor (${candidate.evidence_refs.length}/${configuredEvidenceFloor}); requires explicit human selection and governed evidence verification.`
+            : " Requires explicit human review before apply.");
       const matchNote = candidate.match_kind && candidate.match_kind !== "new"
         ? ` Match: ${candidate.match_kind}; matched memories: ${(candidate.matched_memory_ids ?? []).join(", ") || "none"}; reasons: ${(candidate.match_reasons ?? []).join("; ") || "none"}. Suggested path: ${candidate.match_kind === "potential_conflict" ? "contest or add_exception" : candidate.match_kind === "supersedes_existing" ? "supersede after review" : candidate.match_kind === "ambiguous" ? "manual merge/review" : "review/update"}.`
         : "";
