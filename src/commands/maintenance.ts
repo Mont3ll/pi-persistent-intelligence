@@ -57,7 +57,11 @@ export function createMaintenanceCommands(dependencies: MaintenanceDependencies)
       handler: async (args, context) => {
         const root = dependencies.getRoot();
         const mode = args.includes("--mode=auto") ? "auto" : args.includes("--mode=supervised") ? "supervised" : "propose";
-        const patch = curateInbox(root, { now: dependencies.nowIso(), mode, vaultPath: process.env.PI_VAULT_PATH });
+        const patch = curateInbox(root, {
+          now: dependencies.nowIso(), mode, vaultPath: process.env.PI_VAULT_PATH,
+          ...(mode === "auto" ? {} : { minEvidenceCount: 1 }),
+          governanceMode: loadConfig(root).governance.mode,
+        });
         const cfg = loadConfig(root).curator;
         const pending = listCandidates(root).filter((candidate) => candidate.status === "new");
         const summary = summarizeInboxCuration(pending, patch, cfg.minConfidence, cfg.minEvidenceCount, cfg.minConfidence);
