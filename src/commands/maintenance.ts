@@ -87,8 +87,10 @@ export function createMaintenanceCommands(dependencies: MaintenanceDependencies)
           const selectedIds = await context.ui.custom<string[] | null>((tui, theme, _keybindings, done) => createPatchReviewComponent(patch, done, tui as any, undefined, theme));
           if (selectedIds && selectedIds.length > 0) {
             const applied = applyPatch(root, patch, { selectedOpIds: selectedIds, now: dependencies.nowIso() });
-            await updateQmd();
-            dependencies.syncFtsAfterPatch(patch, applied);
+            if (applied.applied_ops.length > 0) {
+              await updateQmd();
+              dependencies.syncFtsAfterPatch(patch, applied);
+            }
             const skipped = applied.skipped_ops.filter((op) => selectedIds.includes(op.op_id));
             context.ui.notify(`Applied ${applied.applied_ops.length} of ${selectedIds.length} selected memory op(s); ${skipped.length} skipped. ${skipped.map((op) => `${op.op_id}: ${op.reason}`).join("; ") || "No skipped operations."}`, applied.applied_ops.length > 0 ? "success" : "warning");
           } else if (selectedIds === null) {
