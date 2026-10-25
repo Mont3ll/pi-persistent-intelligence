@@ -175,9 +175,21 @@ async function selectMemoryHybrid(
       return rec ? [rec] : [];
     });
     const applicableIds = new Set(explicitApplicableL2.map((record) => record.id));
+    // FTS5 MATCH treats a natural-language query as a conjunction of terms.
+    // A correctly indexed memory may therefore be missed by the full question.
+    // Fall back only within the already-governed processor output, never to
+    // unfiltered canonical or historical records.
+    const selectedIds = new Set(selectedBySearch.map((record) => record.id));
+    const terms = promptTerms(prompt);
+    const termFallback = l2.filter((record) =>
+      !applicableIds.has(record.id)
+      && !selectedIds.has(record.id)
+      && isRelevantByTerms(record, terms)
+    );
     const selectedL2 = [
       ...explicitApplicableL2,
       ...selectedBySearch.filter((record) => !applicableIds.has(record.id)),
+      ...termFallback,
     ];
 
     return applyLayerBudgets(l1, selectedL2, budget);
