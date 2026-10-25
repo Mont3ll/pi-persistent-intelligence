@@ -231,6 +231,7 @@ function currentPolicyAllowsAutoApply(candidate: CaptureCandidate): boolean {
 
 function buildPatch(root: string, options: CurateOptions, llmContradictions = new Map<string, LlmContradiction>()): MemoryPatch {
   const eligible = eligibleCandidates(root, options);
+  const configuredEvidenceFloor = loadConfig(root).curator.minEvidenceCount;
   const activeRecords = loadActiveRecords(root);
   const activeIds = new Set(activeRecords.map((record) => record.id));
   const existingEvidence = readEvidenceRecords(root);
@@ -318,10 +319,17 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       })();
 
       const isGlobalPreference = scopeTarget?.type === "global" && candidate.capture_intent === "user_preference";
-      const autoApplyEligible = !isGlobalPreference
+      // A human may explicitly review a verified single-source candidate,
+      // but that exception must not silently lower configured auto-apply floors.
+      const evidenceCountMeetsConfiguredFloor = candidate.evidence_refs.length >= configuredEvidenceFloor;
+      const autoApplyEligible = evidenceCountMeetsConfiguredFloor
+        && !isGlobalPreference
         && currentPolicyAllowsAutoApply(candidate)
         && isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
-      const trustGateNote = autoApplyEligible ? "" : " Trust/match gate requires human review before auto-apply.";
+      const trustGateNote = autoApplyEligible ? ""
+        : !evidenceCountMeetsConfiguredFloor
+          ? ` Below configured auto-apply evidence floor (${candidate.evidence_refs.length}/${configuredEvidenceFloor}); requires explicit human selection and governed evidence verification.`
+          : " Trust/match gate requires human review before auto-apply.";
       const matchNote = candidate.match_kind && candidate.match_kind !== "new"
         ? ` Match: ${candidate.match_kind}; matched memories: ${(candidate.matched_memory_ids ?? []).join(", ") || "none"}; reasons: ${(candidate.match_reasons ?? []).join("; ") || "none"}. Suggested path: ${candidate.match_kind === "potential_conflict" ? "contest or add_exception" : candidate.match_kind === "supersedes_existing" ? "supersede after review" : candidate.match_kind === "ambiguous" ? "manual merge/review" : "review/update"}.`
         : "";
