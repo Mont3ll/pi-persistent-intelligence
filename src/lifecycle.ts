@@ -297,7 +297,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
             if (action === "approve") {
               // Apply only curator-approved operations that meet the confidence threshold.
               // Review-only and high-risk candidates remain pending for explicit Review.
-              const patch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
+              const patch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "auto", vaultPath, governanceMode: cfg.governance.mode });
               const eligibleIds = selectInboxBatchApplyOpIds(patch, threshold);
               if (eligibleIds.length > 0) {
                 const applied = applyPatch(state.root, patch, { selectedOpIds: eligibleIds, now: dependencies.nowIso() });
@@ -308,7 +308,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                   applied.applied_ops.length > 0 ? "success" : "warning",
                 );
               } else {
-                const summary = summarizeInboxCuration(pending, patch, cfg.curator.minConfidence, 1, threshold);
+                const summary = summarizeInboxCuration(pending, patch, cfg.curator.minConfidence, cfg.curator.minEvidenceCount, threshold);
                 ctx.ui.notify(`Auto-apply made no changes. ${renderInboxCurationSummary(summary)}`, "warning");
               }
 
@@ -333,7 +333,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                 try {
                   const cfg2 = loadConfig(state.root);
                   const vaultPath2 = cfg2.vault.path ?? process.env.PI_VAULT_PATH;
-                  const reviewPatch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "propose", vaultPath: vaultPath2, minEvidenceCount: 1 });
+                  const reviewPatch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "supervised", vaultPath: vaultPath2, minEvidenceCount: 1, governanceMode: cfg2.governance.mode });
                   if (reviewPatch.ops.length > 0) {
                     const selectedIds = await ctx.ui.custom<string[] | null>(
                       (tui, theme, _kb, done) =>
