@@ -181,11 +181,13 @@ async function selectMemoryHybrid(
     // unfiltered canonical or historical records.
     const selectedIds = new Set(selectedBySearch.map((record) => record.id));
     const terms = promptTerms(prompt);
-    const termFallback = l2.filter((record) =>
-      !applicableIds.has(record.id)
-      && !selectedIds.has(record.id)
-      && isRelevantByTerms(record, terms)
-    );
+    const termFallback = selectedBySearch.length === 0
+      ? l2.filter((record) =>
+          !applicableIds.has(record.id)
+          && !selectedIds.has(record.id)
+          && isRelevantByTerms(record, terms)
+        )
+      : [];
     const selectedL2 = [
       ...explicitApplicableL2,
       ...selectedBySearch.filter((record) => !applicableIds.has(record.id)),
