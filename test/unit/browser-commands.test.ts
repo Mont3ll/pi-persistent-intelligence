@@ -29,7 +29,7 @@ function candidate(id: string, text: string, overrides: Partial<CaptureCandidate
     source: { type: "manual", ref: `test:${id}` },
     text,
     tags: ["testing"],
-    evidence_refs: ["test-evidence"],
+    evidence_refs: ["test-evidence", "test-evidence-2"],
     confidence: 0.9,
     status: "new",
     scope_targets: [{ type: "project", project: "pi", confidence: 0.9, basis: ["test_fixture"] }],
