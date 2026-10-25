@@ -30,6 +30,7 @@ function appendPersistedCaptureCandidate(
   worthDecision: MemoryWorthDecision = "candidate",
 ): void {
   const evidenceId = `ev_${id}`;
+  const corroborationId = `${evidenceId}_corroboration`;
   appendEvidenceRecord(rootDir, {
     id: evidenceId,
     resource_id: "curation",
@@ -46,14 +47,30 @@ function appendPersistedCaptureCandidate(
     tags: ["capture-evidence"],
     notes: "capture_evidence_v1",
   });
+  appendEvidenceRecord(rootDir, {
+    id: corroborationId,
+    resource_id: "curation",
+    profile_id: "legacy-default",
+    created_at: "2026-10-03T14:00:00Z",
+    source_kind: "conversation",
+    source_session_id: "s2",
+    source_ref: `session:s2:turn:${id}`,
+    source_summary: text,
+    trust_class: "user_correction",
+    polarity: "supports",
+    durability_signal: "project",
+    related_memory_ids: [],
+    tags: ["capture-evidence"],
+    notes: "capture_evidence_v1",
+  });
   appendCandidate(rootDir, {
     id,
     created_at: "2026-10-03T14:00:00Z",
     source: { type: "user_correction", ref: `session:s1:turn:${id}` },
     text,
     tags: ["capture", "behavior_correction", "testing", "implementation"],
-    evidence_refs: [evidenceId],
-    evidence_ids: [evidenceId],
+    evidence_refs: [evidenceId, corroborationId],
+    evidence_ids: [evidenceId, corroborationId],
     confidence: 0.9,
     status: "new",
     ruleType: "correction",
