@@ -301,8 +301,10 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
               const eligibleIds = selectInboxBatchApplyOpIds(patch, threshold);
               if (eligibleIds.length > 0) {
                 const applied = applyPatch(state.root, patch, { selectedOpIds: eligibleIds, now: dependencies.nowIso() });
-                await updateQmd();
-                dependencies.syncFtsAfterPatch(patch, applied);
+                if (applied.applied_ops.length > 0) {
+                  await updateQmd();
+                  dependencies.syncFtsAfterPatch(patch, applied);
+                }
                 ctx.ui.notify(
                   buildApplyReceiptNotification(applied, eligibleIds),
                   applied.applied_ops.length > 0 ? "success" : "warning",
@@ -341,8 +343,10 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                     );
                     if (selectedIds && selectedIds.length > 0) {
                       const applied = applyPatch(state.root, reviewPatch, { selectedOpIds: selectedIds, now: dependencies.nowIso() });
-                      await updateQmd();
-                      dependencies.syncFtsAfterPatch(reviewPatch, applied);
+                      if (applied.applied_ops.length > 0) {
+                        await updateQmd();
+                        dependencies.syncFtsAfterPatch(reviewPatch, applied);
+                      }
                       ctx.ui.notify(
                         buildApplyReceiptNotification(applied, selectedIds),
                         applied.applied_ops.length > 0 ? "success" : "warning",
