@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCaptureSourceAttribution } from "../../src/capture-provenance";
 import { resolveProjectIdentity } from "../../src/profile";
-import { verifyCandidateTranscriptSource } from "../../src/transcript-proof";
+import { createTranscriptDiscoveryIndex, verifyCandidateTranscriptSource } from "../../src/transcript-proof";
 import type { CaptureCandidate, EvidenceRecord } from "../../src/types";
 
 const dirs: string[] = [];
@@ -150,6 +150,68 @@ describe("trusted original Pi session transcript proof", () => {
     expect(verifyCandidateTranscriptSource(f.candidate, f.evidence,
       { trustedSessionDirs: [f.sessionDir] }).reason).toBe("no_trusted_session_file");
   });
+  test("one operation index supports repeated proof while each source is reread", () => {
+    const f = fixture();
+    const options = { trustedSessionDirs: [f.sessionDir] };
+    const discoveryIndex = createTranscriptDiscoveryIndex(options);
+    expect(discoveryIndex.scannedFiles).toBe(1);
+    expect(discoveryIndex.bySessionId.get("recorded-session-001")?.length).toBe(1);
+    for (let i = 0; i < 8; i++) {
+      expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+        ...options, discoveryIndex,
+      }).verified).toBe(true);
+    }
+    // The index cannot become a replacement for the original source.
+    f.write([f.entry("For this project, always use a DIFFERENT release checklist.", "user")]);
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      ...options, discoveryIndex,
+    }).reason).toBe("user_turn_missing");
+    rmSync(f.transcript);
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      ...options, discoveryIndex,
+    }).verified).toBe(false);
+  });
+
+  test("new transcript becomes available on a later discovery attempt", () => {
+    const f = fixture();
+    rmSync(f.transcript);
+    const options = { trustedSessionDirs: [f.sessionDir] };
+    const before = createTranscriptDiscoveryIndex(options);
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      ...options, discoveryIndex: before,
+    }).reason).toBe("no_trusted_session_file");
+    f.write([f.entry(directMessage, "user")]);
+    const after = createTranscriptDiscoveryIndex(options);
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      ...options, discoveryIndex: after,
+    }).verified).toBe(true);
+  });
+
+  test("a supplied discovery hint cannot point outside the trusted roots", () => {
+    const f = fixture();
+    const unrelated = join(f.root, "outside.jsonl");
+    writeFileSync(unrelated, readFileSync(f.transcript));
+    const forged = { scannedFiles: 1, bySessionId: new Map([
+      ["recorded-session-001", [unrelated]],
+    ]) };
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      trustedSessionDirs: [f.sessionDir], discoveryIndex: forged,
+    }).verified).toBe(false);
+  });
+
+  test("replacement with symlink after discovery is held", () => {
+    const f = fixture();
+    const options = { trustedSessionDirs: [f.sessionDir] };
+    const discoveryIndex = createTranscriptDiscoveryIndex(options);
+    const elsewhere = join(f.root, "outside.jsonl");
+    writeFileSync(elsewhere, readFileSync(f.transcript));
+    rmSync(f.transcript);
+    symlinkSync(elsewhere, f.transcript);
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      ...options, discoveryIndex,
+    }).verified).toBe(false);
+  });
+
   test("malformed or incorrect session headers are held", () => {
     const f = fixture();
     writeFileSync(f.transcript, '{"type":"session"');
