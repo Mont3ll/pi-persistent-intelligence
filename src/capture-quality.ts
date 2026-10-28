@@ -35,6 +35,7 @@ export function buildCaptureQualityReport(root: string, options: { now?: string 
     inquiry: 0,
     candidate_created: 0,
     candidate_reinforced: 0,
+    candidate_already_represented: 0,
     candidate_promoted: 0,
     candidate_rejected: 0,
   } satisfies Record<CaptureEventOutcome | "rejected", number>;
@@ -77,6 +78,7 @@ export function renderCaptureQualityReport(report: CaptureQualityReport): string
     `Messages evaluated: ${report.messages_evaluated}`,
     `Candidates created: ${report.funnel.candidate_created}`,
     `Candidates reinforced: ${report.funnel.candidate_reinforced}`,
+    `Already represented canonically: ${report.funnel.candidate_already_represented}`,
     `Rejected: ${report.funnel.rejected}`,
     `Pending candidates: ${report.pending_candidates}`,
     `Repeated pending preferences: ${report.repeated_pending_preferences}`,
