@@ -204,10 +204,19 @@ Disabled standalone mode is valid.
 - [Standalone vs shared mode](docs/standalone-vs-shared-mode.md)
 - [Export/import with pi-governance-rs](docs/export-import-pi-governance.md)
 - [Wiki docs](docs/wiki/)
+- [Manual release procedure](docs/wiki/manual-release.md)
 
 ## External evaluation
 
 The repository includes a fingerprint-gated harness for AMA-Bench, LongMemEval-V2, and MemoryArena compatibility checks. It keeps production and diagnostic tracks separate and never runs external models during ordinary release checks. See [External agent-memory benchmarks](docs/wiki/external-benchmarks.md).
+
+## Release status
+
+The source tree is being prepared as `0.17.5-rc.1`. This is an **unpublished release candidate**; the current installed and published package remains `0.17.4` until a manual release is approved.
+
+Since `0.17.4`, PI has gained clearer inbox hold reasons, stronger source attribution and original-transcript checks, and a next-session retry for eligible candidates held while their transcripts were still being written. The retry runs only with the explicit source-aware opt-in and a compatible automatic-curation setting. Privacy purges now cover historical governance receipts, with recovery checks for missing or altered snapshots. The [changelog](CHANGELOG.md) has the full scope and known limits.
+
+GitHub Actions is unavailable because the repository owner's account is subject to a billing restriction. We use exact-commit local verification and an independently checked release record for manual releases. The unavailable hosted check is recorded; it is not reported as a passed test. No agent should publish or change the live store as part of verification. Read the [manual release procedure](docs/wiki/manual-release.md) before preparing a release or host upgrade.
 
 ## Development
 
