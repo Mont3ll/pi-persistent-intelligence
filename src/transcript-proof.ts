@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
-import { readSessionId } from "./sessions/parser";
 import { resolveProjectIdentity } from "./profile";
 import type { CaptureCandidate, EvidenceRecord } from "./types";
 
 const MAX_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
 const MAX_SCANNED_FILES = 100_000;
+const MAX_HEADER_BYTES = 4096;
+const READ_CHUNK_BYTES = 64 * 1024;
+const NONBLOCKING_REGULAR_FILE_FLAGS = constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0);
 
 export type TranscriptProofReason =
   | "verified"
@@ -76,6 +78,38 @@ function within(root: string, file: string): boolean {
     && !relativePath.startsWith(sep);
 }
 
+/**
+ * Never call the general session parser's readSessionId() on a path that
+ * might be replaced by an untrusted filesystem node. Its blocking open()
+ * can hang forever on a FIFO. Open nonblocking, reject non-regular descriptors,
+ * and read only a bounded first line.
+ */
+function safeReadSessionId(file: string): string | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, NONBLOCKING_REGULAR_FILE_FLAGS);
+    const before = fstatSync(fd);
+    if (!before.isFile()) return null;
+    const bytes = Buffer.alloc(MAX_HEADER_BYTES);
+    const n = readSync(fd, bytes, 0, bytes.length, 0);
+    const after = fstatSync(fd);
+    if (!after.isFile() || before.dev !== after.dev || before.ino !== after.ino
+      || before.size !== after.size || before.mtimeMs !== after.mtimeMs
+      || before.ctimeMs !== after.ctimeMs) return null;
+    const text = bytes.toString("utf8", 0, n);
+    const header = text.split("\n", 1)[0] ?? "";
+    if (n === MAX_HEADER_BYTES && !text.includes("\n")) return null;
+    const parsed: unknown = JSON.parse(header.replace(/^\uFEFF/, "").trim());
+    if (!parsed || typeof parsed !== "object") return null;
+    const row = parsed as { type?: unknown; id?: unknown };
+    return row.type === "session" && typeof row.id === "string" && row.id.trim() ? row.id : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 function sessionFiles(roots: readonly string[]): string[] {
   const found: string[] = [];
   let visited = 0;
@@ -92,7 +126,7 @@ function sessionFiles(roots: readonly string[]): string[] {
           pending.push(file);
           continue;
         }
-        if (!entry.name.endsWith(".jsonl")) continue;
+        if (!entry.name.endsWith(".jsonl") || !entry.isFile()) continue;
         // Do not follow symlinked transcripts outside the trusted root.
         let realFile: string;
         try { realFile = realpathSync(file); } catch { continue; }
@@ -116,8 +150,7 @@ export function createTranscriptDiscoveryIndex(
   const map = new Map<string, string[]>();
   for (const file of paths) {
     try {
-      if (statSync(file).size < 2) continue;
-      const id = readSessionId(file);
+      const id = safeReadSessionId(file);
       if (!id) continue;
       const existing = map.get(id) ?? [];
       existing.push(file);
@@ -135,7 +168,7 @@ function trustedRealRoots(options: TranscriptProofOptions): string[] {
 
 function trustedTranscriptPath(file: string, roots: readonly string[]): boolean {
   try {
-    if (lstatSync(file).isSymbolicLink()) return false;
+    if (!lstatSync(file).isFile()) return false;
     const realFile = realpathSync(file);
     return roots.some((root) => within(root, realFile));
   } catch { return false; }
@@ -176,17 +209,32 @@ function inspectedTranscript(
   file: string,
   expectedSessionId: string,
 ): { sessionId: string; cwd: string; userTurns: Array<{ text: string; turnId?: string }> } | null {
-  // Inspect through a single descriptor with no-follow on the final
-  // component. Filesystem replacement during read fails closed.
-  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  // A non-blocking, no-follow open is essential: paths can turn into FIFOs
+  // between discovery and inspection. Inspect only regular files, with a
+  // hard 32 MiB read cap and identity checks before/after.
+  const fd = openSync(file, NONBLOCKING_REGULAR_FILE_FLAGS);
   let raw: string;
   try {
     const before = fstatSync(fd);
-    if (!before.isFile() || before.size > MAX_TRANSCRIPT_BYTES) return null;
-    raw = readFileSync(fd, "utf8");
+    if (!before.isFile() || before.size > MAX_TRANSCRIPT_BYTES || before.size < 2) return null;
+    const parts: Buffer[] = [];
+    let offset = 0;
+    while (offset <= MAX_TRANSCRIPT_BYTES) {
+      const chunk = Buffer.alloc(Math.min(READ_CHUNK_BYTES, MAX_TRANSCRIPT_BYTES + 1 - offset));
+      const n = readSync(fd, chunk, 0, chunk.length, offset);
+      if (n === 0) break;
+      parts.push(chunk.subarray(0, n));
+      offset += n;
+    }
+    if (offset > MAX_TRANSCRIPT_BYTES) return null;
     const after = fstatSync(fd);
-    if (before.dev !== after.dev || before.ino !== after.ino
-      || before.size !== after.size || before.mtimeMs !== after.mtimeMs) return null;
+    if (!after.isFile() || before.dev !== after.dev || before.ino !== after.ino
+      || before.size !== after.size || before.mtimeMs !== after.mtimeMs
+      || before.ctimeMs !== after.ctimeMs || offset !== before.size) return null;
+    // Catch a pathname/directory replacement during descriptor reading.
+    const current = statSync(file);
+    if (!lstatSync(file).isFile() || current.dev !== after.dev || current.ino !== after.ino) return null;
+    raw = Buffer.concat(parts, offset).toString("utf8");
   } finally { closeSync(fd); }
   const lines = raw.split("\n");
   let session: { id?: unknown; cwd?: unknown } | null = null;
@@ -248,7 +296,7 @@ export function verifyCandidateTranscriptSource(
     // ephemeral discovery index is not an authorization source.
     if (!trustedTranscriptPath(sourceFile, roots)) return held("invalid_transcript");
     if (statSync(sourceFile).size > MAX_TRANSCRIPT_BYTES) return held("oversized_transcript");
-    if (readSessionId(sourceFile) !== source.session_id) return held("invalid_transcript");
+    if (safeReadSessionId(sourceFile) !== source.session_id) return held("invalid_transcript");
     const transcript = inspectedTranscript(sourceFile, source.session_id);
     if (!transcript) return held("invalid_transcript");
     // Project identity must be derived independently from the trusted Pi
