@@ -39,7 +39,7 @@ function fingerprint(root: string, entries: readonly string[]): string { const h
  * before a privacy purge snapshots its full historical receipt inventory.
  * Called inside the writer lock and also prior to ordinary recovery.
  */
-export function validatePrivacyHistoricalInventory(root: string, activeTransactionId?: string): string[] {
+export function validatePrivacyHistoricalInventory(root: string, activeTransactionId?: string, allowRecoverableIncomplete = false): string[] {
   const directory = resolvePaths(root).governance.transactions;
   if (!existsSync(directory)) return [];
   const ids: string[] = [];
@@ -75,7 +75,8 @@ export function validatePrivacyHistoricalInventory(root: string, activeTransacti
     }
     const manifest = readTransactionManifest(root, entry.name);
     if (!manifest || manifest.transaction_id !== entry.name
-      || manifest.stage !== "complete" || !manifest.result) {
+      || (manifest.stage !== "complete" && !allowRecoverableIncomplete)
+      || (manifest.stage === "complete" && !manifest.result)) {
       throw new GovernanceRecoveryBlockedError("Incomplete or invalid governance manifest prevents privacy purge");
     }
     ids.push(entry.name);
