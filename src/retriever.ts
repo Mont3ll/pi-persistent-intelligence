@@ -91,12 +91,6 @@ function promptTerms(prompt: string): Set<string> {
   return new Set(prompt.toLowerCase().split(/[^a-z0-9-]+/).filter((t) => t.length > 2));
 }
 
-function isRelevantByTerms(record: MemoryRecord, terms: Set<string>): boolean {
-  if (record.layer === "L1") return true;
-  const haystack = `${record.tags.join(" ")} ${record.statement} ${record.ruleType ?? ""}`.toLowerCase();
-  return [...terms].some((t) => haystack.includes(t));
-}
-
 /**
  * Rank term matches within the governed candidate set by query specificity.
  * Broad applicability ("testing", "release") must not crowd out a newly
@@ -199,7 +193,6 @@ async function selectMemoryHybrid(
       const rec = l2.find((r) => r.id === h.id);
       return rec ? [rec] : [];
     });
-    const applicableIds = new Set(explicitApplicableL2.map((record) => record.id));
     // FTS5 MATCH treats a natural-language query as a conjunction of terms.
     // A correctly indexed memory may therefore be missed by the full question.
     // Fall back only within the already-governed processor output, never to
