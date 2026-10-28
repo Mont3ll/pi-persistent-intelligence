@@ -7,7 +7,7 @@ import { suggestVaultRefs } from "./retriever";
 import { isAutoApplyEligibleCandidate } from "./trust";
 import { classifyCaptureIntent } from "./capture-intent";
 import { loadConfig } from "./config";
-import { decideTrustedAutoEvidenceEligibility } from "./auto-evidence-policy";
+import { decideTrustedAutoEvidenceEligibility, type AutoEvidenceDecision } from "./auto-evidence-policy";
 import { createTranscriptDiscoveryIndex, type TranscriptProofOptions } from "./transcript-proof";
 import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
@@ -231,17 +231,26 @@ function withCurationDiscovery(root: string, options: CurateOptions): CurateOpti
   };
 }
 
-function eligibleCandidates(root: string, options: CurateOptions): CaptureCandidate[] {
+function eligibleCandidates(
+  root: string,
+  options: CurateOptions,
+  sourceProofs?: Map<string, AutoEvidenceDecision>,
+): CaptureCandidate[] {
   const config = loadConfig(root).curator;
   const minConfidence = options.minConfidence ?? config.minConfidence;
   const minEvidenceCount = options.minEvidenceCount ?? config.minEvidenceCount;
   const evidence = readEvidenceRecords(root);
-  return listCandidates(root).filter((candidate) =>
-    candidate.status === "new" &&
-    (candidate.confidence ?? 0) >= minConfidence &&
-    (candidate.evidence_refs.length >= minEvidenceCount
-      || decideTrustedAutoEvidenceEligibility(candidate, evidence, config, options.trustedTranscriptOptions).basis === "transcript_verified_direct_user")
-  );
+  return listCandidates(root).filter((candidate) => {
+    if (candidate.status !== "new" || (candidate.confidence ?? 0) < minConfidence) return false;
+    if (candidate.evidence_refs.length >= minEvidenceCount) return true;
+    const decision = decideTrustedAutoEvidenceEligibility(
+      candidate, evidence, config, options.trustedTranscriptOptions);
+    if (decision.basis !== "transcript_verified_direct_user") return false;
+    // Reuse solely within this synchronous proposal construction. No proof
+    // result is persisted or carried over to apply/replay or the async LLM pass.
+    sourceProofs?.set(candidate.id, decision);
+    return true;
+  });
 }
 
 function currentPolicyAllowsAutoApply(candidate: CaptureCandidate): boolean {
@@ -259,7 +268,8 @@ function currentPolicyAllowsAutoApply(candidate: CaptureCandidate): boolean {
 
 function buildPatch(root: string, options: CurateOptions, llmContradictions = new Map<string, LlmContradiction>()): MemoryPatch {
   options = withCurationDiscovery(root, options);
-  const eligible = eligibleCandidates(root, options);
+  const sourceProofs = new Map<string, AutoEvidenceDecision>();
+  const eligible = eligibleCandidates(root, options, sourceProofs);
   const curatorConfig = loadConfig(root).curator;
   const configuredEvidenceFloor = curatorConfig.minEvidenceCount;
   const activeRecords = loadActiveRecords(root);
@@ -351,7 +361,8 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       const isGlobalPreference = scopeTarget?.type === "global" && candidate.capture_intent === "user_preference";
       // A human may explicitly review a verified single-source candidate,
       // but that exception must not silently lower configured auto-apply floors.
-      const evidenceDecision = decideTrustedAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig, options.trustedTranscriptOptions);
+      const evidenceDecision = sourceProofs.get(rawCandidate.id)
+        ?? decideTrustedAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig, options.trustedTranscriptOptions);
       const evidenceCountMeetsConfiguredFloor = evidenceDecision.eligible;
       const autoApplyEligible = evidenceCountMeetsConfiguredFloor
         && !isGlobalPreference
