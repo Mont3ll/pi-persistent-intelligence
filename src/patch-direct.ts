@@ -24,7 +24,7 @@ function hasInvalidatedEvidence(root: string, op: PatchOp): boolean { const ids 
 type ApplyDecision = { ok: true } | { ok: false; reason: PatchSkipReason; detail: string };
 function reject(reason: PatchSkipReason, detail: string): ApplyDecision { return { ok: false, reason, detail }; }
 
-function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["generated_by"], mode: MemoryPatch["mode"]): ApplyDecision {
+function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["generated_by"], mode: MemoryPatch["mode"], explicitlySelected: boolean): ApplyDecision {
   const records = loadAllRecords(root); const byId = new Map(records.map((record) => [record.id, record]));
   if (op.op === "add" && !op.record) return reject("malformed_operation", `Add operation ${op.op_id} is missing its record.`);
   if (op.op === "supersede" && (!op.target_id || !op.to_record)) return reject("malformed_operation", `Supersede operation ${op.op_id} is missing its target or replacement record.`);
@@ -60,8 +60,8 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
       // task-bound or rejected classification. Never auto-promote such a
       // candidate from an auto patch; deliberate manual review may approve it
       // only after the normal structured-evidence and record checks.
-      if (noDurableCueOnly && candidate.capture_intent && mode === "auto") {
-        return reject("capture_policy_hold", `Candidate ${candidate.id} has no currently recognized durability cue; automatic promotion is held for manual review.`);
+      if (noDurableCueOnly && candidate.capture_intent && (mode === "auto" || !explicitlySelected)) {
+        return reject("capture_policy_hold", `Candidate ${candidate.id} has no currently recognized durability cue; promotion requires an explicit manual selection from a non-auto proposal.`);
       }
       const replacement = op.record ?? op.to_record;
       if (replacement && replacement.statement !== candidate.text) {
@@ -123,7 +123,7 @@ export function applyPatchDirect(root: string, patch: MemoryPatch, options: Appl
   writePatchFile(root, redactPrivacyPatchForPersistence(patch, privacyTargets, correlatedCandidateIds));
   for (const targetId of privacyTargets) purgeCorrelatedPrivacyArtifacts(root, targetId);
   const applied_ops: string[] = []; const skipped_ops: PatchSkip[] = [];
-  for (const op of executionPatch.ops) { const selected = isSelected(op, options.selectedOpIds); const decision = selected ? applyDecision(root, op, executionPatch.generated_by, executionPatch.mode) : reject("not_selected", `Operation ${op.op_id} was not selected for application.`); if (decision.ok) { applyOp(root, patch.patch_id, op, options.now); applied_ops.push(op.op_id); } else skipped_ops.push({ op_id: op.op_id, ...(op.candidate_id ? { candidate_id: op.candidate_id } : {}), reason: decision.reason, detail: decision.detail }); }
+  for (const op of executionPatch.ops) { const selected = isSelected(op, options.selectedOpIds); const decision = selected ? applyDecision(root, op, executionPatch.generated_by, executionPatch.mode, options.selectedOpIds?.includes(op.op_id) === true) : reject("not_selected", `Operation ${op.op_id} was not selected for application.`); if (decision.ok) { applyOp(root, patch.patch_id, op, options.now); applied_ops.push(op.op_id); } else skipped_ops.push({ op_id: op.op_id, ...(op.candidate_id ? { candidate_id: op.candidate_id } : {}), reason: decision.reason, detail: decision.detail }); }
   const candidateIds = [...new Set(executionPatch.ops.flatMap((op) => op.candidate_id ? [op.candidate_id] : []))];
   for (const candidateId of candidateIds) { const candidateOps = executionPatch.ops.filter((op) => op.candidate_id === candidateId); const appliedCount = candidateOps.filter((op) => applied_ops.includes(op.op_id)).length; const selectedCount = candidateOps.filter((op) => isSelected(op, options.selectedOpIds)).length; if (appliedCount === candidateOps.length) markCandidateIfNew(root, candidateId, "patched"); else if (selectedCount > 0 && appliedCount === 0) { const selectedSkips = skipped_ops.filter((skip) => skip.candidate_id === candidateId && candidateOps.some((op) => op.op_id === skip.op_id)); if (!selectedSkips.every((skip) => skip.reason === "unresolved_evidence" || skip.reason === "capture_policy_hold")) markCandidateIfNew(root, candidateId, "rejected"); } }
   const status: MemoryPatch["status"] = applied_ops.length === 0 && skipped_ops.length > 0 ? "rejected_at_apply" : skipped_ops.length > 0 ? "partially_applied" : "applied";
