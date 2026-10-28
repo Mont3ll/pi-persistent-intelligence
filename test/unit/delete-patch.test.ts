@@ -540,6 +540,75 @@ describe("delete patch", () => {
     expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("active");
   });
 
+  test("durable privacy snapshot commitment rejects byte-valid unredacted working snapshot reversion", () => {
+    for (const mutated of ["working-original", "working-valid-json", "original-valid-json"] as const) {
+      const dir = root();
+      unsafeAddMemoryRecord(dir, record());
+      const secret = "PRIVACY_COMMITTED_SNAPSHOT_MARKER_506";
+      const prior: MemoryPatch = {
+        ...patch("audit_preserving"),
+        patch_id: "patch_commitment_historical_" + mutated,
+        ops: [{
+          op_id: "op_historical_update", op: "update", target_id: "mem_delete",
+          updates: { review: {
+            cadence_days: 32, next_review: "2026-06-20",
+            change_condition: secret,
+          } }, risk: "low", default_selected: true,
+        }],
+      };
+      expect(applyPatch(dir, prior, { now: "2026-05-19T09:30:00.000Z" }).applied_ops)
+        .toEqual(["op_historical_update"]);
+      const transactions = ensureMemoryDirs(dir).governance.transactions;
+      const historicId = readdirSync(transactions)[0]!;
+      const originalHistoricalManifest = readFileSync(join(transactions, historicId, "intent.json"), "utf8");
+      expect(originalHistoricalManifest).toContain(secret);
+      expect(() => applyPatch(dir, patch("privacy_purge"), {
+        selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
+        faultAfterStage: "intent_written",
+      })).toThrow();
+      const purgeId = readdirSync(transactions).find((id) => id !== historicId)!;
+      const intentFile = join(transactions, purgeId, "intent.json");
+      const durable = JSON.parse(readFileSync(intentFile, "utf8"));
+      expect(durable.stage).toBe("intent_written");
+      expect(durable.privacy_manifest_snapshot).toBe(true);
+      expect(durable.privacy_snapshot_commitment.original).toMatch(/^[a-f0-9]{64}$/);
+      expect(durable.privacy_snapshot_commitment.working).toMatch(/^[a-f0-9]{64}$/);
+
+      const snapshots = join(transactions, purgeId, "workspace",
+        "governance-manifest-snapshots");
+      const original = join(snapshots, "original", historicId + ".json");
+      const working = join(snapshots, "working", historicId + ".json");
+      const originalBytes = readFileSync(original, "utf8");
+      expect(originalBytes).toContain(secret);
+      const workingBytes = readFileSync(working, "utf8");
+      expect(workingBytes).not.toContain(secret);
+
+      if (mutated === "working-original") writeFileSync(working, originalBytes);
+      if (mutated === "working-valid-json") {
+        const parsed = JSON.parse(workingBytes);
+        parsed.updated_at = "2026-05-19T10:00:01.000Z";
+        writeFileSync(working, JSON.stringify(parsed, null, 2) + "\n");
+      }
+      if (mutated === "original-valid-json") {
+        const parsed = JSON.parse(originalBytes);
+        parsed.updated_at = "2026-05-19T09:30:01.000Z";
+        writeFileSync(original, JSON.stringify(parsed, null, 2) + "\n");
+      }
+
+      const report = recoverGovernanceTransactions(dir, "2026-05-19T10:01:00.000Z");
+      expect(report.completed).toEqual([]);
+      expect(report.blocked.some((item) =>
+        item.transaction_id === purgeId
+        && /snapshot bytes differ/.test(item.reason))).toBe(true);
+      expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("active");
+      expect(readFileSync(join(transactions, historicId, "intent.json"), "utf8"))
+        .toBe(originalHistoricalManifest);
+      expect(existsSync(join(transactions, purgeId, "workspace"))).toBe(true);
+      expect(durable.privacy_snapshot_commitment)
+        .toEqual(JSON.parse(readFileSync(intentFile, "utf8")).privacy_snapshot_commitment);
+    }
+  });
+
   test("unknown historical backups, missing intents and symlink transaction directories fail closed before purge", () => {
     for (const defect of ["backup", "missing-intent", "symlink-directory"] as const) {
       const dir = root();
