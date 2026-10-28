@@ -78,7 +78,7 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
         if (!evidenceDecision.eligible) {
           return reject("capture_policy_hold", `Candidate ${candidate.id} does not satisfy the current automatic evidence policy; explicit non-auto review is required.`);
         }
-        if (mode === "auto") {
+        if (mode === "auto" || !explicitlySelected) {
           const verified = attachVerification(root, applyCandidateMatch(candidate, loadAllRecords(root).filter((record) => record.status === "active")));
           if (op.op !== "add" || op.risk !== "low" || op.default_selected !== true
             || !isAutoApplyEligibleCandidate(verified, cfg.governance.mode)) {
