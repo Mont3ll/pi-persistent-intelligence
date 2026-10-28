@@ -120,6 +120,35 @@ describe("opt-in source-aware governed curation", () => {
     expect(loadActiveRecords(root)).toHaveLength(0);
   });
 
+  test("editing source-aware auto patch scope cannot turn a project instruction global", () => {
+    const root = setup(true, true);
+    const patch = curateInbox(root, { now: "2026-10-28T09:00:00Z", mode: "auto", governanceMode: "compatibility" });
+    expect(patch.ops[0]?.default_selected).toBe(true);
+    patch.ops[0]!.record!.scope = { type: "global" };
+    const result = applyPatch(root, patch, {
+      selectedOpIds: [patch.ops[0]!.op_id], now: "2026-10-28T09:01:00Z",
+    });
+    expect(result.applied_ops).toHaveLength(0);
+    expect(result.skipped_ops).toContainEqual(expect.objectContaining({ reason: "capture_policy_hold" }));
+    expect(loadActiveRecords(root)).toHaveLength(0);
+  });
+
+  test("autoCurate being switched off invalidates a stale source-aware auto patch", () => {
+    const root = setup(true, true);
+    const patch = curateInbox(root, { now: "2026-10-28T09:00:00Z", mode: "auto", governanceMode: "compatibility" });
+    expect(patch.ops[0]?.default_selected).toBe(true);
+    const path = ensureMemoryDirs(root).config;
+    const cfg = JSON.parse(readFileSync(path, "utf8"));
+    cfg.curator.autoCurate = "off";
+    writeFileSync(path, JSON.stringify(cfg));
+    const result = applyPatch(root, patch, {
+      selectedOpIds: [patch.ops[0]!.op_id], now: "2026-10-28T09:01:00Z",
+    });
+    expect(result.applied_ops).toHaveLength(0);
+    expect(result.skipped_ops).toContainEqual(expect.objectContaining({ reason: "capture_policy_hold" }));
+    expect(loadActiveRecords(root)).toHaveLength(0);
+  });
+
   test("stale default_selected cannot bypass a below-floor hold in supervised mode", () => {
     const root = setup(false, false);
     const patch = curateInbox(root, {
