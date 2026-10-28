@@ -609,6 +609,53 @@ describe("delete patch", () => {
     }
   });
 
+  test("reverting one of two redacted working snapshots blocks the whole historical purge", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    const secret = "PRIVACY_TWO_HISTORY_REVERSION_MARKER_530";
+    for (const [index, id] of ["a", "b"].entries()) {
+      const old: MemoryPatch = {
+        ...patch("audit_preserving"),
+        patch_id: "patch_two_history_" + id,
+        ops: [{
+          op_id: "op_history_" + id, op: "update", target_id: "mem_delete",
+          updates: { review: {
+            cadence_days: 31 + index,
+            next_review: "2026-06-20",
+            change_condition: secret,
+          } }, risk: "low", default_selected: true,
+        }],
+      };
+      expect(applyPatch(dir, old, { now: "2026-05-19T09:30:00.000Z" }).applied_ops)
+        .toEqual(["op_history_" + id]);
+    }
+    const txRoot = ensureMemoryDirs(dir).governance.transactions;
+    const originalIds = readdirSync(txRoot);
+    expect(originalIds).toHaveLength(2);
+    const originals = originalIds.map((id) => readFileSync(join(txRoot, id, "intent.json"), "utf8"));
+    expect(originals.every((value) => value.includes(secret))).toBe(true);
+    expect(() => applyPatch(dir, patch("privacy_purge"), {
+      selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
+      faultAfterStage: "intent_written",
+    })).toThrow();
+    const activeId = readdirSync(txRoot).find((id) => !originalIds.includes(id))!;
+    const snapshotRoot = join(txRoot, activeId, "workspace", "governance-manifest-snapshots");
+    const id = originalIds[0]!;
+    const originalSnapshot = readFileSync(join(snapshotRoot, "original", id + ".json"), "utf8");
+    const workingSnapshotPath = join(snapshotRoot, "working", id + ".json");
+    expect(readFileSync(workingSnapshotPath, "utf8")).not.toContain(secret);
+    writeFileSync(workingSnapshotPath, originalSnapshot); // valid JSON, matching filename
+
+    const report = recoverGovernanceTransactions(dir, "2026-05-19T10:01:00.000Z");
+    expect(report.completed).toHaveLength(0);
+    expect(report.blocked.some((entry) =>
+      entry.transaction_id === activeId && /snapshot bytes differ/.test(entry.reason))).toBe(true);
+    expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("active");
+    expect(originalIds.map((id) => readFileSync(join(txRoot, id, "intent.json"), "utf8")))
+      .toEqual(originals);
+    expect(readdirSync(txRoot)).toHaveLength(3);
+  });
+
   test("unknown historical backups, missing intents and symlink transaction directories fail closed before purge", () => {
     for (const defect of ["backup", "missing-intent", "symlink-directory"] as const) {
       const dir = root();
