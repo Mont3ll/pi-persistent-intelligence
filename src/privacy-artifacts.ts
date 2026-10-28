@@ -147,7 +147,16 @@ function walkFiles(dir: string): string[] {
 /** Include immutable selection receipts when validating/correlating/redacting
  * privacy artifacts. Legacy top-level patch files are still supported. */
 function patchArtifactFiles(patchesDir: string): string[] {
-  return walkFiles(patchesDir).filter((file) => extname(file).toLowerCase() === ".json");
+  const topLevel = readdirSync(patchesDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => join(patchesDir, entry.name));
+  const receiptsDir = join(patchesDir, "receipts");
+  const receipts = existsSync(receiptsDir)
+    ? readdirSync(receiptsDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => join(receiptsDir, entry.name))
+    : [];
+  return [...topLevel, ...receipts];
 }
 
 function reportChange(file: string, needles: string[]): ArtifactChange | null {
