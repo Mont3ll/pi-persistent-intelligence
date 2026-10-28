@@ -12,7 +12,7 @@ import { isAutoApplyEligibleCandidate } from "./trust";
 import { renderMemoryToDisk } from "./render";
 import { ensureMemoryDirs } from "./paths";
 import { writeVaultPromotionReport } from "./vaultPromotion";
-import { createDeletionTombstone, appendDeletionTombstone, isTombstonedRecord } from "./tombstones";
+import { createDeletionTombstone, appendDeletionTombstone, isTombstonedRecord, readDeletionTombstones } from "./tombstones";
 import { appendEvidenceRecordIfMissing, readEvidenceRecords, redactEvidenceForMemory } from "./evidence";
 import { collectPrivacyCandidateCorrelations, purgeCorrelatedPrivacyArtifacts, redactPrivacyPatchForExecution, redactPrivacyPatchForPersistence, validatePrivacyArtifactSet } from "./privacy-artifacts";
 import { affectedRecordIdsFromPatchOps, postMutationModeFromOps, runPostMutationChecks } from "./post-mutation-checks";
@@ -154,10 +154,21 @@ export function readPatchFile(root: string, patchId: string): MemoryPatch { cons
 
 export function applyPatchDirect(root: string, patch: MemoryPatch, options: ApplyPatchDirectOptions): MemoryPatch {
   const privacyTargets = patch.ops.filter((op) => isSelected(op, options.selectedOpIds) && op.op === "delete" && op.deletion_mode === "privacy_purge" && op.target_id).map((op) => op.target_id!);
+  // A caller can still possess an old, unredacted proposal after privacy
+  // deletion. Execution must check that original op for tombstones, but its
+  // *returned receipt* and latest-view patch must never persist old payloads.
+  // This also covers no-canonical-change tombstoned replays.
+  const alreadyPurged = new Set(readDeletionTombstones(root)
+    .filter((tombstone) => tombstone.deletion_mode === "privacy_purge")
+    .map((tombstone) => tombstone.deleted_record_id));
+  const tombstonedTargets = [...new Set(patch.ops.flatMap((op) =>
+    [op.target_id, op.record?.id, op.to_record?.id].filter(
+      (id): id is string => typeof id === "string" && alreadyPurged.has(id))))];
+  const persistencePrivacyTargets = [...new Set([...privacyTargets, ...tombstonedTargets])];
   if (privacyTargets.length > 0) validatePrivacyArtifactSet(root);
   const correlatedCandidateIds = privacyTargets.length > 0 ? collectPrivacyCandidateCorrelations(root, privacyTargets) : [];
   const executionPatch = redactPrivacyPatchForExecution(patch, privacyTargets, correlatedCandidateIds);
-  writePatchFile(root, redactPrivacyPatchForPersistence(patch, privacyTargets, correlatedCandidateIds));
+  writePatchFile(root, redactPrivacyPatchForPersistence(patch, persistencePrivacyTargets, correlatedCandidateIds));
   for (const targetId of privacyTargets) purgeCorrelatedPrivacyArtifacts(root, targetId);
   const applied_ops: string[] = []; const skipped_ops: PatchSkip[] = [];
   for (const op of executionPatch.ops) { const selected = isSelected(op, options.selectedOpIds); const decision = selected ? applyDecision(root, op, executionPatch.generated_by, executionPatch.mode, options.selectedOpIds?.includes(op.op_id) === true, options.trustedTranscriptOptions) : reject("not_selected", `Operation ${op.op_id} was not selected for application.`); if (decision.ok) { applyOp(root, patch.patch_id, op, options.now); applied_ops.push(op.op_id); } else skipped_ops.push({ op_id: op.op_id, ...(op.candidate_id ? { candidate_id: op.candidate_id } : {}), reason: decision.reason, detail: decision.detail }); }
@@ -165,7 +176,7 @@ export function applyPatchDirect(root: string, patch: MemoryPatch, options: Appl
   for (const candidateId of candidateIds) { const candidateOps = executionPatch.ops.filter((op) => op.candidate_id === candidateId); const appliedCount = candidateOps.filter((op) => applied_ops.includes(op.op_id)).length; const selectedCount = candidateOps.filter((op) => isSelected(op, options.selectedOpIds)).length; if (appliedCount === candidateOps.length) markCandidateIfNew(root, candidateId, "patched"); else if (selectedCount > 0 && appliedCount === 0) { const selectedSkips = skipped_ops.filter((skip) => skip.candidate_id === candidateId && candidateOps.some((op) => op.op_id === skip.op_id)); if (!selectedSkips.every((skip) => skip.reason === "unresolved_evidence" || skip.reason === "capture_policy_hold")) markCandidateIfNew(root, candidateId, "rejected"); } }
   const status: MemoryPatch["status"] = applied_ops.length === 0 && skipped_ops.length > 0 ? "rejected_at_apply" : skipped_ops.length > 0 ? "partially_applied" : "applied";
   const appliedPatch: MemoryPatch = { ...executionPatch, status, applied_at: options.now, applied_ops, skipped_ops };
-  const persistedPatch = redactPrivacyPatchForPersistence(appliedPatch, privacyTargets, correlatedCandidateIds); writePatchFile(root, persistedPatch);
+  const persistedPatch = redactPrivacyPatchForPersistence(appliedPatch, persistencePrivacyTargets, correlatedCandidateIds); writePatchFile(root, persistedPatch);
   const appliedOps = executionPatch.ops.filter((op) => applied_ops.includes(op.op_id)); renderMemoryToDisk(root);
   runPostMutationChecks({ root, patchId: patch.patch_id, ops: appliedOps, affectedRecordIds: affectedRecordIdsFromPatchOps(appliedOps), mode: postMutationModeFromOps(appliedOps), phase: "post_patch" });
   return persistedPatch;
