@@ -300,6 +300,45 @@ describe("delete patch", () => {
     expect(readdirSync(txRoot)).toHaveLength(3);
   });
 
+  test("completed historical workspace and orphan intent temp cannot retain payload after privacy purge", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    const secret = "PRIVATE_ORPHAN_WORKSPACE_MARKER_856";
+    const prior: MemoryPatch = {
+      ...patch("audit_preserving"), patch_id: "patch_prior_workspace",
+      ops: [{
+        op_id: "op_update", op: "update", target_id: "mem_delete",
+        updates: { review: {
+          cadence_days: 30, next_review: "2026-06-18",
+          change_condition: secret,
+        } },
+        risk: "low", default_selected: true,
+      }],
+    };
+    expect(applyPatch(dir, prior, {
+      selectedOpIds: ["op_update"], now: "2026-05-19T09:30:00.000Z",
+    }).applied_ops).toEqual(["op_update"]);
+    const txRoot = ensureMemoryDirs(dir).governance.transactions;
+    const oldId = readdirSync(txRoot)[0]!;
+    const folder = join(txRoot, oldId);
+    const staleWorkspace = join(folder, "workspace");
+    mkdirSync(staleWorkspace);
+    writeFileSync(join(staleWorkspace, "stale-original.txt"), secret);
+    const strayTemp = join(folder, "intent.json.tmp-99999-1-abcdef");
+    writeFileSync(strayTemp, secret);
+    const originalManifest = join(folder, "intent.json");
+    expect(readFileSync(originalManifest, "utf8")).toContain(secret);
+
+    const result = applyPatch(dir, patch("privacy_purge"), {
+      selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
+    });
+    expect(result.applied_ops).toEqual(["op_001"]);
+    expect(existsSync(staleWorkspace)).toBe(false);
+    expect(existsSync(strayTemp)).toBe(false);
+    expect(readFileSync(originalManifest, "utf8")).not.toContain(secret);
+    expect(loadAllRecords(dir).find((record) => record.id === "mem_delete")?.status).toBe("deleted");
+  });
+
   test("privacy purge also removes sensitive skipped-operation details from historical manifests", () => {
     const dir = root();
     unsafeAddMemoryRecord(dir, record());
