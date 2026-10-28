@@ -159,6 +159,12 @@ Hard invariants are reserved for safety properties that must never be violated:
 
 ---
 
+## Documentation writing
+
+Use the [Humanizer skill](https://github.com/blader/humanizer) as a final editing pass when changing the README, wiki, changelog or release notes. Keep the language plain and specific. Cut staged introductions, repeated summary lines and inflated claims; preserve exact commands, version numbers, links, safety limits and test results. Technical documentation should read like a maintained operating manual, not a launch announcement.
+
+When a change affects user behavior or release operation, update the relevant wiki page, the README if the behavior changes the first-run story, and the changelog or candidate release notes. Mark unpublished features as candidates. Never turn local verification, an unavailable CI job, or a disposable-store experiment into a claim of production deployment.
+
 ## Pull requests
 
 - Run `bun run verify:pr` before opening or updating a PR
