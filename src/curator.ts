@@ -8,7 +8,7 @@ import { isAutoApplyEligibleCandidate } from "./trust";
 import { classifyCaptureIntent } from "./capture-intent";
 import { loadConfig } from "./config";
 import { decideTrustedAutoEvidenceEligibility } from "./auto-evidence-policy";
-import type { TranscriptProofOptions } from "./transcript-proof";
+import { createTranscriptDiscoveryIndex, type TranscriptProofOptions } from "./transcript-proof";
 import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
 import { createInquiryFromCandidate } from "./inquiries";
@@ -209,6 +209,28 @@ function candidateToRecord(candidate: CaptureCandidate, now: string, target?: Ca
   };
 }
 
+/**
+ * One bounded session-header discovery per curation attempt. There is no
+ * process-wide or persisted cache: a later attempt sees newly flushed
+ * transcripts, while apply runs a fresh proof in its transaction.
+ */
+function withCurationDiscovery(root: string, options: CurateOptions): CurateOptions {
+  if (options.trustedTranscriptOptions?.discoveryIndex) return options;
+  const config = loadConfig(root).curator;
+  if (config.sourceAwareAuto !== "transcript-verified-direct-user") return options;
+  // Avoid scanning the session archive when no under-floor NEW candidate exists.
+  const hasUnderfloor = listCandidates(root).some((candidate) =>
+    candidate.status === "new" && candidate.evidence_refs.length < config.minEvidenceCount);
+  if (!hasUnderfloor) return options;
+  return {
+    ...options,
+    trustedTranscriptOptions: {
+      ...options.trustedTranscriptOptions,
+      discoveryIndex: createTranscriptDiscoveryIndex(options.trustedTranscriptOptions),
+    },
+  };
+}
+
 function eligibleCandidates(root: string, options: CurateOptions): CaptureCandidate[] {
   const config = loadConfig(root).curator;
   const minConfidence = options.minConfidence ?? config.minConfidence;
@@ -236,6 +258,7 @@ function currentPolicyAllowsAutoApply(candidate: CaptureCandidate): boolean {
 }
 
 function buildPatch(root: string, options: CurateOptions, llmContradictions = new Map<string, LlmContradiction>()): MemoryPatch {
+  options = withCurationDiscovery(root, options);
   const eligible = eligibleCandidates(root, options);
   const curatorConfig = loadConfig(root).curator;
   const configuredEvidenceFloor = curatorConfig.minEvidenceCount;
@@ -388,6 +411,7 @@ export function curateInbox(root: string, options: CurateOptions): MemoryPatch {
 }
 
 export async function curateInboxWithLlmReview(root: string, options: CurateOptions, llm: LlmAssistConfig): Promise<MemoryPatch> {
+  options = withCurationDiscovery(root, options);
   const candidates = eligibleCandidates(root, options);
   const records = loadActiveRecords(root);
   if (!llm.enabled || !llm.command || candidates.length === 0 || records.length === 0) return buildPatch(root, options);
