@@ -24,6 +24,7 @@ All settings are optional. Missing keys fall back to defaults.
   "curator": {
     "minConfidence": 0.75,
     "minEvidenceCount": 2,
+    "sourceAwareAuto": "off",
     "autoCurate": "high-only",
     "autoCurateHighThreshold": 0.85,
     "inboxPromptThreshold": 3
@@ -87,10 +88,13 @@ This timeout does not change explicit qmd search, setup, or update command budge
 | Key | Default | Description |
 |---|---|---|
 | `minConfidence` | `0.75` | Minimum confidence for a candidate to be eligible for curation |
-| `minEvidenceCount` | `2` | Minimum evidence references required at apply time (1 for inbox display) |
+| `minEvidenceCount` | `2` | Configured reference-count threshold for automatic curation; explicit manual review may propose a single source without auto-selecting it |
+| `sourceAwareAuto` | `"off"` | Opt-in source-aware eligibility: `"off"` (default) or `"transcript-verified-direct-user"`. Allows one fully attributed, independently transcript-verified project-scoped direct-user turn to satisfy the automatic evidence requirement without reducing `minEvidenceCount`. All other governance gates remain in force. |
 | `autoCurate` | `"high-only"` | Auto-curation mode: `"off"`, `"high-only"`, or `"all-eligible"` |
 | `autoCurateHighThreshold` | `0.85` | Confidence floor for `"high-only"` auto-apply |
 | `inboxPromptThreshold` | `3` | Minimum pending candidates before inbox overlay appears (`0` to always show; `999` to disable) |
+
+**R0b release gate:** The opt-in source-aware policy is a guarded eligibility contract. The shipped capture path records observed host session identities but does **not** itself mark source transcripts verified. A source is eligible only after a separate trusted transcript-verification procedure sets `source_transcript_verified: true` on supporting evidence with matching session, turn, original-message SHA-256, trust and scope. Do not enable the opt-in policy on a live store until that procedure and its operational acceptance are verified. Historical and one-source ambiguous candidates do not automatically gain user authority. Stale auto proposals revalidate the configured floor and the source proof at application.
 
 ### `maintainer`
 
