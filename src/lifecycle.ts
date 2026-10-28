@@ -23,6 +23,7 @@ import { maybeCorrectionSignal } from "./corrections";
 import { actionsFromAgentMessages } from "./capture-activity";
 import { processCaptureTurn } from "./capture-coordinator";
 import { isSyntheticCaptureContext } from "./capture-intent";
+import { resolveCaptureSessionIdentity } from "./capture-provenance";
 import { buildInboxRejectionPatch } from "./inbox-rejection";
 import { createPatchReviewComponent } from "./tui/PatchReviewPanel";
 import { MemoryFtsIndex } from "./search/fts";
@@ -400,11 +401,12 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
         },
       };
     },
-    agentEnd: async (event: any) => {
+    agentEnd: async (event: any, ctx?: CommandUiContext & { sessionManager?: { getSessionId?: () => unknown } }) => {
       let sawObservableOutcome = false;
       const eventMessages = (event.messages as any[]) ?? [];
       const captureActions = actionsFromAgentMessages(eventMessages, state.sessionCwd);
-      const captureSessionId = String((event as any).session_id ?? (event as any).sessionId ?? "current-session");
+      const identity = resolveCaptureSessionIdentity(event, ctx);
+      const captureSessionId = identity.session_id;
       for (const [messageIndex, msg] of eventMessages.entries()) {
         if (msg.role === "user" && !msg.customType) {
           const text = dependencies.extractText(msg.content);
