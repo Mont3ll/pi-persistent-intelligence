@@ -334,6 +334,33 @@ describe("delete patch", () => {
     expect(JSON.stringify(replay)).not.toContain(secret);
   });
 
+  test("privacy purge fault before durable intent leaves historical manifests and canonical source unchanged", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    const secret = "PRIVACY_PREINTENT_ABORT_MARKER_873";
+    const update: MemoryPatch = {
+      ...patch("audit_preserving"), patch_id: "patch_manifest_abort_fixture",
+      ops: [{
+        op_id: "op_update", op: "update", target_id: "mem_delete",
+        updates: { review: { cadence_days: 30, next_review: "2026-06-18", change_condition: secret } },
+        risk: "low", default_selected: true,
+      }],
+    };
+    applyPatch(dir, update, { selectedOpIds: ["op_update"], now: "2026-05-19T09:30:00.000Z" });
+    const txRoot = ensureMemoryDirs(dir).governance.transactions;
+    const [originalId] = readdirSync(txRoot);
+    const originalManifest = join(txRoot, originalId!, "intent.json");
+    const before = readFileSync(originalManifest, "utf8");
+    expect(before).toContain(secret);
+    expect(() => applyPatch(dir, patch("privacy_purge"), {
+      selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
+      faultAfterStage: "staged",
+    })).toThrow();
+    expect(readFileSync(originalManifest, "utf8")).toBe(before);
+    expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("active");
+    expect(readdirSync(txRoot)).toEqual([originalId]);
+  });
+
   test("a malformed historical governance manifest blocks privacy purge without redacting unrelated live artifacts", () => {
     const dir = root();
     unsafeAddMemoryRecord(dir, record());
