@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { processCaptureTurn } from "../../src/capture-coordinator";
+import { classifyCaptureIntent } from "../../src/capture-intent";
 import { writeDefaultConfig } from "../../src/config";
 import { listCandidates } from "../../src/inbox";
 import { retryVerifiedSourceCandidatesAtSessionStart } from "../../src/next-session-source-retry";
@@ -94,15 +95,18 @@ describe("R3a opt-in next-session source retry", () => {
   test("five genuinely distinct candidates progress across two same-minute startups without receipt aliasing", () => {
     const f = fixture();
     f.persist();
+    // These must be genuine, distinct durable project conventions under the
+    // existing capture classifier. Do not relax policy for a test fixture.
     const statements = [
-      "For this project, always verify security signatures before publishing releases.",
-      "For this project, always publish release notes after each production deployment.",
-      "For this project, always archive release audit logs for traceability.",
-      "For this project, always validate dependency hashes before release tagging.",
+      "For this project, always use the signed-security-checklist before publishing releases.",
+      "For this project, always use the release-notes checklist after production deployment.",
+      "For this project, always keep the audit-traceability register for every release.",
+      "For this project, always use the dependency-hash checklist before release tagging.",
     ];
     for (let index = 0; index < statements.length; index++) {
       const sessionId = `other-session-${index}`;
       const message = statements[index]!;
+      expect(classifyCaptureIntent(message).intent).toBe("project_convention");
       const created = processCaptureTurn(f.root, {
         session_id: sessionId,
         turn_id: `runtime-turn-${index}`,
