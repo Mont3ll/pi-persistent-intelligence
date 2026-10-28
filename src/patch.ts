@@ -107,9 +107,12 @@ function matchingLegacyReceipt(
   selectedOpIds: string[] | undefined,
   result: MemoryPatch,
 ): "match" | "different" | "ambiguous" {
-  if (!result || !Array.isArray(result.ops)
-    || result.patch_id !== patch.patch_id || result.generated_by !== patch.generated_by
-    || result.mode !== patch.mode || JSON.stringify(result.ops) !== JSON.stringify(patch.ops)) return "different";
+  if (!result || result.patch_id !== patch.patch_id) return "different";
+  // A completed transaction claiming this patch ID but lacking a parseable
+  // saved proposal cannot justify either replay or another write.
+  if (!Array.isArray(result.ops) || result.generated_by !== patch.generated_by
+    || result.mode !== patch.mode) return "ambiguous";
+  if (JSON.stringify(result.ops) !== JSON.stringify(patch.ops)) return "different";
   const selection = legacyReceiptSelection(result);
   if (selection.kind === "ambiguous") return "ambiguous";
   const expected = selectedOps(patch, selectedOpIds).map((op) => op.op_id);
