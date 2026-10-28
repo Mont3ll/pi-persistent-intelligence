@@ -91,6 +91,63 @@ describe("R3a opt-in next-session source retry", () => {
     } finally { fts.close(); }
   });
 
+  test("five genuinely distinct candidates progress across two same-minute startups without receipt aliasing", () => {
+    const f = fixture();
+    f.persist();
+    const statements = [
+      "For this project, always verify security signatures before publishing releases.",
+      "For this project, always publish release notes after each production deployment.",
+      "For this project, always archive release audit logs for traceability.",
+      "For this project, always validate dependency hashes before release tagging.",
+    ];
+    for (let index = 0; index < statements.length; index++) {
+      const sessionId = `other-session-${index}`;
+      const message = statements[index]!;
+      const created = processCaptureTurn(f.root, {
+        session_id: sessionId,
+        turn_id: `runtime-turn-${index}`,
+        message, launch_cwd: f.cwd, actions: [],
+        now: "2026-10-28T07:00:00Z",
+      });
+      expect(created.candidates_created).toBe(1);
+      const rows = [
+        { type: "session", version: 3, id: sessionId,
+          timestamp: "2026-10-28T07:00:00Z", cwd: f.cwd },
+        { type: "message", id: `recorded-entry-${index}`,
+          timestamp: "2026-10-28T07:00:01Z",
+          message: { role: "user", content: [{ type: "text", text: message }] } },
+      ];
+      writeFileSync(join(f.sessions, `${sessionId}.jsonl`),
+        rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
+    }
+    expect(listCandidates(f.root).filter((c) => c.status === "new")).toHaveLength(5);
+
+    const first = retryVerifiedSourceCandidatesAtSessionStart(f.root, {
+      ...f.options, now: "2026-10-28T08:00:01Z",
+    });
+    expect(first.selected_ops).toBe(3);
+    expect(first.applied_ops).toBe(3);
+    expect(first.apply_receipt?.applied_ops).toHaveLength(3);
+    expect(loadActiveRecords(f.root)).toHaveLength(3);
+    expect(listCandidates(f.root).filter((c) => c.status === "new")).toHaveLength(2);
+
+    const second = retryVerifiedSourceCandidatesAtSessionStart(f.root, {
+      ...f.options, now: "2026-10-28T08:00:02Z",
+    });
+    expect(second.proposed_patch?.patch_id).not.toBe(first.proposed_patch?.patch_id);
+    expect(second.selected_ops).toBe(2);
+    expect(second.applied_ops).toBe(2);
+    expect(second.apply_receipt?.applied_ops).toHaveLength(2);
+    expect(loadActiveRecords(f.root)).toHaveLength(5);
+    expect(new Set(loadActiveRecords(f.root).map((m) => m.id)).size).toBe(5);
+    expect(listCandidates(f.root).filter((c) => c.status === "new")).toHaveLength(0);
+    const third = retryVerifiedSourceCandidatesAtSessionStart(f.root, {
+      ...f.options, now: "2026-10-28T08:00:03Z",
+    });
+    expect(third.status).toBe("no_attributable_candidate");
+    expect(third.applied_ops).toBe(0);
+  });
+
   test("default disabled policy performs no curation or canonical writes even with valid original", () => {
     const f = fixture("off");
     f.persist();
