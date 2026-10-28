@@ -4,11 +4,6 @@ Native governed memory for the pi coding agent: durable project memory, session 
 
 > **Canonical memory is JSONL. Markdown is a rendered projection.**
 
-```bash
-pi install npm:pi-persistent-intelligence
-/reload
-```
-
 ## Why it exists
 
 Coding agents forget project conventions, previous corrections, release decisions, and workflow preferences between sessions. `pi-persistent-intelligence` gives pi a local governed memory layer that can retain useful observations, recall scoped context, and reflect on memory health without silently rewriting durable memory.
