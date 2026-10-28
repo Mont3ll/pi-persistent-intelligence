@@ -330,6 +330,7 @@ export function captureQualityBrowserOptions(report: CaptureQualityReport): Brow
     { id: "messages", label: "Messages evaluated", count: report.messages_evaluated, detail: "Bounded capture events evaluated" },
     { id: "created", label: "Candidates created", count: report.funnel.candidate_created, detail: "New governed capture candidates" },
     { id: "reinforced", label: "Candidates reinforced", count: report.funnel.candidate_reinforced, detail: "Equivalent preferences linked as recurrence" },
+    { id: "already-represented", label: "Already represented", count: report.funnel.candidate_already_represented, detail: "Equivalent active canonical memory; no new candidate or evidence created" },
     { id: "rejected", label: "Rejected", count: report.funnel.rejected, detail: Object.entries(report.rejection_reasons).map(([reason, count]) => `${reason}: ${count}`).join(", ") || "No rejection reasons" },
     { id: "pending", label: "Pending candidates", count: report.pending_candidates, detail: `${report.repeated_pending_preferences} repeated pending preferences` },
     { id: "global", label: "Active global preferences", count: report.active_global_preferences, detail: `Scopes: ${Object.entries(report.scope_distribution).map(([scope, count]) => `${scope}: ${count}`).join(", ") || "none"}` },
