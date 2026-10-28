@@ -11,6 +11,7 @@ import { applyPatch } from "../../src/patch";
 import { buildRetrievalContext, syncFtsIndex } from "../../src/retriever";
 import { MemoryFtsIndex } from "../../src/search/fts";
 import { loadActiveRecords } from "../../src/store";
+import { createTranscriptDiscoveryIndex } from "../../src/transcript-proof";
 
 const directories: string[] = [];
 afterEach(() => { for (const dir of directories) rmSync(dir, { recursive: true, force: true }); directories.length = 0; });
@@ -110,10 +111,14 @@ describe("R0d source-of-record automatic retention", () => {
     f.persistTranscript();
     const patch = f.curate();
     expect(patch.ops[0]?.default_selected).toBe(true);
+    // Intentionally pass an index built while the transcript existed. Public
+    // applyPatch must discard this stale hint and verify from original files.
+    const staleIndex = createTranscriptDiscoveryIndex(f.transcriptOptions);
     rmSync(f.file);
     const applied = applyPatch(f.root, patch, {
       selectedOpIds: [patch.ops[0]!.op_id],
-      now: "2026-10-28T08:01:00Z", trustedTranscriptOptions: f.transcriptOptions,
+      now: "2026-10-28T08:01:00Z",
+      trustedTranscriptOptions: { ...f.transcriptOptions, discoveryIndex: staleIndex },
     });
     expect(applied.applied_ops).toHaveLength(0);
     expect(applied.skipped_ops.some((skip) => skip.reason === "capture_policy_hold")).toBe(true);
