@@ -7,7 +7,8 @@ import { suggestVaultRefs } from "./retriever";
 import { isAutoApplyEligibleCandidate } from "./trust";
 import { classifyCaptureIntent } from "./capture-intent";
 import { loadConfig } from "./config";
-import { decideAutoEvidenceEligibility } from "./auto-evidence-policy";
+import { decideTrustedAutoEvidenceEligibility } from "./auto-evidence-policy";
+import type { TranscriptProofOptions } from "./transcript-proof";
 import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
 import { createInquiryFromCandidate } from "./inquiries";
@@ -27,6 +28,8 @@ interface CurateOptions {
   vaultPath?: string;
   /** Governance mode for auto-apply gating; loaded from config if omitted */
   governanceMode?: "compatibility" | "strict";
+  /** Trusted Pi session roots supplied by host/test harness, never candidates. */
+  trustedTranscriptOptions?: TranscriptProofOptions;
 }
 
 function dateOnly(iso: string): string {
@@ -215,7 +218,7 @@ function eligibleCandidates(root: string, options: CurateOptions): CaptureCandid
     candidate.status === "new" &&
     (candidate.confidence ?? 0) >= minConfidence &&
     (candidate.evidence_refs.length >= minEvidenceCount
-      || decideAutoEvidenceEligibility(candidate, evidence, config).basis === "transcript_verified_direct_user")
+      || decideTrustedAutoEvidenceEligibility(candidate, evidence, config, options.trustedTranscriptOptions).basis === "transcript_verified_direct_user")
   );
 }
 
@@ -325,7 +328,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       const isGlobalPreference = scopeTarget?.type === "global" && candidate.capture_intent === "user_preference";
       // A human may explicitly review a verified single-source candidate,
       // but that exception must not silently lower configured auto-apply floors.
-      const evidenceDecision = decideAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig);
+      const evidenceDecision = decideTrustedAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig, options.trustedTranscriptOptions);
       const evidenceCountMeetsConfiguredFloor = evidenceDecision.eligible;
       const autoApplyEligible = evidenceCountMeetsConfiguredFloor
         && !isGlobalPreference

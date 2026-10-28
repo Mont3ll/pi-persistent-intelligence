@@ -1,6 +1,7 @@
 import type { PiMemoryConfig } from "./config";
 import type { CaptureCandidate, EvidenceRecord } from "./types";
 import { assessSourceEvidence } from "./source-evidence-assessment";
+import { verifyCandidateTranscriptSource, type TranscriptProofOptions } from "./transcript-proof";
 
 export type AutoEvidenceDecision = {
   eligible: boolean;
@@ -69,4 +70,37 @@ export function decideAutoEvidenceEligibility(
     || evidence.resource_id !== (candidate.resource_id ?? "curation")) return held;
 
   return { eligible: true, basis: "transcript_verified_direct_user" };
+}
+
+
+/**
+ * Live R0d evidence gate. Unlike the synthetic R0b contract, it derives
+ * transcript verification from the original Pi session at the moment of
+ * curation/apply. The persisted source_transcript_verified boolean is never
+ * sufficient and is deliberately overwritten in a local in-memory copy.
+ *
+ * The proof is recalculated at application even if the proposal was selected
+ * earlier; missing/unflushed/changed transcripts fail closed for now and can
+ * be reconsidered on the next curation attempt. No evidence is mutated here.
+ */
+export function decideTrustedAutoEvidenceEligibility(
+  candidate: CaptureCandidate,
+  evidenceRecords: readonly EvidenceRecord[],
+  curatorConfig: Pick<PiMemoryConfig["curator"], "minEvidenceCount" | "sourceAwareAuto">,
+  trustedOptions: TranscriptProofOptions = {},
+): AutoEvidenceDecision {
+  if (candidate.evidence_refs.length >= curatorConfig.minEvidenceCount
+    || curatorConfig.sourceAwareAuto === "off") {
+    return decideAutoEvidenceEligibility(candidate, evidenceRecords, curatorConfig);
+  }
+  const source = evidenceRecords.find((item) => item.id === candidate.evidence_refs[0]);
+  if (!source) return { eligible: false, basis: "below_configured_evidence_floor" };
+  const proof = verifyCandidateTranscriptSource(candidate, source, trustedOptions);
+  // Never trust a stored verification flag (including a forged true).
+  // Treat it as transient proof only after independently validating the original.
+  const assessed = evidenceRecords.map((record) => ({
+    ...record,
+    source_transcript_verified: record.id === source.id && proof.verified,
+  }));
+  return decideAutoEvidenceEligibility(candidate, assessed, curatorConfig);
 }

@@ -1,16 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCaptureSourceAttribution } from "../../src/capture-provenance";
 import { writeDefaultConfig } from "../../src/config";
 import { ensureMemoryDirs } from "../../src/paths";
-import { appendEvidenceRecord, readEvidenceRecords } from "../../src/evidence";
+import { appendEvidenceRecord } from "../../src/evidence";
 import { appendCandidate, listCandidates } from "../../src/inbox";
-import { curateInbox } from "../../src/curator";
-import { applyPatch } from "../../src/patch";
+import { curateInbox as curateInboxBase } from "../../src/curator";
+import { applyPatch as applyPatchBase } from "../../src/patch";
 import { loadActiveRecords } from "../../src/store";
-import { writeJsonl } from "../../src/jsonl";
 import type { CaptureCandidate, EvidenceRecord } from "../../src/types";
 
 const roots: string[] = [];
@@ -19,9 +18,37 @@ const original = "For this project, always use the verified release checklist.";
 const source = buildCaptureSourceAttribution("actual-session", "actual-turn", original, original);
 const reference = "session:actual-session:turn:actual-turn";
 
+function trustedTranscriptOptions(root: string) {
+  return { trustedSessionDirs: [join(root, "trusted-sessions")] };
+}
+function curateInbox(root: string, opts: Parameters<typeof curateInboxBase>[1]) {
+  return curateInboxBase(root, { ...opts, trustedTranscriptOptions: trustedTranscriptOptions(root) });
+}
+function applyPatch(root: string, patch: Parameters<typeof applyPatchBase>[1], opts: Parameters<typeof applyPatchBase>[2]) {
+  return applyPatchBase(root, patch, { ...opts, trustedTranscriptOptions: trustedTranscriptOptions(root) });
+}
+
+
 function setup(verified: boolean, enabled: boolean): string {
   const root = mkdtempSync(join(tmpdir(), "pi-source-aware-auto-"));
   roots.push(root);
+  const projectCwd = join(root, "project");
+  const sessionDir = join(root, "trusted-sessions");
+  mkdirSync(projectCwd);
+  mkdirSync(sessionDir);
+  writeFileSync(join(projectCwd, "package.json"), JSON.stringify({ name: "pi", private: true }));
+  // A real source-of-record Pi JSONL transcript, not an evidence flag, is
+  // the only proof accepted by the R0d production eligibility path.
+  if (verified) {
+    const rows = [
+      { type: "session", version: 3, id: source.session_id,
+        timestamp: "2026-10-28T08:00:00Z", cwd: projectCwd },
+      { type: "message", id: "persisted-user-entry",
+        timestamp: "2026-10-28T08:00:01Z",
+        message: { role: "user", content: [{ type: "text", text: original }] } },
+    ];
+    writeFileSync(join(sessionDir, "actual-session.jsonl"), rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  }
   const configPath = writeDefaultConfig(root);
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   config.governance.mode = "compatibility";
@@ -36,6 +63,7 @@ function setup(verified: boolean, enabled: boolean): string {
     source_message_sha256: source.original_message_sha256,
     source_identity_quality: "observed_session_id",
     source_transcript_verified: verified,
+    notes: "capture_evidence_v1",
     trust_class: "direct_user_instruction", polarity: "supports",
     related_memory_ids: [], redaction_status: "none",
   };
@@ -105,12 +133,13 @@ describe("opt-in source-aware governed curation", () => {
     expect(listCandidates(root)[0]?.status).toBe("new");
   });
 
-  test("invalidating transcript verification after proposal prevents stale auto application", () => {
+  test("removing original transcript after proposal prevents stale auto application", () => {
     const root = setup(true, true);
     const patch = curateInbox(root, { now: "2026-10-28T09:00:00Z", mode: "auto", governanceMode: "compatibility" });
     expect(patch.ops[0]?.default_selected).toBe(true);
-    const evidence = readEvidenceRecords(root);
-    writeJsonl(ensureMemoryDirs(root).memory.evidence, evidence.map((item) => ({ ...item, source_transcript_verified: false })));
+    rmSync(join(root, "trusted-sessions", "actual-session.jsonl"));
+    // Deliberately retain stored source_transcript_verified=true. The fresh
+    // original transcript proof, not the persisted flag, must control apply.
     const result = applyPatch(root, patch, {
       selectedOpIds: [patch.ops[0]!.op_id], now: "2026-10-28T09:01:00Z",
     });
@@ -118,6 +147,33 @@ describe("opt-in source-aware governed curation", () => {
     expect(result.skipped_ops).toContainEqual(expect.objectContaining({ reason: "capture_policy_hold" }));
     expect(listCandidates(root)[0]?.status).toBe("new");
     expect(loadActiveRecords(root)).toHaveLength(0);
+  });
+
+  test("a forged stored verified=true cannot authorize a missing transcript", () => {
+    const root = setup(false, true);
+    const path = ensureMemoryDirs(root).memory.evidence;
+    const rows = readFileSync(path, "utf8").split("\n").filter(Boolean).map((line) => {
+      const row = JSON.parse(line);
+      return JSON.stringify({ ...row, source_transcript_verified: true });
+    });
+    writeFileSync(path, rows.join("\n") + "\n");
+    const patch = curateInbox(root, { now: "2026-10-28T09:00:00Z", mode: "auto" });
+    expect(patch.ops).toHaveLength(0);
+  });
+
+  test("a real transcript is accepted even when the stored flag is false", () => {
+    const root = setup(true, true);
+    const path = ensureMemoryDirs(root).memory.evidence;
+    const rows = readFileSync(path, "utf8").split("\n").filter(Boolean).map((line) => {
+      const row = JSON.parse(line);
+      return JSON.stringify({ ...row, source_transcript_verified: false });
+    });
+    writeFileSync(path, rows.join("\n") + "\n");
+    const patch = curateInbox(root, {
+      now: "2026-10-28T09:00:00Z", mode: "auto", governanceMode: "compatibility",
+    });
+    expect(patch.ops).toHaveLength(1);
+    expect(patch.ops[0]?.default_selected).toBe(true);
   });
 
   test("editing source-aware auto patch scope cannot turn a project instruction global", () => {
