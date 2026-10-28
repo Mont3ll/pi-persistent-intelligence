@@ -68,9 +68,16 @@ function cloneLiveStore(root: string, transactionId: string, privacyManifestSnap
     const source = join(root, entry);
     if (existsSync(source)) cpSync(source, join(workspace, entry), { recursive: true, force: true });
   }
-  ensureMemoryDirs(workspace);
-  if (privacyManifestSnapshot) snapshotPrivacyManifests(root, workspace);
-  return workspace;
+  try {
+    ensureMemoryDirs(workspace);
+    if (privacyManifestSnapshot) snapshotPrivacyManifests(root, workspace);
+    return workspace;
+  } catch (error) {
+    // The transaction has not written durable intent. Do not retain copies
+    // of private historical manifests after a failed preflight snapshot.
+    rmSync(transactionDirectory(root, transactionId), { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /**
@@ -83,6 +90,10 @@ function publishPrivacyManifestRedactions(root: string, workspace: string): void
   const originals = join(snapshots, "original");
   const working = join(snapshots, "working");
   if (!existsSync(working)) return;
+  const changes: GovernanceTransactionManifest[] = [];
+  // Validate ALL historical manifest snapshots and current live state before
+  // rewriting any of them. On recovery, already-published redactions are
+  // allowed, but divergent historical receipts stop the purge.
   for (const entry of readdirSync(working, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) {
       throw new GovernanceRecoveryBlockedError("Invalid governance manifest redaction snapshot");
@@ -100,8 +111,9 @@ function publishPrivacyManifestRedactions(root: string, workspace: string): void
     if (live !== original) {
       throw new GovernanceRecoveryBlockedError(`Governance manifest ${id} changed during privacy purge`);
     }
-    writeTransactionManifest(root, manifest);
+    changes.push(manifest);
   }
+  for (const manifest of changes) writeTransactionManifest(root, manifest);
 }
 function publishEntry(root: string, workspace: string, entry: string): void { const source = join(workspace, entry); if (!existsSync(source)) return; const destination = join(root, entry); const staged = `${destination}.tx-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`; rmSync(staged, { recursive: true, force: true }); cpSync(source, staged, { recursive: true, force: true }); rmSync(destination, { recursive: true, force: true }); renameSync(staged, destination); }
 function publishEntries(root: string, workspace: string, entries: readonly string[]): void { for (const entry of entries) publishEntry(root, workspace, entry); }
