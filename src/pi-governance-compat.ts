@@ -406,9 +406,9 @@ export function exportToPiGovernanceBundle(root: string, options: PiGovernanceEx
     target_id: candidate.matched_memory_ids?.[0],
   }));
 
-  const evidence = selection.evidence.map((record) => {
+  const evidence: Array<Record<string, unknown>> = selection.evidence.map((record): Record<string, unknown> => {
     const portable = portableCaptureEvidence(record);
-    return options.redacted ? redactEvidence(portable, redaction) : portable;
+    return options.redacted ? redactEvidence(portable, redaction) : { ...portable };
   });
   const inquiries = selection.inquiries.map((item) => ({ ...item }));
   const reinforcement = selection.reinforcement.map((item) => ({ ...item }));
