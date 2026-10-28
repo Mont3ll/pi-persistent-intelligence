@@ -61,7 +61,7 @@ export function buildCaptureSourceAttribution(
     policy_version: CAPTURE_POLICY_VERSION,
     session_id: sessionId,
     turn_id: turnId,
-    identity_quality: validSessionId(sessionId) ? "stable_session_id" : "unresolved",
+    identity_quality: validSessionId(sessionId) ? "observed_session_id" : "unresolved",
     original_message_sha256: createHash("sha256").update(source).digest("hex"),
     transcript_verification: "unverified",
     original_character_count: source.length,
