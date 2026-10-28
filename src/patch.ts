@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { readCanonicalGeneration } from "./governance-generation";
 import { applyPatchDirect } from "./patch-direct";
 import { assertGovernanceRecoveryClear, recoverGovernanceTransactions } from "./governance-recovery";
-import { readTransactionManifest, runGovernanceTransaction, type GovernanceTransactionStage } from "./governance-transaction";
+import { readTransactionManifest, runGovernanceTransaction, validatePrivacyHistoricalInventory, type GovernanceTransactionStage } from "./governance-transaction";
 import type { MemoryPatch, PatchOp } from "./types";
 import type { TranscriptProofOptions } from "./transcript-proof";
 
@@ -126,8 +126,16 @@ function matchingLegacyReceipt(
 export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatchOptions): MemoryPatch {
   validatePatchId(patch.patch_id);
 
+  const privacyPurgeRequested = selectedOps(patch, options.selectedOpIds).some(
+    (op) => op.op === "delete" && op.deletion_mode === "privacy_purge");
+  // Recovery formerly discarded missing-manifest directories before purge
+  // snapshot preflight could see them. Check the complete path inventory
+  // first, then allow valid interrupted intents to recover, then enforce
+  // completed history before initiating a new privacy purge.
+  if (privacyPurgeRequested) validatePrivacyHistoricalInventory(root, undefined, true);
   const recovery = recoverGovernanceTransactions(root, options.now);
   assertGovernanceRecoveryClear(recovery);
+  if (privacyPurgeRequested) validatePrivacyHistoricalInventory(root);
 
   // Only a matching selected subset may receive a recovered receipt.
   // Never reuse a different operation's result merely because the patch ID
@@ -166,8 +174,7 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
       transactionId: transactionIdForAttempt(root, patch, options.selectedOpIds),
       // Historical governance results are redacted in a recoverable workspace
       // only for selected privacy-purge operations.
-      snapshotPrivacyManifests: selectedOps(patch, options.selectedOpIds).some(
-        (op) => op.op === "delete" && op.deletion_mode === "privacy_purge"),
+      snapshotPrivacyManifests: privacyPurgeRequested,
       expectedGeneration: options.expectedGeneration,
       now: options.now,
       faultAfterStage: options.faultAfterStage,
