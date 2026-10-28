@@ -90,6 +90,7 @@ function redactPatch(
   preserveExecutablePrivacyDelete: boolean,
 ): { patch: MemoryPatch; changed: boolean } {
   let changed = false;
+  const redactedIds = new Set<string>();
   const ops = patch.ops.map((op) => {
     const correlated = directlyReferencesTarget(op, targetId)
       || Boolean(op.candidate_id && candidateIds.has(op.candidate_id));
@@ -101,9 +102,14 @@ function redactPatch(
       && op.target_id === targetId
     ) return op;
     changed = true;
+    redactedIds.add(op.op_id);
     return redactedOp(op);
   });
-  return { patch: changed ? { ...patch, summary: PURGED, ops } : patch, changed };
+  // Existing completed receipts may carry free-text policy details about an
+  // operation even after its structured payload has been redacted.
+  const skipped_ops = patch.skipped_ops?.map((skip) =>
+    skip && redactedIds.has(skip.op_id) ? { ...skip, detail: PURGED } : skip);
+  return { patch: changed ? { ...patch, summary: PURGED, ops, skipped_ops } : patch, changed };
 }
 
 function assertPatchShape(value: unknown): asserts value is MemoryPatch {
@@ -231,6 +237,7 @@ function redactCurrentPrivacyPatch(
     ...targetIds.flatMap((targetId) => correlatedCandidateIds(patch, targetId)),
   ]);
   let changed = false;
+  const redactedIds = new Set<string>();
   const ops = patch.ops.map((op) => {
     const correlated = targetIds.some((targetId) => directlyReferencesTarget(op, targetId))
       || Boolean(op.candidate_id && candidateIds.has(op.candidate_id));
@@ -241,9 +248,12 @@ function redactCurrentPrivacyPatch(
       && Boolean(op.target_id && targetIds.includes(op.target_id));
     if (executableDelete) return op;
     changed = true;
+    redactedIds.add(op.op_id);
     return redactedOp(op);
   });
-  return changed ? { ...patch, summary: PURGED, ops } : patch;
+  const skipped_ops = patch.skipped_ops?.map((skip) =>
+    skip && redactedIds.has(skip.op_id) ? { ...skip, detail: PURGED } : skip);
+  return changed ? { ...patch, summary: PURGED, ops, skipped_ops } : patch;
 }
 
 export function collectPrivacyCandidateCorrelations(root: string, targetIds: string[]): string[] {
