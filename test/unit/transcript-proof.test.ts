@@ -232,15 +232,18 @@ describe("trusted original Pi session transcript proof", () => {
     });
     const moduleUrl = pathToFileURL(join(import.meta.dir, "../../src/transcript-proof.ts")).href;
     const script = `
-      import { createTranscriptDiscoveryIndex, verifyCandidateTranscriptSource } from ${JSON.stringify(moduleUrl)};
+      import { createTranscriptDiscoveryIndex, readNonblockingSessionId, verifyCandidateTranscriptSource } from ${JSON.stringify(moduleUrl)};
       const input = ${input};
       const roots = { trustedSessionDirs: [input.sessionDir] };
       const index = createTranscriptDiscoveryIndex(roots);
+      // Exercise the formerly blocking header-open path directly, not only
+      // the higher-level path-type filter that would reject this FIFO early.
+      const header = readNonblockingSessionId(input.transcript);
       const result = verifyCandidateTranscriptSource(input.candidate, input.evidence, {
         ...roots,
         discoveryIndex: { scannedFiles: 1, bySessionId: new Map([[input.sessionId, [input.transcript]]]) },
       });
-      console.log(JSON.stringify({ scannedFiles: index.scannedFiles, verified: result.verified, reason: result.reason }));
+      console.log(JSON.stringify({ scannedFiles: index.scannedFiles, header, verified: result.verified, reason: result.reason }));
     `;
     const child = spawnSync(process.execPath, ["-e", script], {
       encoding: "utf8", timeout: 2000, maxBuffer: 8192,
@@ -249,6 +252,7 @@ describe("trusted original Pi session transcript proof", () => {
     expect(child.status).toBe(0);
     const result = JSON.parse(child.stdout.trim());
     expect(result.scannedFiles).toBe(0);
+    expect(result.header).toBeNull();
     expect(result.verified).toBe(false);
   });
 
