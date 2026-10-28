@@ -6,8 +6,10 @@ export interface SourceEvidenceAssessment {
   unresolved_count: number;
   invalidated_count: number;
   distinct_source_locator_count: number;
-  /** Direct-user evidence tied to a stable, original session/turn pair. */
-  attributed_direct_user_turn_count: number;
+  /** Distinct observed user-turn locators (not transcript-verified). */
+  observed_direct_user_turn_count: number;
+  /** Direct-user turns with an independently verified original transcript/hash. */
+  transcript_verified_direct_user_turn_count: number;
   /** Do not infer semantic independence from distinct locators or evidence IDs. */
   semantic_independence: "unverified";
   authority: "direct_user_attributed" | "unverified";
@@ -32,14 +34,17 @@ export function assessSourceEvidence(
     item.redaction_status !== "redacted"
   );
   const userTurns = new Set<string>();
+  const verifiedUserTurns = new Set<string>();
   const locators = new Set<string>();
   for (const item of valid) {
     if (item.source_ref) locators.add(item.source_ref);
     if (item.source_kind !== "conversation" || !USER_AUTHORITY.has(item.trust_class)) continue;
-    if (item.source_identity_quality !== "stable_session_id") continue;
+    if (item.source_identity_quality !== "observed_session_id") continue;
     if (!item.source_session_id || !item.source_turn_id
       || item.source_session_id === "current-session") continue;
-    userTurns.add(`${item.source_session_id}:turn:${item.source_turn_id}`);
+    const turnKey = `${item.source_session_id}:turn:${item.source_turn_id}`;
+    userTurns.add(turnKey);
+    if (item.source_transcript_verified === true && item.source_message_sha256) verifiedUserTurns.add(turnKey);
   }
   const invalidatedCount = resolved.filter((item) =>
     item.redaction_status === "deleted" || item.redaction_status === "redacted"
@@ -50,8 +55,9 @@ export function assessSourceEvidence(
     unresolved_count: refs.length - resolved.length,
     invalidated_count: invalidatedCount,
     distinct_source_locator_count: locators.size,
-    attributed_direct_user_turn_count: userTurns.size,
+    observed_direct_user_turn_count: userTurns.size,
+    transcript_verified_direct_user_turn_count: verifiedUserTurns.size,
     semantic_independence: "unverified",
-    authority: userTurns.size > 0 ? "direct_user_attributed" : "unverified",
+    authority: verifiedUserTurns.size > 0 ? "direct_user_attributed" : "unverified",
   };
 }
