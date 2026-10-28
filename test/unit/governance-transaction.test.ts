@@ -57,6 +57,19 @@ describe("K2 governance transaction envelope", () => {
     const transactionsDir = join(dir, "governance", "transactions");
     const persisted = readdirSync(transactionsDir);
     expect(persisted).toHaveLength(2);
+    const receiptsDir = join(dir, "patches", "receipts");
+    const auditFiles = readdirSync(receiptsDir).sort();
+    expect(auditFiles).toHaveLength(2);
+    const audit = auditFiles.map((name) =>
+      JSON.parse(readFileSync(join(receiptsDir, name), "utf8")) as MemoryPatch);
+    expect(audit.map((item) => item.applied_ops.join(",")).sort()).toEqual(["op_001", "op_002"]);
+    expect(audit.every((item) => item.patch_id === patch.patch_id)).toBe(true);
+    // The root-level compatibility file is deliberately a latest-view, not
+    // a complete archive. The two immutable receipts preserve both subsets.
+    const latest = JSON.parse(readFileSync(join(dir, "patches", patch.patch_id + ".json"), "utf8")) as MemoryPatch;
+    expect(latest.applied_ops).toEqual(["op_002"]);
+    const originals = new Map(auditFiles.map((name) =>
+      [name, readFileSync(join(receiptsDir, name), "utf8")]));
     expect(persisted.every((entry) => /^patch_same_minute_multi\.s[a-f0-9]{24}$/.test(entry))).toBe(true);
 
     const replayFirst = applyPatch(dir, patch, {
@@ -68,6 +81,10 @@ describe("K2 governance transaction envelope", () => {
     expect(replayFirst.applied_ops).toEqual(["op_001"]);
     expect(replaySecond.applied_ops).toEqual(["op_002"]);
     expect(loadActiveRecords(dir)).toHaveLength(2);
+    expect(readdirSync(receiptsDir).sort()).toEqual(auditFiles);
+    for (const [name, contents] of originals) {
+      expect(readFileSync(join(receiptsDir, name), "utf8")).toBe(contents);
+    }
   });
 
   test("changed operation content under an unchanged external patch ID cannot reuse a receipt", () => {
