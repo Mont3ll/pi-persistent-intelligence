@@ -80,9 +80,23 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
         }
         if (mode === "auto" || !explicitlySelected) {
           const verified = attachVerification(root, applyCandidateMatch(candidate, loadAllRecords(root).filter((record) => record.status === "active")));
-          if (op.op !== "add" || op.risk !== "low" || op.default_selected !== true
+          const projectScope = candidate.scope_targets?.length === 1 ? candidate.scope_targets[0] : undefined;
+          const proposed = op.record;
+          const staleAutoConfig = mode === "auto"
+            && (cfg.curator.autoCurate === "off"
+              || (cfg.curator.autoCurate === "high-only"
+                && (candidate.confidence ?? 0) < cfg.curator.autoCurateHighThreshold));
+          const staleOrEditedPatch = !proposed
+            || proposed.statement !== candidate.text
+            || proposed.scope.type !== "project"
+            || proposed.scope.project !== projectScope?.project
+            || proposed.resource_id !== candidate.resource_id
+            || proposed.profile_id !== candidate.profile_id;
+          if (staleAutoConfig || staleOrEditedPatch
+            || (candidate.confidence ?? 0) < cfg.curator.minConfidence
+            || op.op !== "add" || op.risk !== "low" || op.default_selected !== true
             || !isAutoApplyEligibleCandidate(verified, cfg.governance.mode)) {
-            return reject("capture_policy_hold", `Candidate ${candidate.id} failed the current automatic trust, verification, or match gate.`);
+            return reject("capture_policy_hold", `Candidate ${candidate.id} failed the current automatic trust, scope, configuration, verification, or match gate.`);
           }
         }
       }
