@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCaptureSourceAttribution } from "../../src/capture-provenance";
 import { resolveProjectIdentity } from "../../src/profile";
-import { verifyCandidateTranscriptSource } from "../../src/transcript-proof";
+import { createTranscriptDiscoveryIndex, verifyCandidateTranscriptSource } from "../../src/transcript-proof";
 import type { CaptureCandidate, EvidenceRecord } from "../../src/types";
 
 const dirs: string[] = [];
@@ -150,6 +152,123 @@ describe("trusted original Pi session transcript proof", () => {
     expect(verifyCandidateTranscriptSource(f.candidate, f.evidence,
       { trustedSessionDirs: [f.sessionDir] }).reason).toBe("no_trusted_session_file");
   });
+  test("one operation index supports repeated proof while each source is reread", () => {
+    const f = fixture();
+    const options = { trustedSessionDirs: [f.sessionDir] };
+    const discoveryIndex = createTranscriptDiscoveryIndex(options);
+    expect(discoveryIndex.scannedFiles).toBe(1);
+    expect(discoveryIndex.bySessionId.get("recorded-session-001")?.length).toBe(1);
+    for (let i = 0; i < 8; i++) {
+      expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+        ...options, discoveryIndex,
+      }).verified).toBe(true);
+    }
+    // The index cannot become a replacement for the original source.
+    f.write([f.entry("For this project, always use a DIFFERENT release checklist.", "user")]);
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      ...options, discoveryIndex,
+    }).reason).toBe("user_turn_missing");
+    rmSync(f.transcript);
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      ...options, discoveryIndex,
+    }).verified).toBe(false);
+  });
+
+  test("new transcript becomes available on a later discovery attempt", () => {
+    const f = fixture();
+    rmSync(f.transcript);
+    const options = { trustedSessionDirs: [f.sessionDir] };
+    const before = createTranscriptDiscoveryIndex(options);
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      ...options, discoveryIndex: before,
+    }).reason).toBe("no_trusted_session_file");
+    f.write([f.entry(directMessage, "user")]);
+    const after = createTranscriptDiscoveryIndex(options);
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      ...options, discoveryIndex: after,
+    }).verified).toBe(true);
+  });
+
+  test("a supplied discovery hint cannot point outside the trusted roots", () => {
+    const f = fixture();
+    const unrelated = join(f.root, "outside.jsonl");
+    writeFileSync(unrelated, readFileSync(f.transcript));
+    const forged = { scannedFiles: 1, bySessionId: new Map([
+      ["recorded-session-001", [unrelated]],
+    ]) };
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      trustedSessionDirs: [f.sessionDir], discoveryIndex: forged,
+    }).verified).toBe(false);
+  });
+
+  test("replacement with symlink after discovery is held", () => {
+    const f = fixture();
+    const options = { trustedSessionDirs: [f.sessionDir] };
+    const discoveryIndex = createTranscriptDiscoveryIndex(options);
+    const elsewhere = join(f.root, "outside.jsonl");
+    writeFileSync(elsewhere, readFileSync(f.transcript));
+    rmSync(f.transcript);
+    symlinkSync(elsewhere, f.transcript);
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      ...options, discoveryIndex,
+    }).verified).toBe(false);
+  });
+
+  test("FIFO replacing indexed session never blocks discovery or source verification", () => {
+    if (process.platform !== "linux") return;
+    const f = fixture();
+    const validIndex = createTranscriptDiscoveryIndex({ trustedSessionDirs: [f.sessionDir] });
+    expect(validIndex.bySessionId.get("recorded-session-001")).toHaveLength(1);
+    rmSync(f.transcript);
+    const fifo = spawnSync("mkfifo", [f.transcript], { timeout: 2000, encoding: "utf8" });
+    expect(fifo.status).toBe(0);
+
+    // Execute in a bounded child process. If the unsafe blocking open
+    // regresses, the test returns an actual timeout rather than hanging Bun.
+    const input = JSON.stringify({
+      candidate: f.candidate, evidence: f.evidence,
+      sessionId: "recorded-session-001", sessionDir: f.sessionDir,
+      transcript: f.transcript,
+    });
+    const moduleUrl = pathToFileURL(join(import.meta.dir, "../../src/transcript-proof.ts")).href;
+    const script = `
+      import { createTranscriptDiscoveryIndex, readNonblockingSessionId, verifyCandidateTranscriptSource } from ${JSON.stringify(moduleUrl)};
+      const input = ${input};
+      const roots = { trustedSessionDirs: [input.sessionDir] };
+      const index = createTranscriptDiscoveryIndex(roots);
+      // Exercise the formerly blocking header-open path directly, not only
+      // the higher-level path-type filter that would reject this FIFO early.
+      const header = readNonblockingSessionId(input.transcript);
+      const result = verifyCandidateTranscriptSource(input.candidate, input.evidence, {
+        ...roots,
+        discoveryIndex: { scannedFiles: 1, bySessionId: new Map([[input.sessionId, [input.transcript]]]) },
+      });
+      console.log(JSON.stringify({ scannedFiles: index.scannedFiles, header, verified: result.verified, reason: result.reason }));
+    `;
+    const child = spawnSync(process.execPath, ["-e", script], {
+      encoding: "utf8", timeout: 2000, maxBuffer: 8192,
+    });
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(0);
+    const result = JSON.parse(child.stdout.trim());
+    expect(result.scannedFiles).toBe(0);
+    expect(result.header).toBeNull();
+    expect(result.verified).toBe(false);
+  });
+
+  test("non-regular transcript present during discovery cannot become proof", () => {
+    if (process.platform !== "linux") return;
+    const f = fixture();
+    rmSync(f.transcript);
+    const fifo = spawnSync("mkfifo", [f.transcript], { timeout: 2000, encoding: "utf8" });
+    expect(fifo.status).toBe(0);
+    const index = createTranscriptDiscoveryIndex({ trustedSessionDirs: [f.sessionDir] });
+    expect(index.scannedFiles).toBe(0);
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      trustedSessionDirs: [f.sessionDir], discoveryIndex: index,
+    }).verified).toBe(false);
+  });
+
   test("malformed or incorrect session headers are held", () => {
     const f = fixture();
     writeFileSync(f.transcript, '{"type":"session"');

@@ -62,7 +62,12 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
     (workspaceRoot) => applyPatchDirect(workspaceRoot, patch, {
       selectedOpIds: options.selectedOpIds,
       now: options.now,
-      trustedTranscriptOptions: options.trustedTranscriptOptions,
+      // A curation-scoped discovery hint is not portable authorization.
+      // Always rebuild the source lookup and reopen the original transcript
+      // within the guarded transaction for a fresh apply-time proof.
+      trustedTranscriptOptions: options.trustedTranscriptOptions
+        ? { trustedSessionDirs: options.trustedTranscriptOptions.trustedSessionDirs }
+        : undefined,
     }),
   );
 }
