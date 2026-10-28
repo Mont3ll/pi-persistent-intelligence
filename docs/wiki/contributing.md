@@ -23,9 +23,11 @@ bun run verify:pr
 bun run release-audit
 ```
 
-`bun run verify:pr` is the required pull-request gate. It runs TypeScript type checking, the unit suite, and deterministic evals.
+`bun run verify:pr` runs TypeScript type checking, the unit suite and deterministic evals. Run it on the exact commit being proposed and keep the output in the verification handoff.
 
-`bun run release-audit` is the release gate. It runs the PR verification contract, then stress tests and `npm pack --dry-run`.
+`bun run release-audit` adds stress tests and `npm pack --dry-run`. Run it again after any version or packaging change, even if a previous source commit passed.
+
+GitHub Actions currently cannot start jobs because of an account billing restriction. The local commands still run, and an independent local agent can verify their results against the exact SHA and tree. Record the hosted job as unavailable, with its billing annotation; do not claim it passed. A manual release is allowed when the operator has the local test evidence, package checks, preserved-store acceptance and an explicit publication approval. See [Manual Release](manual-release.md) for the steps.
 
 ---
 
@@ -161,6 +163,7 @@ Hard invariants are reserved for safety properties that must never be violated:
 
 - Run `bun run verify:pr` before opening or updating a PR
 - Run `bun run release-audit` before publishing a version
+- For a manual release, record exact commit/tree, independently witnessed checks, package version and store-backup identity; GitHub Actions billing failure is a recorded infrastructure limitation
 - Describe what the change does, not how it was built
 - Link to relevant issues
 - Public documentation changes belong in `docs/wiki/`; internal architecture notes belong in the internal wiki
