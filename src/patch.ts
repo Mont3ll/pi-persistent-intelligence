@@ -56,17 +56,65 @@ function transactionIdForAttempt(root: string, patch: MemoryPatch, selectedOpIds
   return `${id}.g${readCanonicalGeneration(root)}`;
 }
 
-/** Compatibility only: never reuse a pre-selection-identity legacy receipt
- * unless its persisted proposal and selected subset exactly match this call. */
-function matchingLegacyReceipt(patch: MemoryPatch, selectedOpIds: string[] | undefined, result: MemoryPatch): boolean {
-  if (!Array.isArray(result.ops) || !Array.isArray(result.skipped_ops)
+/**
+ * A legacy receipt has no explicit selectedOpIds field. We can infer the
+ * selection ONLY when applied_ops and skipped_ops jointly partition every
+ * operation exactly once, and each "not_selected" reason is unambiguous.
+ * Missing arrays, duplicate/unknown IDs, opaque historical skip codes or
+ * contradictory classification mean there is no trustworthy replay proof.
+ */
+function legacyReceiptSelection(
+  result: MemoryPatch,
+): { kind: "known"; selected: string[] } | { kind: "ambiguous" } {
+  if (!Array.isArray(result.ops) || !Array.isArray(result.applied_ops)
+    || !Array.isArray(result.skipped_ops)
+    || typeof result.applied_at !== "string" || !result.applied_at
+    || !["applied", "partially_applied", "rejected_at_apply"].includes(result.status)) {
+    return { kind: "ambiguous" };
+  }
+  const ids = result.ops.map((op) => op?.op_id);
+  if (ids.some((id) => typeof id !== "string" || id.length === 0)
+    || new Set(ids).size !== ids.length) return { kind: "ambiguous" };
+  const all = new Set(ids);
+  const applied = new Set<string>();
+  for (const id of result.applied_ops) {
+    if (typeof id !== "string" || !all.has(id) || applied.has(id)) return { kind: "ambiguous" };
+    applied.add(id);
+  }
+  const skipped = new Map<string, string>();
+  for (const entry of result.skipped_ops) {
+    if (!entry || typeof entry !== "object" || typeof entry.op_id !== "string"
+      || !all.has(entry.op_id) || applied.has(entry.op_id)
+      || skipped.has(entry.op_id)
+      || typeof entry.reason !== "string"
+      || entry.reason === "legacy_unknown"
+      || ![
+        "not_selected", "duplicate_id", "invalidated_evidence",
+        "unresolved_evidence", "tombstoned", "missing_target",
+        "missing_candidate", "capture_policy_hold", "target_terminal",
+        "self_supersession", "replacement_id_conflict",
+        "malformed_operation",
+      ].includes(entry.reason)) return { kind: "ambiguous" };
+    skipped.set(entry.op_id, entry.reason);
+  }
+  if (applied.size + skipped.size !== ids.length) return { kind: "ambiguous" };
+  return { kind: "known", selected: ids.filter((id) =>
+    applied.has(id) || skipped.get(id) !== "not_selected") };
+}
+
+function matchingLegacyReceipt(
+  patch: MemoryPatch,
+  selectedOpIds: string[] | undefined,
+  result: MemoryPatch,
+): "match" | "different" | "ambiguous" {
+  if (!result || !Array.isArray(result.ops)
     || result.patch_id !== patch.patch_id || result.generated_by !== patch.generated_by
-    || result.mode !== patch.mode || JSON.stringify(result.ops) !== JSON.stringify(patch.ops)) return false;
-  const selected = selectedOps(patch, selectedOpIds).map((op) => op.op_id);
-  const unselected = new Set(result.skipped_ops
-    .filter((skip) => skip.reason === "not_selected").map((skip) => skip.op_id));
-  const resultSelected = result.ops.filter((op) => !unselected.has(op.op_id)).map((op) => op.op_id);
-  return JSON.stringify(selected) === JSON.stringify(resultSelected);
+    || result.mode !== patch.mode || JSON.stringify(result.ops) !== JSON.stringify(patch.ops)) return "different";
+  const selection = legacyReceiptSelection(result);
+  if (selection.kind === "ambiguous") return "ambiguous";
+  const expected = selectedOps(patch, selectedOpIds).map((op) => op.op_id);
+  return JSON.stringify(expected) === JSON.stringify(selection.selected)
+    ? "match" : "different";
 }
 
 export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatchOptions): MemoryPatch {
@@ -96,8 +144,14 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
   ];
   for (const legacyId of legacyIds) {
     const legacy = readTransactionManifest(root, legacyId);
-    if (legacy?.stage === "complete" && legacy.result
-      && matchingLegacyReceipt(patch, options.selectedOpIds, legacy.result)) return legacy.result;
+    if (legacy?.stage !== "complete" || !legacy.result) continue;
+    const replay = matchingLegacyReceipt(patch, options.selectedOpIds, legacy.result);
+    if (replay === "match") return legacy.result;
+    if (replay === "ambiguous") {
+      // An old transaction may already have applied a subset. Without a
+      // provable partition, neither replay nor new writes are authorized.
+      throw new Error(`Ambiguous legacy governance receipt ${legacyId}; manual reconciliation required`);
+    }
   }
 
   return runGovernanceTransaction(
