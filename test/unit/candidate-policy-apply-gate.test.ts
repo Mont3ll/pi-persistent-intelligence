@@ -68,6 +68,34 @@ describe("capture policy at governed apply boundary", () => {
     expect(loadActiveRecords(dir)).toHaveLength(0);
   });
 
+  test("missing current durability cue is reviewable, not an explicit rejection", () => {
+    const dir = root();
+    seed(dir, "Run release audit before publishing.");
+    const patch = curateInbox(dir, { now: "2026-10-21T10:01:00Z", mode: "supervised" });
+    expect(patch.ops).toHaveLength(1);
+    const result = applyPatch(dir, patch, {
+      selectedOpIds: [patch.ops[0]!.op_id], now: "2026-10-21T10:02:00Z",
+    });
+    expect(result.applied_ops).toEqual([patch.ops[0]!.op_id]);
+    expect(loadActiveRecords(dir)).toHaveLength(1);
+    expect(listCandidates(dir).find((c) => c.id === "cap_policy_test")?.status).toBe("patched");
+  });
+
+  test("a stale auto patch cannot force promotion of a stored-durable no-cue candidate", () => {
+    const dir = root();
+    seed(dir, "Run release audit before publishing.");
+    const patch = curateInbox(dir, { now: "2026-10-21T10:01:00Z", mode: "auto" });
+    expect(patch.ops).toHaveLength(1);
+    expect(patch.ops[0]!.default_selected).toBe(false);
+    const result = applyPatch(dir, patch, {
+      selectedOpIds: [patch.ops[0]!.op_id], now: "2026-10-21T10:02:00Z",
+    });
+    expect(result.applied_ops).toHaveLength(0);
+    expect(result.skipped_ops).toContainEqual(expect.objectContaining({ reason: "capture_policy_hold" }));
+    expect(loadActiveRecords(dir)).toHaveLength(0);
+    expect(listCandidates(dir).find((c) => c.id === "cap_policy_test")?.status).toBe("new");
+  });
+
   test("currently durable candidate remains manually approvable", () => {
     const dir = root();
     seed(dir, "For this project, always use the verified release checklist.");
