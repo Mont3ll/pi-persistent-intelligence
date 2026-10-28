@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { appendSessionActivity, collectSessionActivity, type CaptureActivityAction } from "./capture-activity";
 import { hasProcessedMessage, readCaptureCheckpoint, writeCaptureCheckpoint } from "./capture-checkpoint";
 import { classifyCaptureIntent } from "./capture-intent";
+import { buildCaptureSourceAttribution } from "./capture-provenance";
 import { appendOrReinforceCandidate, normalizedPreferenceKey } from "./capture-recurrence";
 import { resolveCaptureScopes } from "./capture-scope";
 import { loadConfig } from "./config";
@@ -140,6 +141,8 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
       const key = normalizedPreferenceKey(input.message, intent.intent);
       const groupHash = hash(`${messageHash}:${input.session_id}`).slice(0, 20);
       const sourceRef = `session:${input.session_id}:turn:${input.turn_id}`;
+      const capturedText = input.message.trim().slice(0, 300).replace(/\s+/g, " ");
+      const captureSource = buildCaptureSourceAttribution(input.session_id, input.turn_id, input.message, capturedText);
       const evidence = appendEvidenceRecord(root, {
         id: "",
         resource_id: "curation",
@@ -147,6 +150,9 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
         created_at: now,
         source_kind: "conversation",
         source_session_id: input.session_id,
+        source_turn_id: input.turn_id,
+        source_message_sha256: captureSource.original_message_sha256,
+        source_identity_quality: captureSource.identity_quality,
         source_ref: sourceRef,
         source_summary: input.message.trim().slice(0, 300).replace(/\s+/g, " "),
         trust_class: trustClass,
@@ -161,7 +167,8 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
         id: `cap_pref_${groupHash}`,
         created_at: now,
         source: { type: trustClass, ref: sourceRef },
-        text: input.message.trim().slice(0, 300).replace(/\s+/g, " "),
+        text: capturedText,
+        capture_source: captureSource,
         tags: [...new Set(["capture", intent.intent, ...intent.applicability])],
         evidence_refs: [evidence.id],
         evidence_ids: [evidence.id],

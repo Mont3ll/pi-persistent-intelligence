@@ -355,9 +355,35 @@ describe("pi-governance-rs compatibility bundle", () => {
         resolver: () => ({ project_id: "project-alpha", display_name: "project-alpha", source: "cwd_fallback" }),
         now: "2026-07-26T00:00:00Z",
       });
+      // Runtime evidence retains precise attribution within the private store.
+      const internalCapture = readEvidenceRecords(source).find((item) => item.notes === "capture_evidence_v1");
+      expect(internalCapture).toMatchObject({
+        source_session_id: "runtime-session-private",
+        source_turn_id: "runtime-turn-private",
+        source_identity_quality: "observed_session_id",
+      });
+      expect(internalCapture?.source_message_sha256).toMatch(/^[a-f0-9]{64}$/);
+
       const bundle = exportToPiGovernanceBundle(source);
       expect(JSON.stringify(bundle)).not.toContain("runtime-session-private");
       expect(JSON.stringify(bundle)).not.toContain("runtime-turn-private");
+      const portableCapture = bundle.evidence.find((item) => item.notes === "capture_evidence_v1");
+      expect(portableCapture).toBeDefined();
+      for (const key of ["source_session_id", "source_turn_id", "source_message_sha256", "source_identity_quality", "source_transcript_verified"]) {
+        expect(portableCapture).not.toHaveProperty(key);
+      }
+      expect(portableCapture?.source_ref).toMatch(/^capture-evidence:/);
+
+      // The redacted export must not reinstate fields omitted from ordinary
+      // portable exports, including original-turn hashes.
+      const redacted = exportToPiGovernanceBundle(source, { redacted: true });
+      expect(JSON.stringify(redacted)).not.toContain("runtime-session-private");
+      expect(JSON.stringify(redacted)).not.toContain("runtime-turn-private");
+      const redactedCapture = redacted.evidence.find((item) => item.notes === "capture_evidence_v1");
+      expect(redactedCapture).toBeDefined();
+      for (const key of ["source_session_id", "source_turn_id", "source_message_sha256", "source_identity_quality", "source_transcript_verified"]) {
+        expect(redactedCapture).not.toHaveProperty(key);
+      }
       importFromPiGovernanceBundle(destination, bundle, { dryRun: false });
       expect(loadAllRecords(destination)).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: "mem_global_scope", scope: { type: "global" } }),
