@@ -78,8 +78,7 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
         if (!evidenceDecision.eligible) {
           return reject("capture_policy_hold", `Candidate ${candidate.id} does not satisfy the current automatic evidence policy; explicit non-auto review is required.`);
         }
-        if (mode === "auto" || !explicitlySelected) {
-          const verified = attachVerification(root, applyCandidateMatch(candidate, loadAllRecords(root).filter((record) => record.status === "active")));
+        const verified = attachVerification(root, applyCandidateMatch(candidate, loadAllRecords(root).filter((record) => record.status === "active")));
           const projectScope = candidate.scope_targets?.length === 1 ? candidate.scope_targets[0] : undefined;
           const proposed = op.record;
           const staleAutoConfig = mode === "auto"
@@ -98,7 +97,6 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
             || !isAutoApplyEligibleCandidate(verified, cfg.governance.mode)) {
             return reject("capture_policy_hold", `Candidate ${candidate.id} failed the current automatic trust, scope, configuration, verification, or match gate.`);
           }
-        }
       }
       const replacement = op.record ?? op.to_record;
       if (replacement && replacement.statement !== candidate.text) {
