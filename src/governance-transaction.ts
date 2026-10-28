@@ -45,7 +45,12 @@ function snapshotPrivacyManifests(root: string, workspace: string): void {
   const workingDir = join(snapshots, "working");
   mkdirSync(originalDir, { recursive: true });
   mkdirSync(workingDir, { recursive: true });
+  // The writer created its own transaction directory and workspace before
+  // invoking this preflight. That directory has no intent yet; it is NOT a
+  // prior transaction and must never be snapshotted as historical evidence.
+  const currentTransactionId = basename(dirname(workspace));
   for (const id of listTransactionIds(root)) {
+    if (id === currentTransactionId) continue;
     const path = transactionManifestPath(root, id);
     if (!existsSync(path)) throw new GovernanceRecoveryBlockedError(`Missing manifest for governance transaction ${id}`);
     const raw = readFileSync(path, "utf8");
