@@ -35,7 +35,7 @@ A release record should include the candidate SHA and tree, Bun version, relevan
 
 ## Keeping the live store safe
 
-A copied store does not remain consistent if an active Pi host is still writing to the original. The earlier acceptance observed the original inbox grow from 53 to 54 pending candidates while the tests ran in separate directories.
+A frozen snapshot remains consistent as captured, but the live store can change while Pi is running. In the earlier acceptance, the preserved copy stayed byte-identical while the original inbox grew from 53 to 54 pending candidates. Quiesce live writers before taking the release backup and checking preservation, then record its current generation, candidate count and file hashes.
 
 Before installing any candidate on the host:
 
