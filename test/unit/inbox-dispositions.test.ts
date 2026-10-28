@@ -93,6 +93,6 @@ describe("read-only inbox dispositions", () => {
     expect(browser.items[0]?.details?.join("\n")).toContain("below_configured_reference_floor");
     expect(browser.items[0]?.status).toBe("warning");
     expect(browser.columns.some((col) => col.key === "queue")).toBe(true);
-    expect(browser.actions.map((action) => action.action)).toEqual(["approve", "review", "skip"]);
+    expect(browser.actions?.map((action) => action.action)).toEqual(["approve", "review", "skip"]);
   });
 });
