@@ -82,9 +82,10 @@ function within(root: string, file: string): boolean {
  * Never call the general session parser's readSessionId() on a path that
  * might be replaced by an untrusted filesystem node. Its blocking open()
  * can hang forever on a FIFO. Open nonblocking, reject non-regular descriptors,
- * and read only a bounded first line.
+ * and read only a bounded first line. This is not itself proof of
+ * trusted path containment or user authorship; those checks are separate.
  */
-function safeReadSessionId(file: string): string | null {
+export function readNonblockingSessionId(file: string): string | null {
   let fd: number | undefined;
   try {
     fd = openSync(file, NONBLOCKING_REGULAR_FILE_FLAGS);
@@ -150,7 +151,7 @@ export function createTranscriptDiscoveryIndex(
   const map = new Map<string, string[]>();
   for (const file of paths) {
     try {
-      const id = safeReadSessionId(file);
+      const id = readNonblockingSessionId(file);
       if (!id) continue;
       const existing = map.get(id) ?? [];
       existing.push(file);
@@ -296,7 +297,7 @@ export function verifyCandidateTranscriptSource(
     // ephemeral discovery index is not an authorization source.
     if (!trustedTranscriptPath(sourceFile, roots)) return held("invalid_transcript");
     if (statSync(sourceFile).size > MAX_TRANSCRIPT_BYTES) return held("oversized_transcript");
-    if (safeReadSessionId(sourceFile) !== source.session_id) return held("invalid_transcript");
+    if (readNonblockingSessionId(sourceFile) !== source.session_id) return held("invalid_transcript");
     const transcript = inspectedTranscript(sourceFile, source.session_id);
     if (!transcript) return held("invalid_transcript");
     // Project identity must be derived independently from the trusted Pi
