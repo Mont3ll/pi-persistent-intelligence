@@ -30,7 +30,7 @@ export function normalizedPreferenceKey(text: string, intent: CaptureIntent): st
  * deliberately left for governed review.
  */
 function exactStatement(text: string): string {
-  return text.trim().replace(/\\s+/g, " ").toLocaleLowerCase("en-US");
+  return text.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 }
 
 function matchesCanonicalScope(record: MemoryRecord, target: CaptureScopeTarget): boolean {
