@@ -10,7 +10,7 @@ import type { MemoryPatch } from "./types";
 
 export { StaleCanonicalGenerationError } from "./governance-writer-lock";
 export type GovernanceTransactionStage = "validated" | "staged" | "intent_written" | "canonical_published" | "generation_published" | "projections_derived" | "complete";
-export interface GovernanceTransactionManifest { transaction_id: string; stage: GovernanceTransactionStage; expected_generation: number; next_generation: number; created_at: string; updated_at: string; result?: MemoryPatch; }
+export interface GovernanceTransactionManifest { transaction_id: string; stage: GovernanceTransactionStage; expected_generation: number; next_generation: number; created_at: string; updated_at: string; result?: MemoryPatch; privacy_manifest_snapshot?: boolean; }
 export interface GovernanceTransactionOptions { transactionId: string; expectedGeneration?: number; now: string; faultAfterStage?: GovernanceTransactionStage; snapshotPrivacyManifests?: boolean; }
 export class GovernanceRecoveryBlockedError extends Error { constructor(message: string) { super(message); this.name = "GovernanceRecoveryBlockedError"; } }
 
@@ -34,6 +34,56 @@ const AUXILIARY_ENTRIES = ["patches", "runtime", "reports"] as const;
 function walkFiles(root: string, entry: string): string[] { const target = join(root, entry); if (!existsSync(target)) return []; if (!statSync(target).isDirectory()) return [target]; return readdirSync(target, { withFileTypes: true }).flatMap((child) => child.isDirectory() ? walkFiles(root, join(entry, child.name)) : [join(root, entry, child.name)]); }
 function fingerprint(root: string, entries: readonly string[]): string { const hash = createHash("sha256"); for (const file of entries.flatMap((entry) => walkFiles(root, entry)).sort()) { hash.update(relative(root, file)); hash.update("\0"); hash.update(readFileSync(file)); hash.update("\0"); } return hash.digest("hex"); }
 /**
+ * Fail closed on untracked historical artifacts. A missing intent, symlinked
+ * transaction folder, or unknown backup must never be silently discarded
+ * before a privacy purge snapshots its full historical receipt inventory.
+ * Called inside the writer lock and also prior to ordinary recovery.
+ */
+export function validatePrivacyHistoricalInventory(root: string, activeTransactionId?: string): string[] {
+  const directory = resolvePaths(root).governance.transactions;
+  if (!existsSync(directory)) return [];
+  const ids: string[] = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.name === activeTransactionId) continue;
+    if (!entry.isDirectory() || entry.isSymbolicLink()
+      || !lstatSync(join(directory, entry.name)).isDirectory()) {
+      throw new GovernanceRecoveryBlockedError("Unrecognized or symlinked governance transaction artifact prevents privacy purge");
+    }
+    const dir = join(directory, entry.name);
+    let manifestFound = false;
+    for (const child of readdirSync(dir, { withFileTypes: true })) {
+      const childPath = join(dir, child.name);
+      if (child.name === "intent.json") {
+        if (!child.isFile() || child.isSymbolicLink() || !lstatSync(childPath).isFile()) {
+          throw new GovernanceRecoveryBlockedError("Unsafe historical governance manifest");
+        }
+        manifestFound = true;
+      } else if (child.name === "workspace") {
+        if (!child.isDirectory() || child.isSymbolicLink() || !lstatSync(childPath).isDirectory()) {
+          throw new GovernanceRecoveryBlockedError("Unsafe historical governance workspace");
+        }
+      } else if (child.name.startsWith("intent.json.tmp-")) {
+        if (!child.isFile() || child.isSymbolicLink() || !lstatSync(childPath).isFile()) {
+          throw new GovernanceRecoveryBlockedError("Unsafe historical governance manifest temporary");
+        }
+      } else {
+        throw new GovernanceRecoveryBlockedError("Unrecognized historical governance backup or artifact");
+      }
+    }
+    if (!manifestFound) {
+      throw new GovernanceRecoveryBlockedError("Missing historical governance intent manifest");
+    }
+    const manifest = readTransactionManifest(root, entry.name);
+    if (!manifest || manifest.transaction_id !== entry.name
+      || manifest.stage !== "complete" || !manifest.result) {
+      throw new GovernanceRecoveryBlockedError("Incomplete or invalid governance manifest prevents privacy purge");
+    }
+    ids.push(entry.name);
+  }
+  return ids.sort();
+}
+
+/**
  * A privacy purge must redact historical completed transaction results,
  * but mutating those receipts before a durable purge intent would be unsafe.
  * Snapshot only completed manifests into the transaction workspace. Keep
@@ -49,8 +99,7 @@ function snapshotPrivacyManifests(root: string, workspace: string): void {
   // invoking this preflight. That directory has no intent yet; it is NOT a
   // prior transaction and must never be snapshotted as historical evidence.
   const currentTransactionId = basename(dirname(workspace));
-  for (const id of listTransactionIds(root)) {
-    if (id === currentTransactionId) continue;
+  for (const id of validatePrivacyHistoricalInventory(root, currentTransactionId)) {
     const path = transactionManifestPath(root, id);
     if (!existsSync(path)) throw new GovernanceRecoveryBlockedError(`Missing manifest for governance transaction ${id}`);
     const raw = readFileSync(path, "utf8");
@@ -90,11 +139,39 @@ function cloneLiveStore(root: string, transactionId: string, privacyManifestSnap
  * receipt cannot leak private content after canonical purge publication.
  * Recovery is idempotent if a crash happened after a subset was redacted.
  */
-function publishPrivacyManifestRedactions(root: string, workspace: string): void {
+function publishPrivacyManifestRedactions(root: string, workspace: string, requireSnapshots = false): void {
   const snapshots = governanceManifestSnapshotDirectory(workspace);
   const originals = join(snapshots, "original");
   const working = join(snapshots, "working");
-  if (!existsSync(working)) return;
+  if (!existsSync(snapshots)) {
+    if (requireSnapshots) throw new GovernanceRecoveryBlockedError("Missing privacy governance snapshot root");
+    return;
+  }
+  if (!existsSync(originals) || !existsSync(working)
+    || !lstatSync(originals).isDirectory() || !lstatSync(working).isDirectory()) {
+    throw new GovernanceRecoveryBlockedError("Incomplete privacy manifest snapshot inventory");
+  }
+  const readSnapshotNames = (directory: string): string[] =>
+    readdirSync(directory, { withFileTypes: true }).map((entry) => {
+      if (!entry.isFile() || entry.isSymbolicLink() || !entry.name.endsWith(".json")
+        || !lstatSync(join(directory, entry.name)).isFile()) {
+        throw new GovernanceRecoveryBlockedError("Unsafe privacy manifest snapshot artifact");
+      }
+      return entry.name;
+    }).sort();
+  const originalNames = readSnapshotNames(originals);
+  const workingNames = readSnapshotNames(working);
+  if (JSON.stringify(originalNames) !== JSON.stringify(workingNames)) {
+    throw new GovernanceRecoveryBlockedError("Missing or mismatched privacy manifest working snapshots");
+  }
+  // Recheck the historical directory inventory before publishing any old
+  // receipt. No unexpected backup, symlinked transaction or missing intent
+  // may be silently bypassed after durable intent.
+  const currentTransactionId = basename(dirname(workspace));
+  const historicalIds = validatePrivacyHistoricalInventory(root, currentTransactionId);
+  if (JSON.stringify(historicalIds.map((id) => `${id}.json`)) !== JSON.stringify(originalNames)) {
+    throw new GovernanceRecoveryBlockedError("Privacy snapshot does not cover every historical transaction");
+  }
   const changes: GovernanceTransactionManifest[] = [];
   // Validate ALL historical manifest snapshots and current live state before
   // rewriting any of them. On recovery, already-published redactions are
@@ -154,7 +231,7 @@ function publishPrivacyManifestRedactions(root: string, workspace: string): void
 }
 function publishEntry(root: string, workspace: string, entry: string): void { const source = join(workspace, entry); if (!existsSync(source)) return; const destination = join(root, entry); const staged = `${destination}.tx-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`; rmSync(staged, { recursive: true, force: true }); cpSync(source, staged, { recursive: true, force: true }); rmSync(destination, { recursive: true, force: true }); renameSync(staged, destination); }
 function publishEntries(root: string, workspace: string, entries: readonly string[]): void { for (const entry of entries) publishEntry(root, workspace, entry); }
-export function publishTransactionWorkspace(root: string, transactionId: string): void { const workspace = transactionWorkspacePath(root, transactionId); if (!existsSync(workspace)) throw new GovernanceRecoveryBlockedError(`Missing transaction workspace for ${transactionId}`); publishPrivacyManifestRedactions(root, workspace); publishEntries(root, workspace, [...CANONICAL_ENTRIES, ...AUXILIARY_ENTRIES]); }
+export function publishTransactionWorkspace(root: string, transactionId: string, requirePrivacySnapshots = false): void { const workspace = transactionWorkspacePath(root, transactionId); if (!existsSync(workspace)) throw new GovernanceRecoveryBlockedError(`Missing transaction workspace for ${transactionId}`); publishPrivacyManifestRedactions(root, workspace, requirePrivacySnapshots); publishEntries(root, workspace, [...CANONICAL_ENTRIES, ...AUXILIARY_ENTRIES]); }
 
 /**
  * Preserve every successful governed selection as its own immutable receipt.
@@ -192,7 +269,7 @@ export function completeInterruptedTransaction(root: string, manifest: Governanc
   if (state.generation !== manifest.expected_generation && state.generation !== manifest.next_generation) throw new GovernanceRecoveryBlockedError(`Canonical generation ${state.generation} does not match transaction ${manifest.transaction_id}`);
   let current = manifest;
   if (state.generation === manifest.expected_generation) {
-    publishTransactionWorkspace(root, manifest.transaction_id); current = { ...current, stage: "canonical_published", updated_at: now }; writeTransactionManifest(root, current);
+    publishTransactionWorkspace(root, manifest.transaction_id, manifest.privacy_manifest_snapshot === true); current = { ...current, stage: "canonical_published", updated_at: now }; writeTransactionManifest(root, current);
     writeCanonicalStateAtomic(root, { generation: manifest.next_generation, last_transaction_id: manifest.transaction_id, updated_at: now }); current = { ...current, stage: "generation_published", updated_at: now }; writeTransactionManifest(root, current);
   }
   renderMemoryToDisk(root, manifest.next_generation); current = { ...current, stage: "projections_derived", updated_at: now }; writeTransactionManifest(root, current);
@@ -216,8 +293,8 @@ export function runGovernanceTransaction(root: string, options: GovernanceTransa
       if (!canonicalChanged) { publishEntries(root, workspace, AUXILIARY_ENTRIES); rmSync(transactionDirectory(root, transactionId), { recursive: true, force: true }); return result; }
       writeImmutableAttemptReceipt(workspace, transactionId, result);
       manifest = { ...manifest, stage: "staged", updated_at: options.now, result }; maybeFault(options, "staged");
-      manifest = { ...manifest, stage: "intent_written", updated_at: options.now }; writeTransactionManifest(root, manifest); durableIntent = true; maybeFault(options, "intent_written");
-      publishTransactionWorkspace(root, transactionId); manifest = { ...manifest, stage: "canonical_published", updated_at: options.now }; writeTransactionManifest(root, manifest); maybeFault(options, "canonical_published");
+      manifest = { ...manifest, stage: "intent_written", updated_at: options.now, privacy_manifest_snapshot: options.snapshotPrivacyManifests === true }; writeTransactionManifest(root, manifest); durableIntent = true; maybeFault(options, "intent_written");
+      publishTransactionWorkspace(root, transactionId, options.snapshotPrivacyManifests === true); manifest = { ...manifest, stage: "canonical_published", updated_at: options.now }; writeTransactionManifest(root, manifest); maybeFault(options, "canonical_published");
       writeCanonicalStateAtomic(root, { generation: next, last_transaction_id: transactionId, updated_at: options.now }); manifest = { ...manifest, stage: "generation_published", updated_at: options.now }; writeTransactionManifest(root, manifest); maybeFault(options, "generation_published");
       renderMemoryToDisk(root, next); manifest = { ...manifest, stage: "projections_derived", updated_at: options.now }; writeTransactionManifest(root, manifest); maybeFault(options, "projections_derived");
       manifest = { ...manifest, stage: "complete", updated_at: options.now, result }; writeTransactionManifest(root, manifest); rmSync(workspace, { recursive: true, force: true }); maybeFault(options, "complete"); return result;
