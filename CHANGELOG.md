@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.5-rc.1] - 2026-10-28 (unpublished candidate)
+
+The changes below are merged into source but have not been published as a package or installed over the live `0.17.4` runtime.
+
+### Memory capture and recall
+
+- Store observed session provenance for captured instructions. Source-aware automatic promotion is opt-in, with the default OFF; the existing two-reference evidence floor still applies without qualifying original-transcript proof.
+- Verify attributable single-source user instructions against the original transcript at curation time and again at apply time. Reject missing, changed or assistant-authored sources.
+- Bound source discovery, reject unsafe named pipes and special files, and reuse transcript proof during a single curation proposal.
+- Retry previously held, attributable candidates once at the next primary session start when source-aware automatic curation is enabled. At most three operations can be applied per start; the full pending inbox is still scanned.
+- Retain matching and governance checks when different memory candidates describe the same instruction. Release-scoped memories can be recalled for requests phrased as “releasing” or “released.”
+
+### Inbox and transaction history
+
+- Show a plain-language preflight reason for evidence holds, policy holds and review-required candidates. These reasons are diagnostic; they do not approve a candidate or replace the governed apply step.
+- Give different proposals and different operation selections distinct transaction identities. Retain exact-replay compatibility for unambiguous legacy receipts and reject incomplete historical receipts.
+- Preserve per-selection receipts under `patches/receipts/` alongside the existing latest-view patch file.
+
+### Privacy and recovery
+
+- Redact correlated historical governance manifests, skipped-operation details and immutable receipts during a privacy purge. Replaying a caller-held patch cannot repersist the purged payload.
+- Preserve historical snapshot integrity across interruption and recovery. A durable intent records SHA-256 commitments for the original and redacted snapshot files; missing, altered or reverted snapshots block completion.
+- Remove recognized orphan manifest temporary files and completed transaction workspaces during an authorized purge. Unknown backups and unsafe transaction paths fail closed.
+- Keep the distinction between audit-preserving deletion and privacy purge. Deletion cannot silently restore a tombstoned memory.
+
+### Release operation
+
+- Added an operator-run release procedure with recorded local verification and an isolated-store rehearsal. Hosted GitHub CI is currently unable to start because of the account billing restriction.
+- The candidate remains unpublished. No default policy change, automatic historical backlog absorption or live-store migration accompanies the version bump.
+
+### Limits
+
+- The three-operation startup cap bounds writes, not curation scan cost. Non-TTY primary hosts are conservatively excluded from the new retry path.
+- Snapshot commitments detect local corruption and reversion. They are unkeyed and do not protect against an actor who can rewrite both snapshots and durable intent.
+- Post-publication corruption may require manual reconciliation. Power-loss durability and production startup latency are not yet established.
+
+
 ## [0.17.4] - 2026-10-07
 
 ### Fixed
