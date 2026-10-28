@@ -96,6 +96,9 @@ This timeout does not change explicit qmd search, setup, or update command budge
 
 **R0b release gate:** The opt-in source-aware policy is a guarded eligibility contract. The shipped capture path records observed host session identities but does **not** itself mark source transcripts verified. A source is eligible only after a separate trusted transcript-verification procedure sets `source_transcript_verified: true` on supporting evidence with matching session, turn, original-message SHA-256, trust and scope. Do not enable the opt-in policy on a live store until that procedure and its operational acceptance are verified. Historical and one-source ambiguous candidates do not automatically gain user authority. Stale auto proposals revalidate the configured floor and the source proof at application.
 
+**R0c proof validation (not yet wired into automatic promotion):** `verifyCandidateTranscriptSource()` reads trusted Pi live/archived session JSONL and checks an exact session ID, one unique user-authored full-message SHA-256, the captured 300-character excerpt, matching internal evidence identity, and project identity inferred from the original session header. It does not trust a pre-existing `source_transcript_verified` field and does not write to the store. Ambiguous or unavailable transcripts fail closed. Candidate-provided file paths are never used. The R0c read-only verifier is **not** the final source-aware auto-apply integration: existing default policy must remain OFF until a trusted proof-attestation and apply-time revalidation path passes real-session acceptance.
+
+
 ### `maintainer`
 
 | Key | Default | Description |
