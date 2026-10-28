@@ -3,7 +3,7 @@ import { appendSessionActivity, collectSessionActivity, type CaptureActivityActi
 import { hasProcessedMessage, readCaptureCheckpoint, writeCaptureCheckpoint } from "./capture-checkpoint";
 import { classifyCaptureIntent } from "./capture-intent";
 import { buildCaptureSourceAttribution } from "./capture-provenance";
-import { appendOrReinforceCandidate, normalizedPreferenceKey } from "./capture-recurrence";
+import { appendOrReinforceCandidate, findExactActiveCanonical, normalizedPreferenceKey } from "./capture-recurrence";
 import { resolveCaptureScopes } from "./capture-scope";
 import { loadConfig } from "./config";
 import { appendDailyLog } from "./daily";
@@ -31,6 +31,7 @@ export interface CaptureTurnResult {
   processed_turn_id: string;
   candidates_created: number;
   candidates_reinforced: number;
+  already_represented: number;
   daily_only: number;
   rejected: number;
   skipped_checkpointed: boolean;
@@ -76,7 +77,7 @@ function globalTarget(scopes: CaptureScopeTarget[]): boolean {
 }
 
 function emptyResult(turnId: string): CaptureTurnResult {
-  return { processed_turn_id: turnId, candidates_created: 0, candidates_reinforced: 0, daily_only: 0, rejected: 0, skipped_checkpointed: false };
+  return { processed_turn_id: turnId, candidates_created: 0, candidates_reinforced: 0, already_represented: 0, daily_only: 0, rejected: 0, skipped_checkpointed: false };
 }
 
 export function processCaptureTurn(root: string, input: CaptureTurnInput): CaptureTurnResult {
@@ -138,6 +139,12 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
       outcome = "daily_only";
       reason = "memory_worth_daily_only";
     } else {
+      const canonicalMatch = findExactActiveCanonical(root, input.message, scopes);
+      if (canonicalMatch) {
+        result.already_represented++;
+        outcome = "candidate_already_represented";
+        reason = "active_canonical_exact_match";
+      } else {
       const key = normalizedPreferenceKey(input.message, intent.intent);
       const groupHash = hash(`${messageHash}:${input.session_id}`).slice(0, 20);
       const sourceRef = `session:${input.session_id}:turn:${input.turn_id}`;
@@ -200,6 +207,7 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
         outcome = "candidate_reinforced";
       }
       reason = intent.reasons[0] ?? "captured";
+      }
     }
   }
 
