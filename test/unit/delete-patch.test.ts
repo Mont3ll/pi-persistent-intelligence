@@ -264,11 +264,23 @@ describe("delete patch", () => {
       selectedOpIds: ["op_update"], now: "2026-05-19T09:30:00.000Z",
     });
     expect(result.applied_ops).toEqual(["op_update"]);
+    const secondUpdate: MemoryPatch = {
+      ...update, patch_id: "patch_manifest_secret_update_second",
+      ops: [{
+        ...update.ops[0]!, op_id: "op_update_second",
+        updates: { review: { cadence_days: 31, next_review: "2026-06-19", change_condition: secret } },
+      }],
+    };
+    expect(applyPatch(dir, secondUpdate, {
+      selectedOpIds: ["op_update_second"], now: "2026-05-19T09:31:00.000Z",
+    }).applied_ops).toEqual(["op_update_second"]);
     const txRoot = ensureMemoryDirs(dir).governance.transactions;
     const before = readdirSync(txRoot);
-    expect(before).toHaveLength(1);
+    expect(before).toHaveLength(2);
     const earlier = join(txRoot, before[0]!, "intent.json");
-    expect(readFileSync(earlier, "utf8")).toContain(secret);
+    for (const id of before) {
+      expect(readFileSync(join(txRoot, id, "intent.json"), "utf8")).toContain(secret);
+    }
 
     const purge = applyPatch(dir, patch("privacy_purge"), {
       selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
@@ -285,7 +297,7 @@ describe("delete patch", () => {
     });
     expect(JSON.stringify(replay)).not.toContain(secret);
     expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("deleted");
-    expect(readdirSync(txRoot)).toHaveLength(2);
+    expect(readdirSync(txRoot)).toHaveLength(3);
   });
 
   test("recovering interrupted privacy purge completes historical manifest redaction without resurrecting content", () => {
