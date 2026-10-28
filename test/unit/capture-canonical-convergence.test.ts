@@ -8,6 +8,7 @@ import { listCandidates } from "../../src/inbox";
 import { readEvidenceRecords } from "../../src/evidence";
 import { unsafeAddMemoryRecord } from "../../src/store";
 import { findExactActiveCanonical } from "../../src/capture-recurrence";
+import { defaultResourceId } from "../../src/profile";
 import type { MemoryRecord, ProjectIdentity } from "../../src/types";
 
 const roots: string[] = [];
@@ -44,6 +45,15 @@ function capture(dir: string, message: string, turnId: string, cwd = "/projects/
   });
 }
 
+function captureContext(projectId = "repo-a") {
+  return {
+    session_id: "context-session",
+    launch_cwd: `/projects/${projectId}`,
+    project_id: projectId,
+    recent_files_touched: [] as string[],
+  };
+}
+
 describe("capture convergence against governed active canonical memory", () => {
   test("six sessions repeating the same already-active preference add no inbox candidates or evidence", () => {
     const dir = root();
@@ -66,7 +76,7 @@ describe("capture convergence against governed active canonical memory", () => {
     const dir = root();
     const statement = "For this project, always use the accepted release checklist.";
     unsafeAddMemoryRecord(dir, active("mem_project_a", statement, { type: "project", project: "repo-a" }));
-    expect(findExactActiveCanonical(dir, statement, [{ type: "project", project: "repo-b", confidence: 0.95, basis: ["test"] }])).toBeNull();
+    expect(findExactActiveCanonical(dir, statement, [{ type: "project", project: "repo-b", confidence: 0.95, basis: ["test"] }], captureContext("repo-b"))).toBeNull();
     const result = capture(dir, statement, "other", "/projects/repo-b");
     expect(result.already_represented).toBe(0);
     expect(result.candidates_created).toBe(1);
@@ -88,7 +98,7 @@ describe("capture convergence against governed active canonical memory", () => {
     const oldStatement = "For all my writing, never use em dashes.";
     const changed = "For all my writing, always use em dashes.";
     unsafeAddMemoryRecord(dir, active("mem_old", oldStatement));
-    expect(findExactActiveCanonical(dir, changed, [{ type: "global", confidence: 0.95, basis: ["test"] }])).toBeNull();
+    expect(findExactActiveCanonical(dir, changed, [{ type: "global", confidence: 0.95, basis: ["test"] }], captureContext())).toBeNull();
     const outcome = capture(dir, changed, "correction");
     expect(outcome.already_represented).toBe(0);
     expect(outcome.candidates_created).toBe(1);
@@ -101,6 +111,69 @@ describe("capture convergence against governed active canonical memory", () => {
     expect(findExactActiveCanonical(dir, statement, [
       { type: "project", project: "repo-a", confidence: 0.95, basis: ["test"] },
       { type: "project", project: "repo-b", confidence: 0.95, basis: ["test"] },
-    ])).toBeNull();
+    ], captureContext("repo-a"))).toBeNull();
   });
+  test("negative applicability excludes canonical memory in repo-b, so a valid capture is not suppressed", () => {
+    const dir = root();
+    const statement = "Avoid em dashes in my public writing.";
+    unsafeAddMemoryRecord(dir, {
+      ...active("mem_excluded_in_repo_b", statement),
+      does_not_apply_when: ["repo-b"],
+    });
+    const allowed = capture(dir, statement, "allowed", "/projects/repo-a");
+    expect(allowed.already_represented).toBe(1);
+    expect(listCandidates(dir)).toHaveLength(0);
+
+    const excluded = capture(dir, statement, "excluded", "/projects/repo-b");
+    expect(excluded.already_represented).toBe(0);
+    expect(excluded.candidates_created).toBe(1);
+    expect(listCandidates(dir)).toHaveLength(1);
+    expect(listCaptureEvents(dir).at(-1)?.outcome).toBe("candidate_created");
+  });
+
+  test("known exceptions and unmatched positive applicability cannot suppress capture", () => {
+    const statement = "Avoid em dashes in my public writing.";
+    for (const exclusion of [
+      { known_exceptions: ["repo-b"] },
+      { applies_when: ["publishing"] },
+    ]) {
+      const dir = root();
+      unsafeAddMemoryRecord(dir, { ...active("mem_conditional", statement), ...exclusion });
+      const result = capture(dir, statement, "specific", "/projects/repo-b");
+      expect(result.already_represented).toBe(0);
+      expect(result.candidates_created).toBe(1);
+    }
+  });
+
+  test("foreign resource identity cannot suppress an identical active statement", () => {
+    const dir = root();
+    const statement = "Avoid em dashes in my public writing.";
+    unsafeAddMemoryRecord(dir, {
+      ...active("mem_foreign_resource", statement),
+      resource_id: "unrelated-resource",
+    });
+    expect(capture(dir, statement, "foreign").candidates_created).toBe(1);
+    expect(listCandidates(dir)).toHaveLength(1);
+  });
+
+  test("same-resource records retain exact-match convergence and foreign explicit profiles remain separate", () => {
+    const statement = "Avoid em dashes in my public writing.";
+    const same = root();
+    unsafeAddMemoryRecord(same, {
+      ...active("mem_same_resource", statement),
+      resource_id: defaultResourceId(),
+    });
+    expect(capture(same, statement, "same").already_represented).toBe(1);
+    expect(listCandidates(same)).toHaveLength(0);
+
+    const otherProfile = root();
+    unsafeAddMemoryRecord(otherProfile, {
+      ...active("mem_other_profile", statement),
+      resource_id: defaultResourceId(),
+      profile_id: "project:foreign-repository",
+    });
+    expect(capture(otherProfile, statement, "other").candidates_created).toBe(1);
+    expect(listCandidates(otherProfile)).toHaveLength(1);
+  });
+
 });
