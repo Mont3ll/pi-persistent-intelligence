@@ -508,6 +508,38 @@ describe("delete patch", () => {
     }
   });
 
+  test("recovery does not discard a missing historical intent while a durable privacy purge is pending", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    const prior: MemoryPatch = {
+      ...patch("audit_preserving"), patch_id: "patch_privacy_missing_recovery_intent",
+      ops: [{
+        op_id: "op_sensitive", op: "update", target_id: "mem_delete",
+        updates: { review: {
+          cadence_days: 30, next_review: "2026-06-18",
+          change_condition: "HISTORICAL_MISSING_RECOVERY_MARKER",
+        } },
+        risk: "low", default_selected: true,
+      }],
+    };
+    applyPatch(dir, prior, { now: "2026-05-19T09:30:00.000Z" });
+    const txRoot = ensureMemoryDirs(dir).governance.transactions;
+    const historicalId = readdirSync(txRoot)[0]!;
+    expect(() => applyPatch(dir, patch("privacy_purge"), {
+      selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
+      faultAfterStage: "intent_written",
+    })).toThrow();
+    const activePurgeId = readdirSync(txRoot).find((id) => id !== historicalId)!;
+    rmSync(join(txRoot, historicalId, "intent.json"));
+    const recovered = recoverGovernanceTransactions(dir, "2026-05-19T10:01:00.000Z");
+    expect(recovered.completed).toHaveLength(0);
+    expect(recovered.discarded).toHaveLength(0);
+    expect(recovered.blocked.some((item) => item.transaction_id === activePurgeId)).toBe(true);
+    expect(existsSync(join(txRoot, historicalId))).toBe(true);
+    expect(existsSync(join(txRoot, activePurgeId, "workspace"))).toBe(true);
+    expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("active");
+  });
+
   test("unknown historical backups, missing intents and symlink transaction directories fail closed before purge", () => {
     for (const defect of ["backup", "missing-intent", "symlink-directory"] as const) {
       const dir = root();
