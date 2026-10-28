@@ -15,6 +15,36 @@ import type { CaptureCandidate, MemoryPatch, PatchOp } from "./types";
 
 const PURGED = "[privacy purged]";
 
+/** Only populated for a privacy-purge transaction workspace, never live
+ * governance state. Original snapshots remain intact for crash recovery. */
+export function governanceManifestSnapshotDirectory(root: string): string {
+  return join(root, "governance-manifest-snapshots");
+}
+
+function manifestWorkingFiles(root: string): string[] {
+  const working = join(governanceManifestSnapshotDirectory(root), "working");
+  if (!existsSync(working)) return [];
+  return readdirSync(working, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => join(working, entry.name));
+}
+
+function validGovernanceSnapshot(contents: unknown): asserts contents is {
+  transaction_id: string; stage: string; result?: MemoryPatch;
+} {
+  if (!contents || typeof contents !== "object" || Array.isArray(contents)) {
+    throw new Error("Malformed governance manifest snapshot");
+  }
+  const manifest = contents as Record<string, unknown>;
+  if (typeof manifest.transaction_id !== "string" || !manifest.transaction_id
+    || typeof manifest.stage !== "string"
+    || !["complete"].includes(manifest.stage)) {
+    throw new Error("Malformed or incomplete governance manifest snapshot");
+  }
+  if (manifest.result !== undefined) assertPatchShape(manifest.result);
+}
+
+
 function redactedCandidate(candidate: CaptureCandidate): CaptureCandidate {
   return {
     id: candidate.id,
@@ -174,6 +204,10 @@ function reportChange(file: string, needles: string[]): ArtifactChange | null {
 
 export function validatePrivacyArtifactSet(root: string): void {
   const paths = ensureMemoryDirs(root);
+  for (const file of manifestWorkingFiles(root)) {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf-8"));
+    validGovernanceSnapshot(parsed);
+  }
   for (const file of patchArtifactFiles(paths.patches)) {
     const parsed: unknown = JSON.parse(readFileSync(file, "utf-8"));
     assertPatchShape(parsed);
@@ -274,6 +308,21 @@ export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string, 
   const patchResults = parsedPatches
     .map(({ file, original, patch }) => ({ file, original, ...redactPatch(patch, targetId, candidateIds, false) }))
     .filter((entry) => entry.changed);
+  // Governance transaction results are authoritative replay receipts as well.
+  // Redact snapshot copies inside the workspace and publish them through
+  // transaction recovery, never directly against the live store pre-commit.
+  const manifestResults = manifestWorkingFiles(root).flatMap((file) => {
+    const original = readFileSync(file, "utf-8");
+    const manifest: unknown = JSON.parse(original);
+    validGovernanceSnapshot(manifest);
+    if (!manifest.result) return [];
+    const updated = redactPatch(manifest.result, targetId, candidateIds, false);
+    if (!updated.changed) return [];
+    return [{ file, original, content: `${JSON.stringify({
+      ...manifest,
+      result: updated.patch,
+    }, null, 2)}\n` }];
+  });
   let candidatesChanged = false;
   const redactedCandidates = candidates.map((candidate) => {
     const directlyRelated = candidate.matched_memory_ids?.includes(targetId) ?? false;
@@ -309,6 +358,7 @@ export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string, 
       content: `${JSON.stringify(entry.patch, null, 2)}\n`,
       original: entry.original,
     })),
+    ...manifestResults,
     ...derivativeChanges,
     ...reportChanges,
   ];
