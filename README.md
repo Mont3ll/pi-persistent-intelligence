@@ -205,6 +205,7 @@ Disabled standalone mode is valid.
 - [Export/import with pi-governance-rs](docs/export-import-pi-governance.md)
 - [Wiki docs](docs/wiki/)
 - [Manual release procedure](docs/wiki/manual-release.md)
+- [0.17.5-rc.1 candidate notes](docs/wiki/release-0.17.5-rc.1.md)
 
 ## External evaluation
 
