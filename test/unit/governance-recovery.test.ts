@@ -61,6 +61,39 @@ describe("K3 crash recovery and replay semantics", () => {
     expect(readdirSync(txRoot)).toHaveLength(2);
   });
 
+  test("recovering an interrupted subset cannot substitute its receipt for a different subset", () => {
+    const dir = root();
+    const request: MemoryPatch = {
+      ...patch("subset_interrupted"), patch_id: "patch_interrupted_selection",
+      ops: [
+        { op_id: "op_001", op: "add", record: record("mem_interrupted_1"),
+          risk: "low", default_selected: false },
+        { op_id: "op_002", op: "add", record: record("mem_interrupted_2"),
+          risk: "low", default_selected: false },
+      ],
+    };
+    expect(() => applyPatch(dir, request, {
+      now: "2026-10-28T08:00:01Z", selectedOpIds: ["op_001"],
+      faultAfterStage: "intent_written",
+    })).toThrow();
+    expect(loadAllRecords(dir)).toHaveLength(0);
+    const other = applyPatch(dir, request, {
+      now: "2026-10-28T08:00:02Z", selectedOpIds: ["op_002"],
+    });
+    // Recovery completes the original durable intent, then the distinct
+    // selected subset is applied through its own governed transaction.
+    expect(other.applied_ops).toEqual(["op_002"]);
+    expect(loadAllRecords(dir).map((item) => item.id).sort())
+      .toEqual(["mem_interrupted_1", "mem_interrupted_2"]);
+    const txRoot = join(dir, "governance", "transactions");
+    expect(readdirSync(txRoot)).toHaveLength(2);
+    const originalReplay = applyPatch(dir, request, {
+      now: "2026-10-28T08:00:03Z", selectedOpIds: ["op_001"],
+    });
+    expect(originalReplay.applied_ops).toEqual(["op_001"]);
+    expect(loadAllRecords(dir)).toHaveLength(2);
+  });
+
   test("fault after durable commit intent does not silently commit live canonical state", () => {
     const dir = root(); const request = patch("mem_fault");
     expect(() => applyPatch(dir, request, { now: "2026-09-28T09:01:00Z", faultAfterStage: "intent_written" })).toThrow();
