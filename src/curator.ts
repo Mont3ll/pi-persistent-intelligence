@@ -7,6 +7,7 @@ import { suggestVaultRefs } from "./retriever";
 import { isAutoApplyEligibleCandidate } from "./trust";
 import { classifyCaptureIntent } from "./capture-intent";
 import { loadConfig } from "./config";
+import { decideAutoEvidenceEligibility } from "./auto-evidence-policy";
 import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
 import { createInquiryFromCandidate } from "./inquiries";
@@ -209,10 +210,12 @@ function eligibleCandidates(root: string, options: CurateOptions): CaptureCandid
   const config = loadConfig(root).curator;
   const minConfidence = options.minConfidence ?? config.minConfidence;
   const minEvidenceCount = options.minEvidenceCount ?? config.minEvidenceCount;
+  const evidence = readEvidenceRecords(root);
   return listCandidates(root).filter((candidate) =>
     candidate.status === "new" &&
     (candidate.confidence ?? 0) >= minConfidence &&
-    candidate.evidence_refs.length >= minEvidenceCount
+    (candidate.evidence_refs.length >= minEvidenceCount
+      || decideAutoEvidenceEligibility(candidate, evidence, config).basis === "transcript_verified_direct_user")
   );
 }
 
@@ -231,7 +234,8 @@ function currentPolicyAllowsAutoApply(candidate: CaptureCandidate): boolean {
 
 function buildPatch(root: string, options: CurateOptions, llmContradictions = new Map<string, LlmContradiction>()): MemoryPatch {
   const eligible = eligibleCandidates(root, options);
-  const configuredEvidenceFloor = loadConfig(root).curator.minEvidenceCount;
+  const curatorConfig = loadConfig(root).curator;
+  const configuredEvidenceFloor = curatorConfig.minEvidenceCount;
   const activeRecords = loadActiveRecords(root);
   const activeIds = new Set(activeRecords.map((record) => record.id));
   const existingEvidence = readEvidenceRecords(root);
@@ -321,7 +325,8 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       const isGlobalPreference = scopeTarget?.type === "global" && candidate.capture_intent === "user_preference";
       // A human may explicitly review a verified single-source candidate,
       // but that exception must not silently lower configured auto-apply floors.
-      const evidenceCountMeetsConfiguredFloor = candidate.evidence_refs.length >= configuredEvidenceFloor;
+      const evidenceDecision = decideAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig);
+      const evidenceCountMeetsConfiguredFloor = evidenceDecision.eligible;
       const autoApplyEligible = evidenceCountMeetsConfiguredFloor
         && !isGlobalPreference
         && currentPolicyAllowsAutoApply(candidate)
@@ -336,11 +341,14 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       if (candidate.poisoning_risk === "high") holdCodes.push("high_poisoning_risk");
       if (candidate.match_kind === "potential_conflict" || candidate.match_kind === "supersedes_existing" || candidate.match_kind === "ambiguous") holdCodes.push("match_requires_review");
       if (!isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility") && holdCodes.length === 0) holdCodes.push("trust_or_provenance_gate");
-      const trustGateNote = autoApplyEligible ? ""
-        : ` Auto-apply held [${[...new Set(holdCodes)].join(", ")}].`
+      const evidenceBasisNote = evidenceDecision.basis === "transcript_verified_direct_user"
+        ? " Single transcript-verified authoritative user source accepted by explicitly configured source-aware policy."
+        : "";
+      const trustGateNote = (autoApplyEligible ? "" :
+        ` Auto-apply held [${[...new Set(holdCodes)].join(", ")}].`
           + (!evidenceCountMeetsConfiguredFloor
             ? ` Below configured auto-apply evidence floor (${candidate.evidence_refs.length}/${configuredEvidenceFloor}); requires explicit human selection and governed evidence verification.`
-            : " Requires explicit human review before apply.");
+            : " Requires explicit human review before apply.")) + evidenceBasisNote;
       const matchNote = candidate.match_kind && candidate.match_kind !== "new"
         ? ` Match: ${candidate.match_kind}; matched memories: ${(candidate.matched_memory_ids ?? []).join(", ") || "none"}; reasons: ${(candidate.match_reasons ?? []).join("; ") || "none"}. Suggested path: ${candidate.match_kind === "potential_conflict" ? "contest or add_exception" : candidate.match_kind === "supersedes_existing" ? "supersede after review" : candidate.match_kind === "ambiguous" ? "manual merge/review" : "review/update"}.`
         : "";
