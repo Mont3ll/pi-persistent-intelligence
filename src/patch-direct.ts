@@ -3,6 +3,11 @@ import { basename, join } from "node:path";
 import { addMemoryRecordFromPatch, loadAllRecords, PATCH_APPLY_CONTEXT, updateMemoryRecord } from "./store";
 import { listCandidates, updateCandidateStatus } from "./inbox";
 import { classifyCaptureIntent } from "./capture-intent";
+import { decideAutoEvidenceEligibility } from "./auto-evidence-policy";
+import { loadConfig } from "./config";
+import { attachVerification } from "./verifier";
+import { applyCandidateMatch } from "./matching";
+import { isAutoApplyEligibleCandidate } from "./trust";
 import { renderMemoryToDisk } from "./render";
 import { ensureMemoryDirs } from "./paths";
 import { writeVaultPromotionReport } from "./vaultPromotion";
@@ -62,6 +67,24 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
       // only after the normal structured-evidence and record checks.
       if (noDurableCueOnly && candidate.capture_intent && (mode === "auto" || !explicitlySelected)) {
         return reject("capture_policy_hold", `Candidate ${candidate.id} has no currently recognized durability cue; promotion requires an explicit manual selection from a non-auto proposal.`);
+      }
+      // Revalidate the independent auto-source evidence gate at application.
+      // A proposal's default_selected flag or prior verified marker is not
+      // sufficient when its underlying evidence/configuration has changed.
+      const cfg = loadConfig(root);
+      const referenceFloor = cfg.curator.minEvidenceCount;
+      if (candidate.evidence_refs.length < referenceFloor && (mode === "auto" || !explicitlySelected)) {
+        const evidenceDecision = decideAutoEvidenceEligibility(candidate, readEvidenceRecords(root), cfg.curator);
+        if (!evidenceDecision.eligible) {
+          return reject("capture_policy_hold", `Candidate ${candidate.id} does not satisfy the current automatic evidence policy; explicit non-auto review is required.`);
+        }
+        if (mode === "auto") {
+          const verified = attachVerification(root, applyCandidateMatch(candidate, loadAllRecords(root).filter((record) => record.status === "active")));
+          if (op.op !== "add" || op.risk !== "low" || op.default_selected !== true
+            || !isAutoApplyEligibleCandidate(verified, cfg.governance.mode)) {
+            return reject("capture_policy_hold", `Candidate ${candidate.id} failed the current automatic trust, verification, or match gate.`);
+          }
+        }
       }
       const replacement = op.record ?? op.to_record;
       if (replacement && replacement.statement !== candidate.text) {
