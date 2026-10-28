@@ -42,6 +42,23 @@ function contextText(context: SessionContext): string {
 function phraseMatchesContext(phrase: string, text: string): boolean {
   const normalized = phrase.trim().toLowerCase();
   if (!normalized) return false;
+  // Hyphenated/underscored identifiers (e.g. repo-b, project_alpha)
+  // are atomic scope keys, not natural-language phrases. The fuzzy token
+  // fallback would incorrectly match repo-b against repo-a via "repo".
+  // Check identifier boundaries before either broad containment fallback.
+  if (/^[a-z0-9]+(?:[-_][a-z0-9]+)+$/.test(normalized)) {
+    const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\function phraseMatchesContext(phrase: string, text: string): boolean {
+  const normalized = phrase.trim().toLowerCase();
+  if (!normalized) return false;
+  if (text.includes(normalized) || normalize(text).includes(normalize(normalized))) return true;
+  const phraseTokens = normalized.split(/[^a-z0-9]+/).filter((token) => token.length > 3);
+  const textTokens = text.split(/[^a-z0-9]+/).filter(Boolean);
+  return phraseTokens.some((phraseToken) =>
+    textTokens.some((textToken) => textToken.startsWith(phraseToken.slice(0, 7)) || phraseToken.startsWith(textToken.slice(0, 7))),
+  );
+}");
+    return new RegExp(`(^|[^a-z0-9_-])${escaped}(?=$|[^a-z0-9_-])`).test(text);
+  }
   if (text.includes(normalized) || normalize(text).includes(normalize(normalized))) return true;
   const phraseTokens = normalized.split(/[^a-z0-9]+/).filter((token) => token.length > 3);
   const textTokens = text.split(/[^a-z0-9]+/).filter(Boolean);
