@@ -68,6 +68,44 @@ describe("curator and patch applier", () => {
     expect(loadActiveRecords(root)[0].evidence.map((item) => item.ref)).toContain(readEvidenceRecords(root)[0].id);
   });
 
+  test("distinct same-minute proposals have distinct governed transaction IDs and receipts", () => {
+    const root = tempRoot();
+    ensureMemoryDirs(root);
+    const add = (id: string, text: string) => appendCandidate(root, {
+      id, created_at: "2026-10-28T08:00:00Z",
+      source: { type: "daily", ref: "daily/2026-10-28.md" },
+      text, tags: ["workflow"], evidence_refs: ["daily/2026-10-28.md", "docs/verified.md"],
+      confidence: 0.91, status: "new", worth_decision: "candidate",
+    });
+    add("cap_minute_first", "For this project, document the first verified build procedure.");
+    const first = curateInbox(root, { now: "2026-10-28T08:00:00Z", mode: "supervised" });
+    const same = curateInbox(root, { now: "2026-10-28T08:00:01Z", mode: "supervised" });
+    expect(same.patch_id).toBe(first.patch_id);
+    expect(first.ops).toHaveLength(1);
+    const firstReceipt = applyPatch(root, first, {
+      selectedOpIds: [first.ops[0]!.op_id], now: "2026-10-28T08:00:02Z",
+    });
+    expect(firstReceipt.applied_ops).toEqual([first.ops[0]!.op_id]);
+    expect(loadActiveRecords(root)).toHaveLength(1);
+
+    add("cap_minute_second", "For this project, document the second verified rollback procedure.");
+    const second = curateInbox(root, { now: "2026-10-28T08:00:03Z", mode: "supervised" });
+    expect(second.ops).toHaveLength(1);
+    expect(second.patch_id).not.toBe(first.patch_id);
+    expect(second.ops[0]?.candidate_id).toBe("cap_minute_second");
+    const secondReceipt = applyPatch(root, second, {
+      selectedOpIds: [second.ops[0]!.op_id], now: "2026-10-28T08:00:04Z",
+    });
+    expect(secondReceipt.applied_ops).toEqual([second.ops[0]!.op_id]);
+    expect(loadActiveRecords(root)).toHaveLength(2);
+    expect(listCandidates(root).find((c) => c.id === "cap_minute_second")?.status).toBe("patched");
+    const replay = applyPatch(root, second, {
+      selectedOpIds: [second.ops[0]!.op_id], now: "2026-10-28T08:00:05Z",
+    });
+    expect(replay.applied_ops).toEqual(secondReceipt.applied_ops);
+    expect(loadActiveRecords(root)).toHaveLength(2);
+  });
+
   test("keeps unresolved evidence-only candidates reviewable while applying unrelated ops", () => {
     const root = tempRoot();
     ensureMemoryDirs(root);
