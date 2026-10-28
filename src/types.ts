@@ -324,7 +324,9 @@ export interface EvidenceRecord {
   /** Hash of full original user message before any display truncation. */
   source_message_sha256?: string;
   /** Unresolved source identity must never count as independent corroboration. */
-  source_identity_quality?: "stable_session_id" | "unresolved";
+  source_identity_quality?: "observed_session_id" | "unresolved";
+  /** Only explicitly checked source-turn hashes may be marked verified. */
+  source_transcript_verified?: boolean;
   source_file?: string;
   source_tool?: string;
   source_ref?: string;
