@@ -91,10 +91,29 @@ function promptTerms(prompt: string): Set<string> {
   return new Set(prompt.toLowerCase().split(/[^a-z0-9-]+/).filter((t) => t.length > 2));
 }
 
-function isRelevantByTerms(record: MemoryRecord, terms: Set<string>): boolean {
-  if (record.layer === "L1") return true;
-  const haystack = `${record.tags.join(" ")} ${record.statement} ${record.ruleType ?? ""}`.toLowerCase();
-  return [...terms].some((t) => haystack.includes(t));
+/**
+ * Rank term matches within the governed candidate set by query specificity.
+ * Broad applicability ("testing", "release") must not crowd out a newly
+ * added, strongly matching memory merely because it appears later in L2.
+ */
+function rankTermRelevantRecords(records: MemoryRecord[], terms: Set<string>): MemoryRecord[] {
+  const queryTerms = [...terms];
+  const haystacks = records.map((record) =>
+    `${record.tags.join(" ")} ${record.statement} ${record.ruleType ?? ""}`.toLowerCase()
+  );
+  const frequency = new Map(queryTerms.map((term) =>
+    [term, Math.max(1, haystacks.filter((haystack) => haystack.includes(term)).length)]
+  ));
+  return records
+    .map((record, index) => ({
+      record,
+      index,
+      score: queryTerms.reduce((score, term) =>
+        score + (haystacks[index]!.includes(term) ? 1 / frequency.get(term)! : 0), 0),
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map(({ record }) => record);
 }
 
 function hasMatchedExplicitApplicability(record: MemoryRecord): boolean {
@@ -174,7 +193,6 @@ async function selectMemoryHybrid(
       const rec = l2.find((r) => r.id === h.id);
       return rec ? [rec] : [];
     });
-    const applicableIds = new Set(explicitApplicableL2.map((record) => record.id));
     // FTS5 MATCH treats a natural-language query as a conjunction of terms.
     // A correctly indexed memory may therefore be missed by the full question.
     // Fall back only within the already-governed processor output, never to
@@ -182,24 +200,27 @@ async function selectMemoryHybrid(
     const selectedIds = new Set(selectedBySearch.map((record) => record.id));
     const terms = promptTerms(prompt);
     const termFallback = selectedBySearch.length === 0
-      ? l2.filter((record) =>
-          !applicableIds.has(record.id)
-          && !selectedIds.has(record.id)
-          && isRelevantByTerms(record, terms)
-        )
+      ? rankTermRelevantRecords(l2.filter((record) =>
+          !selectedIds.has(record.id)
+        ), terms)
       : [];
-    const selectedL2 = [
-      ...explicitApplicableL2,
-      ...selectedBySearch.filter((record) => !applicableIds.has(record.id)),
+    // Rank query-specific results before generic applicability. An applicability
+    // rule is an eligibility/relevance signal, not an unconditional first slot
+    // reservation. Every list here comes from the governed processor output.
+    const selectedL2 = [...new Map([
+      ...selectedBySearch,
       ...termFallback,
-    ];
+      ...explicitApplicableL2,
+    ].map((record) => [record.id, record])).values()];
 
     return applyLayerBudgets(l1, selectedL2, budget);
   }
 
   const terms = promptTerms(prompt);
-  const relevantL2 = l2.filter((r) => hasMatchedExplicitApplicability(r) || isRelevantByTerms(r, terms));
-  return applyLayerBudgets(l1, relevantL2, budget);
+  const ranked = rankTermRelevantRecords(l2, terms);
+  const rankedIds = new Set(ranked.map((record) => record.id));
+  const applicable = explicitApplicableL2.filter((record) => !rankedIds.has(record.id));
+  return applyLayerBudgets(l1, [...ranked, ...applicable], budget);
 }
 
 // ─── Daily digest ─────────────────────────────────────────────────────────────
