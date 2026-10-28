@@ -98,6 +98,9 @@ function legacyReceiptSelection(
     skipped.set(entry.op_id, entry.reason);
   }
   if (applied.size + skipped.size !== ids.length) return { kind: "ambiguous" };
+  const expectedStatus = applied.size === 0 && skipped.size > 0
+    ? "rejected_at_apply" : skipped.size > 0 ? "partially_applied" : "applied";
+  if (result.status !== expectedStatus) return { kind: "ambiguous" };
   return { kind: "known", selected: ids.filter((id) =>
     applied.has(id) || skipped.get(id) !== "not_selected") };
 }
