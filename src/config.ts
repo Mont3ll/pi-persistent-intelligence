@@ -6,6 +6,8 @@ export interface PiMemoryConfig {
   curator: {
     minConfidence: number;
     minEvidenceCount: number;
+    /** Explicit opt-in; off retains the configured reference-count floor. */
+    sourceAwareAuto: "off" | "transcript-verified-direct-user";
     mode: "propose" | "supervised" | "auto";
     /**
      * Tiered auto-curation at session end.
@@ -62,6 +64,7 @@ export const defaultConfig: PiMemoryConfig = {
   curator: {
     minConfidence: 0.75,
     minEvidenceCount: 2,
+    sourceAwareAuto: "off",
     mode: "propose",
     autoCurate: "high-only",
     autoCurateHighThreshold: 0.85,
@@ -144,6 +147,7 @@ export function loadConfig(root: string): PiMemoryConfig {
     if (typeof merged.privacy.persistPromptExcerpts !== "boolean") {
       merged.privacy.persistPromptExcerpts = defaultConfig.privacy.persistPromptExcerpts;
     }
+    if (!["off", "transcript-verified-direct-user"].includes(merged.curator.sourceAwareAuto)) merged.curator.sourceAwareAuto = "off";
     if (!Number.isInteger(merged.capture.activityRetentionCount) || merged.capture.activityRetentionCount < 10 || merged.capture.activityRetentionCount > 10000) merged.capture.activityRetentionCount = defaultConfig.capture.activityRetentionCount;
     if (!Number.isInteger(merged.capture.activityRetentionDays) || merged.capture.activityRetentionDays < 1 || merged.capture.activityRetentionDays > 365) merged.capture.activityRetentionDays = defaultConfig.capture.activityRetentionDays;
     if (!Number.isInteger(merged.capture.implicitConsolidationTurnInterval) || merged.capture.implicitConsolidationTurnInterval < 3 || merged.capture.implicitConsolidationTurnInterval > 200) merged.capture.implicitConsolidationTurnInterval = defaultConfig.capture.implicitConsolidationTurnInterval;
