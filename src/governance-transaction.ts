@@ -75,6 +75,8 @@ export function validatePrivacyHistoricalInventory(root: string, activeTransacti
     }
     const manifest = readTransactionManifest(root, entry.name);
     if (!manifest || manifest.transaction_id !== entry.name
+      || !["validated", "staged", "intent_written", "canonical_published",
+        "generation_published", "projections_derived", "complete"].includes(manifest.stage)
       || (manifest.stage !== "complete" && !allowRecoverableIncomplete)
       || (manifest.stage === "complete" && !manifest.result)) {
       throw new GovernanceRecoveryBlockedError("Incomplete or invalid governance manifest prevents privacy purge");
@@ -148,9 +150,16 @@ function publishPrivacyManifestRedactions(root: string, workspace: string, requi
     if (requireSnapshots) throw new GovernanceRecoveryBlockedError("Missing privacy governance snapshot root");
     return;
   }
-  if (!existsSync(originals) || !existsSync(working)
+  if (!lstatSync(snapshots).isDirectory()
+    || !existsSync(originals) || !existsSync(working)
     || !lstatSync(originals).isDirectory() || !lstatSync(working).isDirectory()) {
-    throw new GovernanceRecoveryBlockedError("Incomplete privacy manifest snapshot inventory");
+    throw new GovernanceRecoveryBlockedError("Incomplete or unsafe privacy manifest snapshot inventory");
+  }
+  const snapshotEntries = readdirSync(snapshots, { withFileTypes: true });
+  if (snapshotEntries.length !== 2 || snapshotEntries.some((entry) =>
+    !["original", "working"].includes(entry.name)
+    || !entry.isDirectory() || entry.isSymbolicLink())) {
+    throw new GovernanceRecoveryBlockedError("Unrecognized privacy manifest snapshot artifact");
   }
   const readSnapshotNames = (directory: string): string[] =>
     readdirSync(directory, { withFileTypes: true }).map((entry) => {
