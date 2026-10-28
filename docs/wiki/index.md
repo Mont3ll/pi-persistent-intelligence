@@ -1,6 +1,6 @@
 # pi-persistent-intelligence Wiki
 
-This wiki covers the published `0.17.4` package and the changes under review for the unpublished `0.17.5-rc.1` candidate. Check the [changelog](../../CHANGELOG.md) before assuming a newer behavior is installed.
+This wiki covers the published `0.17.4` package and the changes under review for the unpublished `v0.17.5-rc.1` candidate. Check the [changelog](../../CHANGELOG.md) before assuming a newer behavior is installed.
 
 This wiki is the deeper operating manual for the package. The README covers installation and quick start. This wiki covers how the system works, why it is designed the way it is, and how to operate it effectively.
 
