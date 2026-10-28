@@ -124,7 +124,13 @@ function sessionFiles(roots: readonly string[]): string[] {
         if (++visited > MAX_SCANNED_FILES) return [];
         const file = join(dir, entry.name);
         if (entry.isDirectory()) {
-          pending.push(file);
+          // Do not enqueue paths that are no longer directories or have
+          // resolved outside the trusted root before traversal.
+          try {
+            if (!lstatSync(file).isDirectory()) continue;
+            const realDir = realpathSync(file);
+            if (within(root, realDir)) pending.push(realDir);
+          } catch { /* transient / invalid directory cannot supply proof */ }
           continue;
         }
         if (!entry.name.endsWith(".jsonl") || !entry.isFile()) continue;
