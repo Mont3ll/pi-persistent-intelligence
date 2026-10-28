@@ -29,9 +29,16 @@ function candidate(id: string, text: string, overrides: Partial<CaptureCandidate
     source: { type: "manual", ref: `test:${id}` },
     text,
     tags: ["testing"],
-    evidence_refs: ["test-evidence"],
+    evidence_refs: ["test-evidence", "test-evidence-2"],
     confidence: 0.9,
     status: "new",
+    // Legacy/manual fixture with explicit approved trust metadata. Without
+    // these fields strict-mode auto-curation must correctly select nothing.
+    primary_trust_class: "direct_user_instruction",
+    durability_signal: "project",
+    promotion_eligibility: "auto_candidate",
+    poisoning_risk: "low",
+    verification_status: "verified",
     scope_targets: [{ type: "project", project: "pi", confidence: 0.9, basis: ["test_fixture"] }],
     ...overrides,
   };
@@ -105,7 +112,7 @@ describe("browser command factory", () => {
     await browserCommands(dir).memoryInbox.handler("", interactiveContext([{ action: "approve" }], notifications));
 
     expect(notifications.at(-1)).toEqual({
-      message: "✓ Applied 1 memory op(s); 1 skipped for review.",
+      message: expect.stringContaining("✓ Applied 1 memory op(s); 1 skipped for review ["),
       kind: "success",
     });
   });
@@ -122,7 +129,7 @@ describe("browser command factory", () => {
     );
 
     expect(notifications.at(-1)).toEqual({
-      message: "✓ Applied 1 memory op(s); 1 skipped for review.",
+      message: expect.stringContaining("✓ Applied 1 memory op(s); 1 skipped for review ["),
       kind: "success",
     });
   });
@@ -141,7 +148,7 @@ describe("browser command factory", () => {
     await browserCommands(dir).memoryInbox.handler("", interactiveContext([{ action: "approve" }], notifications));
 
     expect(notifications.at(-1)).toEqual({
-      message: "Applied 0 memory op(s); 2 skipped for review.",
+      message: expect.stringContaining("Applied 0 memory op(s); 2 skipped for review ["),
       kind: "warning",
     });
   });
@@ -163,8 +170,8 @@ describe("browser command factory", () => {
     await browserCommands(dir).memoryInbox.handler("", interactiveContext([{ action: "approve" }], notifications));
 
     expect(notifications.at(-1)).toEqual({
-      message: "No auto-eligible ops above confidence threshold.",
-      kind: "info",
+      message: expect.stringContaining("Auto-apply made no changes. Inbox 1 pending:"),
+      kind: "warning",
     });
     expect(listCandidates(dir).find((item) => item.id === "cap_review_only")?.status).toBe("new");
   });

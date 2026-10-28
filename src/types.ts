@@ -558,6 +558,7 @@ export type PatchSkipReason =
   | "tombstoned"
   | "missing_target"
   | "missing_candidate"
+  | "capture_policy_hold"
   | "target_terminal"
   | "self_supersession"
   | "replacement_id_conflict"

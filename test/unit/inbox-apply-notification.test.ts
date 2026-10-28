@@ -24,11 +24,11 @@ function receipt(overrides: Partial<MemoryPatch> = {}): MemoryPatch {
 describe("startup inbox apply notification", () => {
   test("reports receipt-applied operations and only selected skips", () => {
     expect(buildApplyReceiptNotification(receipt(), ["op_1", "op_2"]))
-      .toBe("✓ Applied 1 memory op(s); 1 skipped for review.");
+      .toBe("✓ Applied 1 memory op(s); 1 skipped for review [unresolved_evidence].");
   });
 
   test("does not claim attempted operations were applied", () => {
     expect(buildApplyReceiptNotification(receipt({ applied_ops: [] }), ["op_1", "op_2"]))
-      .toBe("Applied 0 memory op(s); 1 skipped for review.");
+      .toBe("Applied 0 memory op(s); 1 skipped for review [unresolved_evidence].");
   });
 });

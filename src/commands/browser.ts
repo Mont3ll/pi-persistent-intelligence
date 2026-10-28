@@ -1,6 +1,7 @@
 import { loadConfig } from "../config";
 import { curateInbox } from "../curator";
 import { selectInboxBatchApplyOpIds } from "../curation-selection";
+import { renderInboxCurationSummary, summarizeInboxCuration } from "../inbox-curation-summary";
 import { listCandidates } from "../inbox";
 import { buildApplyReceiptNotification } from "../lifecycle";
 import { applyPatch } from "../patch";
@@ -80,37 +81,46 @@ export function createBrowserCommands(dependencies: BrowserDependencies): Browse
           const result = await openBrowser(context, candidateBrowserOptions(candidates), plain);
           const action = result?.action as InboxOverlayAction | undefined;
           if (action === "approve") {
-            const patch = curateInbox(root, { now: dependencies.nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
+            const patch = curateInbox(root, { now: dependencies.nowIso(), mode: "auto", vaultPath, governanceMode: config.governance.mode });
             const eligibleIds = selectInboxBatchApplyOpIds(patch, threshold);
             if (eligibleIds.length > 0) {
               const applied = applyPatch(root, patch, { selectedOpIds: eligibleIds, now: dependencies.nowIso() });
-              await updateQmd();
-              dependencies.syncFtsAfterPatch(patch, applied);
+              if (applied.applied_ops.length > 0) {
+                await updateQmd();
+                dependencies.syncFtsAfterPatch(patch, applied);
+              }
               context.ui.notify(
                 buildApplyReceiptNotification(applied, eligibleIds),
                 applied.applied_ops.length > 0 ? "success" : "warning",
               );
             } else {
-              context.ui.notify("No auto-eligible ops above confidence threshold.", "info");
+              const summary = summarizeInboxCuration(candidates, patch, config.curator.minConfidence, config.curator.minEvidenceCount, threshold);
+              context.ui.notify(`Auto-apply made no changes. ${renderInboxCurationSummary(summary)}`, "warning");
             }
           } else if (action === "review") {
-            const reviewPatch = curateInbox(root, { now: dependencies.nowIso(), mode: "propose", vaultPath, minEvidenceCount: 1 });
+            const reviewPatch = curateInbox(root, { now: dependencies.nowIso(), mode: "supervised", vaultPath, minEvidenceCount: 1, governanceMode: config.governance.mode });
             if (reviewPatch.ops.length > 0 && context.ui.custom) {
               const selectedIds = await context.ui.custom<string[] | null>((tui, theme, _keybindings, done) => createPatchReviewComponent(reviewPatch, done, tui as any, undefined, theme));
               if (selectedIds && selectedIds.length > 0) {
                 const applied = applyPatch(root, reviewPatch, { selectedOpIds: selectedIds, now: dependencies.nowIso() });
-                await updateQmd();
-                dependencies.syncFtsAfterPatch(reviewPatch, applied);
+                if (applied.applied_ops.length > 0) {
+                  await updateQmd();
+                  dependencies.syncFtsAfterPatch(reviewPatch, applied);
+                }
                 context.ui.notify(
                   buildApplyReceiptNotification(applied, selectedIds),
                   applied.applied_ops.length > 0 ? "success" : "warning",
                 );
+              } else if (selectedIds?.length === 0) {
+                context.ui.notify("No operations selected; use Space to select before Enter.", "warning");
               }
             } else {
-              context.ui.notify("No candidates meet curation thresholds.", "info");
+              const summary = summarizeInboxCuration(candidates, reviewPatch, config.curator.minConfidence, 1, threshold);
+              context.ui.notify(renderInboxCurationSummary(summary), "warning");
             }
           }
-        } catch {
+        } catch (error) {
+          context.ui.notify(`Inbox review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
           context.ui.notify(`${candidates.length} pending candidate(s):\n${plain}`, "info");
         }
       },

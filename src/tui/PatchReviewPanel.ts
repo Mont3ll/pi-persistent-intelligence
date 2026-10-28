@@ -53,6 +53,9 @@ export function createPatchReviewComponent(
 }
 
 export class PatchReviewPanel implements ComponentLike {
+  // Bounded viewport: the Pi host gives custom components a width but not a
+  // reliable scroll container. Always keep the highlighted operation visible.
+  private static readonly PAGE_SIZE = 5;
   private cursor = 0;
   private selected: Set<string>;
   private editing = false;
@@ -116,18 +119,39 @@ export class PatchReviewPanel implements ComponentLike {
       lines.push("");
     }
 
-    for (let i = 0; i < this.patch.ops.length; i++) {
-      const op = this.patch.ops[i];
+    const total = this.patch.ops.length;
+    const pageSize = PatchReviewPanel.PAGE_SIZE;
+    const pageIndex = Math.floor(this.cursor / pageSize);
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    const start = pageIndex * pageSize;
+    const end = Math.min(total, start + pageSize);
+    lines.push(...wrapPanelLine(
+      this.theme.dim(`  Page ${pageIndex + 1}/${pages} · Item ${total ? this.cursor + 1 : 0}/${total} · ${total ? start + 1 : 0}–${end} visible`),
+      boundedWidth,
+    ));
+    for (let i = start; i < end; i++) {
+      const op = this.patch.ops[i]!;
       const isCursor = i === this.cursor;
       const marker = renderCursorMarker(this.theme, isCursor);
       const checked = this.selected.has(op.op_id) ? this.theme.success("✓") : this.theme.dim(" ");
       const risk = riskStyle(this.theme, op.risk)(op.risk);
       const header = `${marker} [${checked}] ${this.theme.label(op.op_id)} ${this.theme.accent(op.op.toUpperCase())} ${this.theme.dim("risk:")} ${risk}`;
       lines.push(...wrapPanelLine(isCursor ? this.theme.selected(header) : header, boundedWidth));
-      if (op.rationale) lines.push(...wrapPanelHanging(`    ${this.theme.dim("why:")} `, this.theme.content(op.rationale), boundedWidth));
-      const statement = op.record?.statement ?? op.to_record?.statement;
-      if (statement) lines.push(...wrapPanelHanging(`    ${this.theme.dim("statement:")} `, this.theme.content(statement), boundedWidth));
-      if (i < this.patch.ops.length - 1) lines.push("");
+      // Show bounded details only for the highlighted operation. Previously the
+      // entire patch was rendered into an unscrollable host viewport.
+      if (isCursor) {
+        if (op.rationale) {
+          const wrapped = wrapPanelHanging(`    ${this.theme.dim("why:")} `, this.theme.content(op.rationale), boundedWidth);
+          lines.push(...wrapped.slice(0, 3));
+          if (wrapped.length > 3) lines.push(...wrapPanelLine(this.theme.dim("    … rationale truncated"), boundedWidth));
+        }
+        const statement = op.record?.statement ?? op.to_record?.statement;
+        if (statement) {
+          const wrapped = wrapPanelHanging(`    ${this.theme.dim("statement:")} `, this.theme.content(statement), boundedWidth);
+          lines.push(...wrapped.slice(0, 4));
+          if (wrapped.length > 4) lines.push(...wrapPanelLine(this.theme.dim("    … statement truncated; e to edit full text"), boundedWidth));
+        }
+      }
     }
 
     lines.push("");
@@ -136,7 +160,7 @@ export class PatchReviewPanel implements ComponentLike {
       boundedWidth,
       this.editing
         ? ["EDITING", "type", "←→ move", "Ctrl+U clear", "Enter save", "Esc cancel"]
-        : ["↑↓ move", "Space toggle", "e edit", "Enter apply", "Esc cancel"],
+        : ["↑↓ move", "PgUp/PgDn page", "Home/End", "Space toggle", "e edit", "Enter apply", "Esc cancel"],
     ));
     lines.push(renderMemoryPanelSeparator(this.theme, boundedWidth));
     return lines;
@@ -176,6 +200,10 @@ export class PatchReviewPanel implements ComponentLike {
 
     if (matchesKey(data, Key.up)) this.cursor = Math.max(0, this.cursor - 1);
     else if (matchesKey(data, Key.down)) this.cursor = Math.min(this.patch.ops.length - 1, this.cursor + 1);
+    else if (matchesKey(data, Key.pageUp)) this.cursor = Math.max(0, this.cursor - PatchReviewPanel.PAGE_SIZE);
+    else if (matchesKey(data, Key.pageDown)) this.cursor = Math.min(Math.max(0, this.patch.ops.length - 1), this.cursor + PatchReviewPanel.PAGE_SIZE);
+    else if (matchesKey(data, Key.home)) this.cursor = 0;
+    else if (matchesKey(data, Key.end)) this.cursor = Math.max(0, this.patch.ops.length - 1);
     else if (matchesKey(data, Key.space)) {
       const id = this.patch.ops[this.cursor]?.op_id;
       if (id) this.selected.has(id) ? this.selected.delete(id) : this.selected.add(id);

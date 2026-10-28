@@ -6,6 +6,7 @@ import { appendDailyLog, todayString } from "./daily";
 import { listCandidates } from "./inbox";
 import { curateInbox } from "./curator";
 import { selectInboxBatchApplyOpIds } from "./curation-selection";
+import { renderInboxCurationSummary, summarizeInboxCuration } from "./inbox-curation-summary";
 import { applyPatch } from "./patch";
 import { buildRetrievalContext, syncFtsIndex } from "./retriever";
 import { setupQmd, updateQmd, runQmd, qmdCollectionName } from "./qmd";
@@ -58,9 +59,10 @@ type LifecycleApi = ConsolidationRunner & {
 
 export function buildApplyReceiptNotification(applied: MemoryPatch, selectedOpIds: string[]): string {
   const selected = new Set(selectedOpIds);
-  const skipped = applied.skipped_ops.filter((skip) => selected.has(skip.op_id)).length;
+  const skipped = applied.skipped_ops.filter((skip) => selected.has(skip.op_id));
   const prefix = applied.applied_ops.length > 0 ? "✓ " : "";
-  return `${prefix}Applied ${applied.applied_ops.length} memory op(s)${skipped > 0 ? `; ${skipped} skipped for review` : ""}.`;
+  const reasons = [...new Set(skipped.map((item) => item.reason))];
+  return `${prefix}Applied ${applied.applied_ops.length} memory op(s)${skipped.length > 0 ? `; ${skipped.length} skipped for review [${reasons.join(", ")}]` : ""}.`;
 }
 
 type LifecycleDependencies = {
@@ -295,16 +297,21 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
             if (action === "approve") {
               // Apply only curator-approved operations that meet the confidence threshold.
               // Review-only and high-risk candidates remain pending for explicit Review.
-              const patch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "auto", vaultPath, minEvidenceCount: 1 });
+              const patch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "auto", vaultPath, governanceMode: cfg.governance.mode });
               const eligibleIds = selectInboxBatchApplyOpIds(patch, threshold);
               if (eligibleIds.length > 0) {
                 const applied = applyPatch(state.root, patch, { selectedOpIds: eligibleIds, now: dependencies.nowIso() });
-                await updateQmd();
-                dependencies.syncFtsAfterPatch(patch, applied);
+                if (applied.applied_ops.length > 0) {
+                  await updateQmd();
+                  dependencies.syncFtsAfterPatch(patch, applied);
+                }
                 ctx.ui.notify(
                   buildApplyReceiptNotification(applied, eligibleIds),
                   applied.applied_ops.length > 0 ? "success" : "warning",
                 );
+              } else {
+                const summary = summarizeInboxCuration(pending, patch, cfg.curator.minConfidence, cfg.curator.minEvidenceCount, threshold);
+                ctx.ui.notify(`Auto-apply made no changes. ${renderInboxCurationSummary(summary)}`, "warning");
               }
 
             } else if (action === "reject") {
@@ -328,7 +335,7 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                 try {
                   const cfg2 = loadConfig(state.root);
                   const vaultPath2 = cfg2.vault.path ?? process.env.PI_VAULT_PATH;
-                  const reviewPatch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "propose", vaultPath: vaultPath2, minEvidenceCount: 1 });
+                  const reviewPatch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "supervised", vaultPath: vaultPath2, minEvidenceCount: 1, governanceMode: cfg2.governance.mode });
                   if (reviewPatch.ops.length > 0) {
                     const selectedIds = await ctx.ui.custom<string[] | null>(
                       (tui, theme, _kb, done) =>
@@ -336,15 +343,20 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
                     );
                     if (selectedIds && selectedIds.length > 0) {
                       const applied = applyPatch(state.root, reviewPatch, { selectedOpIds: selectedIds, now: dependencies.nowIso() });
-                      await updateQmd();
-                      dependencies.syncFtsAfterPatch(reviewPatch, applied);
+                      if (applied.applied_ops.length > 0) {
+                        await updateQmd();
+                        dependencies.syncFtsAfterPatch(reviewPatch, applied);
+                      }
                       ctx.ui.notify(
                         buildApplyReceiptNotification(applied, selectedIds),
                         applied.applied_ops.length > 0 ? "success" : "warning",
                       );
+                    } else if (selectedIds?.length === 0) {
+                      ctx.ui.notify("No operations selected; use Space to select before Enter.", "warning");
                     }
                   } else {
-                    ctx.ui.notify("No candidates meet curation thresholds.", "info");
+                    const summary = summarizeInboxCuration(pending, reviewPatch, cfg.curator.minConfidence, 1, threshold);
+                    ctx.ui.notify(renderInboxCurationSummary(summary), "warning");
                   }
                 } catch {
                   ctx.ui.notify("Type /curate-memory to review pending candidates.", "info");
