@@ -144,6 +144,12 @@ function walkFiles(dir: string): string[] {
   });
 }
 
+/** Include immutable selection receipts when validating/correlating/redacting
+ * privacy artifacts. Legacy top-level patch files are still supported. */
+function patchArtifactFiles(patchesDir: string): string[] {
+  return walkFiles(patchesDir).filter((file) => extname(file).toLowerCase() === ".json");
+}
+
 function reportChange(file: string, needles: string[]): ArtifactChange | null {
   const extension = extname(file).toLowerCase();
   if (![".json", ".jsonl", ".md", ".txt"].includes(extension)) return null;
@@ -159,8 +165,8 @@ function reportChange(file: string, needles: string[]): ArtifactChange | null {
 
 export function validatePrivacyArtifactSet(root: string): void {
   const paths = ensureMemoryDirs(root);
-  for (const name of readdirSync(paths.patches).filter((entry) => entry.endsWith(".json"))) {
-    const parsed: unknown = JSON.parse(readFileSync(join(paths.patches, name), "utf-8"));
+  for (const file of patchArtifactFiles(paths.patches)) {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf-8"));
     assertPatchShape(parsed);
   }
   for (const line of readFileSync(paths.inbox.captured, "utf-8").split(/\r?\n/)) {
@@ -199,8 +205,8 @@ function redactCurrentPrivacyPatch(
 export function collectPrivacyCandidateCorrelations(root: string, targetIds: string[]): string[] {
   const paths = ensureMemoryDirs(root);
   const ids = new Set<string>();
-  for (const name of readdirSync(paths.patches).filter((entry) => entry.endsWith(".json"))) {
-    const parsed: unknown = JSON.parse(readFileSync(join(paths.patches, name), "utf-8"));
+  for (const file of patchArtifactFiles(paths.patches)) {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf-8"));
     assertPatchShape(parsed);
     for (const targetId of targetIds) {
       for (const id of correlatedCandidateIds(parsed, targetId)) ids.add(id);
@@ -233,10 +239,8 @@ export function redactPrivacyPatchForExecution(
 
 export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string, sensitiveValues: string[] = []): { changedFiles: string[] } {
   const paths = ensureMemoryDirs(root);
-  const parsedPatches = readdirSync(paths.patches)
-    .filter((name) => name.endsWith(".json"))
-    .map((name) => {
-      const file = join(paths.patches, name);
+  const parsedPatches = patchArtifactFiles(paths.patches)
+    .map((file) => {
       const original = readFileSync(file, "utf-8");
       const parsed: unknown = JSON.parse(original);
       assertPatchShape(parsed);
