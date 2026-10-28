@@ -116,10 +116,11 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
   } else if (intent.intent === "not_memory") {
     result.rejected++;
   } else {
+    const launchProject = (input.resolver ?? resolveProjectIdentity)(input.launch_cwd);
     scopes = resolveCaptureScopes({
       text: input.message,
       decision: intent,
-      launch_project: (input.resolver ?? resolveProjectIdentity)(input.launch_cwd),
+      launch_project: launchProject,
       activity: [activity],
     });
     const durability = globalTarget(scopes) ? "user_global" : "project";
@@ -139,7 +140,16 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
       outcome = "daily_only";
       reason = "memory_worth_daily_only";
     } else {
-      const canonicalMatch = findExactActiveCanonical(root, input.message, scopes);
+      const canonicalMatch = worth.decision === "candidate" ? findExactActiveCanonical(
+        root, input.message, scopes, {
+          session_id: input.session_id,
+          launch_cwd: input.launch_cwd,
+          project_id: launchProject.project_id,
+          recent_files_touched: input.actions
+            .filter((action) => action.kind === "read" || action.kind === "write")
+            .map((action) => (action as { path: string }).path),
+        },
+      ) : null;
       if (canonicalMatch) {
         result.already_represented++;
         outcome = "candidate_already_represented";
