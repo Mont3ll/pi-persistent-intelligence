@@ -37,6 +37,7 @@ This wiki is the deeper operating manual for the package. The README covers inst
 | [Safety Invariants](safety-invariants.md) | The hard guarantees PI enforces and how they are verified |
 | [Contributing](contributing.md) | How to contribute, run tests, and understand the codebase |
 | [Manual Release](manual-release.md) | Exact-SHA local checks, packaging, quiesced backup, manual npm publication, and rollback |
+| [0.17.5-rc.1 Candidate Notes](release-0.17.5-rc.1.md) | Changes since 0.17.4, integrated verification and known limits |
 
 ---
 
