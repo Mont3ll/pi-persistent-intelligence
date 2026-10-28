@@ -300,6 +300,42 @@ describe("delete patch", () => {
     expect(readdirSync(txRoot)).toHaveLength(3);
   });
 
+  test("privacy purge also removes sensitive skipped-operation details from historical manifests", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    const secret = "PRIVATE_SKIP_DETAIL_MARKER_7921";
+    const proposal: MemoryPatch = {
+      ...patch("audit_preserving"), patch_id: "patch_historical_skipped_detail",
+      ops: [
+        { op_id: "op_selected", op: "update", target_id: "mem_delete",
+          updates: { review: { cadence_days: 35, next_review: "2026-06-23", change_condition: secret } },
+          risk: "low", default_selected: false },
+        { op_id: "op_unselected", op: "update", target_id: "mem_delete",
+          updates: { review: { cadence_days: 36, next_review: "2026-06-24", change_condition: secret } },
+          risk: "low", default_selected: false },
+      ],
+    };
+    applyPatch(dir, proposal, {
+      selectedOpIds: ["op_selected"], now: "2026-05-19T09:30:00.000Z",
+    });
+    const transactions = ensureMemoryDirs(dir).governance.transactions;
+    const oldId = readdirSync(transactions)[0]!;
+    const manifestPath = join(transactions, oldId, "intent.json");
+    const historic = JSON.parse(readFileSync(manifestPath, "utf8"));
+    historic.result.skipped_ops[0].detail = secret;
+    writeFileSync(manifestPath, JSON.stringify(historic, null, 2) + "\n");
+    expect(readFileSync(manifestPath, "utf8")).toContain(secret);
+
+    const purged = applyPatch(dir, patch("privacy_purge"), {
+      selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
+    });
+    expect(purged.applied_ops).toEqual(["op_001"]);
+    const after = readFileSync(manifestPath, "utf8");
+    expect(after).not.toContain(secret);
+    expect(JSON.parse(after).result.skipped_ops[0].detail).toBe("[privacy purged]");
+    expect(loadAllRecords(dir).find((r) => r.id === "mem_delete")?.status).toBe("deleted");
+  });
+
   test("recovering interrupted privacy purge completes historical manifest redaction without resurrecting content", () => {
     const dir = root();
     unsafeAddMemoryRecord(dir, record());
