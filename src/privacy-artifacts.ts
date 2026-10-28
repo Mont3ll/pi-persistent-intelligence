@@ -41,7 +41,8 @@ function validGovernanceSnapshot(contents: unknown): asserts contents is {
     || !["complete"].includes(manifest.stage)) {
     throw new Error("Malformed or incomplete governance manifest snapshot");
   }
-  if (manifest.result !== undefined) assertPatchShape(manifest.result);
+  if (manifest.result === undefined) throw new Error("Missing completed governance receipt");
+  assertPatchShape(manifest.result);
 }
 
 
@@ -299,8 +300,15 @@ export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string, 
       assertCandidateShape(parsed);
       return parsed;
     });
+  const manifestSnapshots = manifestWorkingFiles(root).map((file) => {
+    const original = readFileSync(file, "utf-8");
+    const manifest: unknown = JSON.parse(original);
+    validGovernanceSnapshot(manifest);
+    return { file, original, manifest };
+  });
   const candidateIds = new Set([
     ...parsedPatches.flatMap(({ patch }) => correlatedCandidateIds(patch, targetId)),
+    ...manifestSnapshots.flatMap(({ manifest }) => correlatedCandidateIds(manifest.result!, targetId)),
     ...candidates
       .filter((candidate) => candidate.matched_memory_ids?.includes(targetId))
       .map((candidate) => candidate.id),
@@ -311,12 +319,8 @@ export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string, 
   // Governance transaction results are authoritative replay receipts as well.
   // Redact snapshot copies inside the workspace and publish them through
   // transaction recovery, never directly against the live store pre-commit.
-  const manifestResults = manifestWorkingFiles(root).flatMap((file) => {
-    const original = readFileSync(file, "utf-8");
-    const manifest: unknown = JSON.parse(original);
-    validGovernanceSnapshot(manifest);
-    if (!manifest.result) return [];
-    const updated = redactPatch(manifest.result, targetId, candidateIds, false);
+  const manifestResults = manifestSnapshots.flatMap(({ file, original, manifest }) => {
+    const updated = redactPatch(manifest.result!, targetId, candidateIds, false);
     if (!updated.changed) return [];
     return [{ file, original, content: `${JSON.stringify({
       ...manifest,
