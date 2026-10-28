@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
@@ -201,6 +201,50 @@ describe("delete patch", () => {
     const shell = readPatchFile(dir, "patch_historical");
     applyPatch(dir, shell, { selectedOpIds: ["op_sibling"], now: "2026-05-19T10:05:00.000Z" });
     expect(loadAllRecords(dir).find((item) => item.id === "unrelated_record")?.statement).toBe("Unrelated safe record.");
+  });
+
+  test("privacy purge redacts nested immutable attempt receipts as well as the latest patch", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    const privateValue = "API_TOKEN=selection-receipt-private-value";
+    const update: MemoryPatch = {
+      ...patch("audit_preserving"),
+      patch_id: "patch_private_receipt_update",
+      ops: [{
+        op_id: "op_update", op: "update", target_id: "mem_delete",
+        updates: { review: {
+          cadence_days: 30, next_review: "2026-06-18",
+          change_condition: privateValue,
+        } },
+        risk: "low", default_selected: true,
+      }],
+    };
+    const updated = applyPatch(dir, update, {
+      selectedOpIds: ["op_update"], now: "2026-05-19T09:30:00.000Z",
+    });
+    expect(updated.applied_ops).toEqual(["op_update"]);
+    const paths = ensureMemoryDirs(dir);
+    const receipts = join(paths.patches, "receipts");
+    const before = readdirSync(receipts);
+    expect(before).toHaveLength(1);
+    expect(readFileSync(join(receipts, before[0]!), "utf8")).toContain(privateValue);
+    expect(readFileSync(join(paths.patches, "patch_private_receipt_update.json"), "utf8"))
+      .toContain(privateValue);
+
+    const purged = applyPatch(dir, patch("privacy_purge"), {
+      selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
+    });
+    expect(purged.applied_ops).toEqual(["op_001"]);
+    const after = readdirSync(receipts);
+    expect(after.length).toBeGreaterThanOrEqual(2);
+    for (const name of after) {
+      const content = readFileSync(join(receipts, name), "utf8");
+      expect(content).not.toContain(privateValue);
+      expect(JSON.parse(content).patch_id).toBeTruthy();
+    }
+    expect(readFileSync(join(paths.patches, "patch_private_receipt_update.json"), "utf8"))
+      .not.toContain(privateValue);
+    expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("deleted");
   });
 
   test("executes multiple selected privacy deletes even when they share a candidate", () => {
