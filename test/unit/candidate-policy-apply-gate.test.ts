@@ -81,6 +81,19 @@ describe("capture policy at governed apply boundary", () => {
     expect(listCandidates(dir).find((c) => c.id === "cap_policy_test")?.status).toBe("patched");
   });
 
+  test("a stale default_selected flag cannot replace explicit review of an ambiguous candidate", () => {
+    const dir = root();
+    seed(dir, "Run release audit before publishing.");
+    const patch = curateInbox(dir, { now: "2026-10-21T10:01:00Z", mode: "supervised" });
+    expect(patch.ops).toHaveLength(1);
+    patch.ops[0]!.default_selected = true;
+    const result = applyPatch(dir, patch, { now: "2026-10-21T10:02:00Z" });
+    expect(result.applied_ops).toHaveLength(0);
+    expect(result.skipped_ops).toContainEqual(expect.objectContaining({ reason: "capture_policy_hold" }));
+    expect(loadActiveRecords(dir)).toHaveLength(0);
+    expect(listCandidates(dir).find((c) => c.id === "cap_policy_test")?.status).toBe("new");
+  });
+
   test("a stale auto patch cannot force promotion of a stored-durable no-cue candidate", () => {
     const dir = root();
     seed(dir, "Run release audit before publishing.");
