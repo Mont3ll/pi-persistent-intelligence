@@ -3,6 +3,8 @@ import { curateInbox } from "../curator";
 import { selectInboxBatchApplyOpIds } from "../curation-selection";
 import { renderInboxCurationSummary, summarizeInboxCuration } from "../inbox-curation-summary";
 import { listCandidates } from "../inbox";
+import { readEvidenceRecords } from "../evidence";
+import { explainInboxDispositions } from "../inbox-dispositions";
 import { buildApplyReceiptNotification } from "../lifecycle";
 import { applyPatch } from "../patch";
 import { updateQmd } from "../qmd";
@@ -68,17 +70,22 @@ export function createBrowserCommands(dependencies: BrowserDependencies): Browse
           context.ui.notify("Inbox empty.", "info");
           return;
         }
-        const plain = candidates.map((candidate, index) => `${index + 1}. [conf ${(candidate.confidence ?? 0).toFixed(2)}${candidate.ruleType ? ", " + candidate.ruleType : ""}] ${candidate.text.slice(0, 120)}`).join("\n");
+        const config = loadConfig(root);
+        const dispositions = explainInboxDispositions(candidates, readEvidenceRecords(root), config.curator);
+        const plain = candidates.map((candidate, index) => {
+          const diagnosis = dispositions.get(candidate.id);
+          const reason = diagnosis?.reason_codes.join(", ") || "no preflight hold";
+          return `${index + 1}. [conf ${(candidate.confidence ?? 0).toFixed(2)}, ${diagnosis?.disposition ?? "not-assessed"}] ${candidate.text.slice(0, 120)} | ${reason}`;
+        }).join("\n") + "\nPreflight only: original transcripts not checked; final eligibility requires governed curation and apply.";
         dependencies.rememberCommand("memory-inbox", plain, `inbox: ${candidates.length} candidates`);
         if (wantsPlainOutput(args) || !context.ui.custom) {
           notifyStructured(context, args, candidates, `${candidates.length} pending candidate(s):\n${plain}`, "info");
           return;
         }
-        const config = loadConfig(root);
         const threshold = config.curator.autoCurateHighThreshold ?? 0.85;
         const vaultPath = config.vault.path ?? process.env.PI_VAULT_PATH;
         try {
-          const result = await openBrowser(context, candidateBrowserOptions(candidates), plain);
+          const result = await openBrowser(context, candidateBrowserOptions(candidates, dispositions), plain);
           const action = result?.action as InboxOverlayAction | undefined;
           if (action === "approve") {
             const patch = curateInbox(root, { now: dependencies.nowIso(), mode: "auto", vaultPath, governanceMode: config.governance.mode });

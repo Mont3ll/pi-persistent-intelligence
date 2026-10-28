@@ -10,6 +10,7 @@ import type { RecallEffectivenessReport, RecallMemoryStat } from "../recall-effe
 import type { CaptureQualityReport } from "../capture-quality";
 import type { RecallXrayReport, IncludedMemoryXray, ExcludedMemoryXray } from "../recall-xray";
 import type { CaptureCandidate, EvidenceRecord, InquiryRecord, MemoryRecord } from "../types";
+import type { CandidateDisposition } from "../inbox-dispositions";
 
 export function memoryRecordBrowserOptions(records: MemoryRecord[]): BrowserOptions<MemoryRecord> {
   const items: BrowserItem<MemoryRecord>[] = records.map((record) => ({
@@ -48,16 +49,20 @@ export function memoryRecordBrowserOptions(records: MemoryRecord[]): BrowserOpti
   };
 }
 
-export function candidateBrowserOptions(candidates: CaptureCandidate[]): BrowserOptions<CaptureCandidate> {
+export function candidateBrowserOptions(candidates: CaptureCandidate[], dispositions?: ReadonlyMap<string, CandidateDisposition>): BrowserOptions<CaptureCandidate> {
   return {
     title: "Memory Inbox Browser",
     subtitle: "Inspect candidates. Approval/rejection still flows through governed patch review.",
     separatorStyle: "frame",
-    items: candidates.map((c) => ({
+    items: candidates.map((c) => {
+      const diagnosis = dispositions?.get(c.id);
+      return {
       id: c.id,
       item: c,
-      status: c.status === "new" ? ((c.confidence ?? 0) >= 0.85 ? "healthy" : "warning") : "info",
-      searchText: `${c.id} ${c.status} ${c.ruleType ?? ""} ${c.memory_kind ?? ""} ${c.tags.join(" ")} ${c.text}`,
+      status: diagnosis
+        ? (diagnosis.disposition === "proposal_possible" ? "info" : "warning")
+        : c.status === "new" ? ((c.confidence ?? 0) >= 0.85 ? "healthy" : "warning") : "info",
+      searchText: `${c.id} ${c.status} ${diagnosis?.disposition ?? ""} ${diagnosis?.reason_codes.join(" ") ?? ""} ${c.ruleType ?? ""} ${c.memory_kind ?? ""} ${c.tags.join(" ")} ${c.text}`,
       details: [
         `Text: ${c.text}`,
         `Source: ${c.source.type}:${c.source.ref}${c.source.cwd ? ` (${c.source.cwd})` : ""}`,
@@ -66,8 +71,15 @@ export function candidateBrowserOptions(candidates: CaptureCandidate[]): Browser
         `Trust: ${c.primary_trust_class ?? "unknown"} · promotion ${c.promotion_eligibility ?? "unknown"}`,
         `Match: ${c.match_kind ?? "new"} ${(c.matched_memory_ids ?? []).join(", ")}`,
         `Worth: ${c.worth_decision ?? "unknown"} ${(c.worth_reasons ?? []).join("; ")}`,
+        ...(diagnosis ? [
+          `Queue: ${diagnosis.disposition} · ${diagnosis.recommendation}`,
+          `Hold reasons: ${diagnosis.reason_codes.join("; ") || "No preflight hold found"}`,
+          `Evidence resolved: ${diagnosis.evidence_resolved}/${diagnosis.evidence_refs}; invalidated: ${diagnosis.evidence_invalidated}`,
+          "Preflight is read-only; original transcript NOT checked. Approval requires current governed proposal and apply-time proof.",
+        ] : []),
       ],
-    })),
+    };
+    }),
     pageSize: 8,
     sortBy: "confidence",
     columns: [
@@ -75,6 +87,7 @@ export function candidateBrowserOptions(candidates: CaptureCandidate[]): Browser
       { key: "type", label: "Type", width: 10, minWidth: 6, priority: 4, render: (c) => c.ruleType ?? c.memory_kind ?? "—" },
       { key: "confidence", label: "Conf", width: 6, minWidth: 5, priority: 2, render: (c) => (c.confidence ?? 0).toFixed(2), sortValue: (c) => c.confidence ?? 0 },
       { key: "status", label: "Status", width: 9, minWidth: 6, priority: 3, render: (c) => c.status },
+      { key: "queue", label: "Queue", width: 19, minWidth: 9, priority: 4, render: (c) => dispositions?.get(c.id)?.disposition ?? "not-assessed" },
       { key: "source", label: "Source", width: 14, minWidth: 8, priority: 5, render: (c) => c.source.type },
       { key: "text", label: "Candidate", minWidth: 20, priority: 1, render: (c) => c.text },
     ],

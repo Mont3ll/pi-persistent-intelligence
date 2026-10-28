@@ -242,7 +242,9 @@ Saved reports are written to `reports/procedure-candidates/`.
 
 ### `/memory-inbox`
 
-Lists pending inbox candidates awaiting curation.
+Lists pending inbox candidates awaiting curation. The plain and interactive views show **read-only preflight dispositions** for each candidate: policy holds, missing or invalidated evidence, reference-floor restrictions, review-required signals and potentially proposable candidates. Expand a candidate to see individual reason codes and the suggested next step.
+
+**Important:** `proposal_possible` is not an automatic-approval decision. This view does not read original session transcripts and never establishes source authority. `approve eligible` still invokes the existing governed curator and apply-time verification; reviewing a candidate never silently changes its status. With `sourceAwareAuto` disabled (default), a single source remains below the configured automatic evidence floor.
 
 ```
 /memory-inbox
