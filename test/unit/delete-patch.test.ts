@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
@@ -295,7 +295,15 @@ describe("delete patch", () => {
     const replay = applyPatch(dir, update, {
       selectedOpIds: ["op_update"], now: "2026-05-19T10:01:00.000Z",
     });
+    const replay2 = applyPatch(dir, secondUpdate, {
+      selectedOpIds: ["op_update_second"], now: "2026-05-19T10:01:01.000Z",
+    });
+    expect(replay.applied_ops).toEqual([]);
+    expect(replay2.applied_ops).toEqual([]);
     expect(JSON.stringify(replay)).not.toContain(secret);
+    expect(JSON.stringify(replay2)).not.toContain(secret);
+    expect(readFileSync(join(ensureMemoryDirs(dir).patches, update.patch_id + ".json"), "utf8")).not.toContain(secret);
+    expect(readFileSync(join(ensureMemoryDirs(dir).patches, secondUpdate.patch_id + ".json"), "utf8")).not.toContain(secret);
     expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("deleted");
     expect(readdirSync(txRoot)).toHaveLength(3);
   });
@@ -461,6 +469,78 @@ describe("delete patch", () => {
       selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
     })).toThrow(/Incomplete or invalid governance manifest/);
     expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("active");
+  });
+
+  test("missing privacy working snapshot blocks recovery before historical publication", () => {
+    for (const deletion of ["file", "directory"] as const) {
+      const dir = root();
+      unsafeAddMemoryRecord(dir, record());
+      const privateValue = "MISSING_SNAPSHOT_PRIVATE_VALUE_913";
+      const prior: MemoryPatch = {
+        ...patch("audit_preserving"), patch_id: "patch_missing_snapshot_" + deletion,
+        ops: [{
+          op_id: "op_sensitive_update", op: "update", target_id: "mem_delete",
+          updates: { review: {
+            cadence_days: 30, next_review: "2026-06-18", change_condition: privateValue,
+          } },
+          risk: "low", default_selected: true,
+        }],
+      };
+      applyPatch(dir, prior, { now: "2026-05-19T09:30:00.000Z" });
+      const rootTransactions = ensureMemoryDirs(dir).governance.transactions;
+      const historicalId = readdirSync(rootTransactions)[0]!;
+      const historicFile = join(rootTransactions, historicalId, "intent.json");
+      const historicOriginal = readFileSync(historicFile, "utf8");
+      expect(() => applyPatch(dir, patch("privacy_purge"), {
+        selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
+        faultAfterStage: "intent_written",
+      })).toThrow();
+      const pendingId = readdirSync(rootTransactions).find((id) => id !== historicalId)!;
+      const workingDir = join(rootTransactions, pendingId, "workspace",
+        "governance-manifest-snapshots", "working");
+      if (deletion === "directory") rmSync(workingDir, { recursive: true, force: true });
+      else rmSync(join(workingDir, historicalId + ".json"));
+      const recovered = recoverGovernanceTransactions(dir, "2026-05-19T10:01:00.000Z");
+      expect(recovered.completed).toEqual([]);
+      expect(recovered.blocked.some((item) => item.transaction_id === pendingId)).toBe(true);
+      expect(readFileSync(historicFile, "utf8")).toBe(historicOriginal);
+      expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("active");
+    }
+  });
+
+  test("unknown historical backups, missing intents and symlink transaction directories fail closed before purge", () => {
+    for (const defect of ["backup", "missing-intent", "symlink-directory"] as const) {
+      const dir = root();
+      unsafeAddMemoryRecord(dir, record());
+      const prior: MemoryPatch = {
+        ...patch("audit_preserving"), patch_id: "patch_historical_integrity_" + defect,
+        ops: [{
+          op_id: "op_old_update", op: "update", target_id: "mem_delete",
+          updates: { review: {
+            cadence_days: 30, next_review: "2026-06-18",
+            change_condition: "PRIVATE_HISTORICAL_INTEGRITY_FIXTURE",
+          } },
+          risk: "low", default_selected: true,
+        }],
+      };
+      applyPatch(dir, prior, { now: "2026-05-19T09:30:00.000Z" });
+      const transactionRoot = ensureMemoryDirs(dir).governance.transactions;
+      const oldId = readdirSync(transactionRoot)[0]!;
+      if (defect === "backup") {
+        writeFileSync(join(transactionRoot, oldId, "intent.json.backup"), "PRIVATE_HISTORICAL_INTEGRITY_FIXTURE");
+      } else if (defect === "missing-intent") {
+        rmSync(join(transactionRoot, oldId, "intent.json"));
+      } else {
+        symlinkSync(join(transactionRoot, oldId), join(transactionRoot, "shadow_alias"), "dir");
+      }
+      expect(() => applyPatch(dir, patch("privacy_purge"), {
+        selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
+      })).toThrow();
+      expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("active");
+      if (defect === "missing-intent") {
+        expect(existsSync(join(transactionRoot, oldId))).toBe(true);
+      }
+    }
   });
 
   test("executes multiple selected privacy deletes even when they share a candidate", () => {
