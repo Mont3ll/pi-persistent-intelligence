@@ -44,6 +44,21 @@ describe("capture applicability", () => {
     expect(detectTaskCategories("hello", [])).toEqual([]);
   });
 
+  test("release applicability is recalled for natural-language releasing tasks", () => {
+    const releaseRecord: MemoryRecord = {
+      ...writingPreference(), id: "release-checklist", scope: { type: "project", project: "pi" },
+      statement: "For this project, always use the release verification checklist.",
+      applies_when: ["release"],
+    };
+    const prompt = "Which release checklist should I use before releasing?";
+    expect(detectTaskCategories(prompt, [])).toContain("release");
+    expect(matchesPositiveApplicability(releaseRecord, context(prompt))).toBe(true);
+    expect(detectTaskCategories("Release the package and tag it.", [])).toContain("release");
+    expect(detectTaskCategories("The packages were released yesterday.", [])).toContain("release");
+    expect(detectTaskCategories("What are the releases this month?", [])).toContain("release");
+    expect(matchesPositiveApplicability(releaseRecord, context("Write unrelated invoice copy."))).toBe(false);
+  });
+
   test("matches positive applicability only in relevant context", () => {
     expect(matchesPositiveApplicability(writingPreference(), context("Rewrite my LinkedIn profile."))).toBe(true);
     expect(matchesPositiveApplicability(writingPreference(), context("Debug the cargo store test."))).toBe(false);
