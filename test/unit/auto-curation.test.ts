@@ -29,6 +29,8 @@ function candidate(confidence: number, id = "cap_test"): CaptureCandidate {
     evidence_refs: ["daily/2026-05-12.md", "docs/spec.md"],
     confidence,
     status: "new",
+    // This fixture exercises tiered auto-curation, not worth scoring.
+    worth_decision: "candidate",
   };
 }
 
