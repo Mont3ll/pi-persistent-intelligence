@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCaptureSourceAttribution } from "../../src/capture-provenance";
@@ -209,6 +211,55 @@ describe("trusted original Pi session transcript proof", () => {
     symlinkSync(elsewhere, f.transcript);
     expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
       ...options, discoveryIndex,
+    }).verified).toBe(false);
+  });
+
+  test.skipIf(process.platform !== "linux")("FIFO replacing indexed session never blocks discovery or source verification", () => {
+    const f = fixture();
+    const validIndex = createTranscriptDiscoveryIndex({ trustedSessionDirs: [f.sessionDir] });
+    expect(validIndex.bySessionId.get("recorded-session-001")).toHaveLength(1);
+    rmSync(f.transcript);
+    const fifo = spawnSync("mkfifo", [f.transcript], { timeout: 2000, encoding: "utf8" });
+    expect(fifo.status).toBe(0);
+
+    // Execute in a bounded child process. If the unsafe blocking open
+    // regresses, the test returns an actual timeout rather than hanging Bun.
+    const input = JSON.stringify({
+      candidate: f.candidate, evidence: f.evidence,
+      sessionId: "recorded-session-001", sessionDir: f.sessionDir,
+      transcript: f.transcript,
+    });
+    const moduleUrl = pathToFileURL(join(import.meta.dir, "../../src/transcript-proof.ts")).href;
+    const script = `
+      import { createTranscriptDiscoveryIndex, verifyCandidateTranscriptSource } from ${JSON.stringify(moduleUrl)};
+      const input = ${input};
+      const roots = { trustedSessionDirs: [input.sessionDir] };
+      const index = createTranscriptDiscoveryIndex(roots);
+      const result = verifyCandidateTranscriptSource(input.candidate, input.evidence, {
+        ...roots,
+        discoveryIndex: { scannedFiles: 1, bySessionId: new Map([[input.sessionId, [input.transcript]]]) },
+      });
+      console.log(JSON.stringify({ scannedFiles: index.scannedFiles, verified: result.verified, reason: result.reason }));
+    `;
+    const child = spawnSync(process.execPath, ["-e", script], {
+      encoding: "utf8", timeout: 2000, maxBuffer: 8192,
+    });
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(0);
+    const result = JSON.parse(child.stdout.trim());
+    expect(result.scannedFiles).toBe(0);
+    expect(result.verified).toBe(false);
+  });
+
+  test.skipIf(process.platform !== "linux")("non-regular transcript present during discovery cannot become proof", () => {
+    const f = fixture();
+    rmSync(f.transcript);
+    const fifo = spawnSync("mkfifo", [f.transcript], { timeout: 2000, encoding: "utf8" });
+    expect(fifo.status).toBe(0);
+    const index = createTranscriptDiscoveryIndex({ trustedSessionDirs: [f.sessionDir] });
+    expect(index.scannedFiles).toBe(0);
+    expect(verifyCandidateTranscriptSource(f.candidate, f.evidence, {
+      trustedSessionDirs: [f.sessionDir], discoveryIndex: index,
     }).verified).toBe(false);
   });
 
