@@ -4,6 +4,7 @@ import { applyPatchDirect } from "./patch-direct";
 import { assertGovernanceRecoveryClear, recoverGovernanceTransactions } from "./governance-recovery";
 import { readTransactionManifest, runGovernanceTransaction, type GovernanceTransactionStage } from "./governance-transaction";
 import type { MemoryPatch, PatchOp } from "./types";
+import type { TranscriptProofOptions } from "./transcript-proof";
 
 export { listPatchFiles, readPatchFile, writePatchFile } from "./patch-direct";
 
@@ -12,6 +13,8 @@ export interface ApplyPatchOptions {
   now: string;
   expectedGeneration?: number;
   faultAfterStage?: GovernanceTransactionStage;
+  /** Trusted Pi transcript roots for gated verification/test harness. */
+  trustedTranscriptOptions?: TranscriptProofOptions;
 }
 
 function validatePatchId(patchId: string): void {
@@ -59,6 +62,7 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
     (workspaceRoot) => applyPatchDirect(workspaceRoot, patch, {
       selectedOpIds: options.selectedOpIds,
       now: options.now,
+      trustedTranscriptOptions: options.trustedTranscriptOptions,
     }),
   );
 }
