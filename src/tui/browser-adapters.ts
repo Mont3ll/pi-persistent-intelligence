@@ -59,8 +59,9 @@ export function candidateBrowserOptions(candidates: CaptureCandidate[], disposit
       return {
       id: c.id,
       item: c,
-      status: diagnosis && diagnosis.disposition !== "proposal_possible"
-        ? "warning" : c.status === "new" ? "info" : "info",
+      status: diagnosis
+        ? (diagnosis.disposition === "proposal_possible" ? "info" : "warning")
+        : c.status === "new" ? ((c.confidence ?? 0) >= 0.85 ? "healthy" : "warning") : "info",
       searchText: `${c.id} ${c.status} ${diagnosis?.disposition ?? ""} ${diagnosis?.reason_codes.join(" ") ?? ""} ${c.ruleType ?? ""} ${c.memory_kind ?? ""} ${c.tags.join(" ")} ${c.text}`,
       details: [
         `Text: ${c.text}`,
