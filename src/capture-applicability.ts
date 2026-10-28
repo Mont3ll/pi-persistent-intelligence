@@ -7,7 +7,7 @@ export function detectTaskCategories(prompt: string, recentFiles: string[]): Dom
   const categories: DomainTag[] = [];
   if (/\b(write|writing|rewrite|edit(?:ing)? copy|linkedin|portfolio|profile|application|article|blog|punctuation|heading|humanize|humanizer)\b/.test(text)) categories.push("writing");
   if (/\b(documentation|docs|readme|changelog|wiki|markdown)\b/.test(text)) categories.push("documentation");
-  if (/\b(release|publish|package|registry|tag)\b/.test(text)) categories.push("release");
+  if (/\b(releas(?:e|es|ed|ing)|publish|publishing|package|registry|tag)\b/.test(text)) categories.push("release");
   if (/\b(test|testing|typecheck|lint|clippy|rustfmt|cargo check|vitest|playwright)\b/.test(text)) categories.push("testing");
   if (/\b(implement|code|debug|fix|refactor|repository|repo|crate|module)\b/.test(text)) categories.push("implementation");
   if (/\b(research|paper|source|literature|evidence)\b/.test(text)) categories.push("research");
