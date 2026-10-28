@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { readSessionId } from "./sessions/parser";
@@ -33,12 +33,20 @@ export interface TranscriptProofResult {
   method?: "unique_user_message_hash";
 }
 
+export interface TranscriptDiscoveryIndex {
+  /** Discovery hints only. Source identity is rechecked from the opened file. */
+  readonly bySessionId: ReadonlyMap<string, readonly string[]>;
+  readonly scannedFiles: number;
+}
+
 export interface TranscriptProofOptions {
   /**
    * Trusted directories supplied by the host/verifier, NEVER by the candidate
    * or its source_ref. Omitted means Pi's standard live/archive session roots.
    */
   trustedSessionDirs?: readonly string[];
+  /** In-memory hint scoped to one curation pass; never persisted or trusted at apply. */
+  discoveryIndex?: TranscriptDiscoveryIndex;
 }
 
 function hash(text: string): string {
@@ -96,6 +104,43 @@ function sessionFiles(roots: readonly string[]): string[] {
   return [...new Set(found)];
 }
 
+/**
+ * Discover session IDs once per curation operation instead of scanning all
+ * session headers repeatedly for every candidate. This index has NO grant
+ * authority: every matched file is independently rechecked when opened.
+ */
+export function createTranscriptDiscoveryIndex(
+  options: TranscriptProofOptions = {},
+): TranscriptDiscoveryIndex {
+  const paths = sessionFiles(options.trustedSessionDirs ?? defaultSessionDirectories());
+  const map = new Map<string, string[]>();
+  for (const file of paths) {
+    try {
+      if (statSync(file).size < 2) continue;
+      const id = readSessionId(file);
+      if (!id) continue;
+      const existing = map.get(id) ?? [];
+      existing.push(file);
+      map.set(id, existing);
+    } catch { /* unreadable files cannot authorize proof */ }
+  }
+  return { bySessionId: map, scannedFiles: paths.length };
+}
+
+function trustedRealRoots(options: TranscriptProofOptions): string[] {
+  return (options.trustedSessionDirs ?? defaultSessionDirectories())
+    .filter((root) => existsSync(root))
+    .map((root) => realpathSync(root));
+}
+
+function trustedTranscriptPath(file: string, roots: readonly string[]): boolean {
+  try {
+    if (lstatSync(file).isSymbolicLink()) return false;
+    const realFile = realpathSync(file);
+    return roots.some((root) => within(root, realFile));
+  } catch { return false; }
+}
+
 function validSource(candidate: CaptureCandidate, evidence: EvidenceRecord): boolean {
   const source = candidate.capture_source;
   if (!source || source.version !== 1 || source.policy_version !== "capture-intent-v1"
@@ -131,7 +176,18 @@ function inspectedTranscript(
   file: string,
   expectedSessionId: string,
 ): { sessionId: string; cwd: string; userTurns: Array<{ text: string; turnId?: string }> } | null {
-  const raw = readFileSync(file, "utf8");
+  // Inspect through a single descriptor with no-follow on the final
+  // component. Filesystem replacement during read fails closed.
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  let raw: string;
+  try {
+    const before = fstatSync(fd);
+    if (!before.isFile() || before.size > MAX_TRANSCRIPT_BYTES) return null;
+    raw = readFileSync(fd, "utf8");
+    const after = fstatSync(fd);
+    if (before.dev !== after.dev || before.ino !== after.ino
+      || before.size !== after.size || before.mtimeMs !== after.mtimeMs) return null;
+  } finally { closeSync(fd); }
   const lines = raw.split("\n");
   let session: { id?: unknown; cwd?: unknown } | null = null;
   const userTurns: Array<{ text: string; turnId?: string }> = [];
@@ -181,18 +237,19 @@ export function verifyCandidateTranscriptSource(
   const target = candidate.scope_targets?.length === 1 ? candidate.scope_targets[0] : undefined;
   if (target?.type !== "project" || !target.project) return held("invalid_source_metadata");
 
-  const matching: string[] = [];
   try {
-    for (const file of sessionFiles(options.trustedSessionDirs ?? defaultSessionDirectories())) {
-      if (statSync(file).size < 2) continue;
-      // Only a bounded header read during discovery; open full transcript
-      // after an exact session-id match and size check.
-      if (readSessionId(file) === source.session_id) matching.push(file);
-      if (matching.length > 1) return held("ambiguous_session_files");
-    }
+    const roots = trustedRealRoots(options);
+    const index = options.discoveryIndex ?? createTranscriptDiscoveryIndex(options);
+    const matching = index.bySessionId.get(source.session_id) ?? [];
+    if (matching.length > 1) return held("ambiguous_session_files");
     if (matching.length !== 1) return held("no_trusted_session_file");
-    if (statSync(matching[0]!).size > MAX_TRANSCRIPT_BYTES) return held("oversized_transcript");
-    const transcript = inspectedTranscript(matching[0]!, source.session_id);
+    const sourceFile = matching[0]!;
+    // Recheck both trusted containment and exact session identity. The
+    // ephemeral discovery index is not an authorization source.
+    if (!trustedTranscriptPath(sourceFile, roots)) return held("invalid_transcript");
+    if (statSync(sourceFile).size > MAX_TRANSCRIPT_BYTES) return held("oversized_transcript");
+    if (readSessionId(sourceFile) !== source.session_id) return held("invalid_transcript");
+    const transcript = inspectedTranscript(sourceFile, source.session_id);
     if (!transcript) return held("invalid_transcript");
     // Project identity must be derived independently from the trusted Pi
     // session header, not from the candidate's proposed target alone.
