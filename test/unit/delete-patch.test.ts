@@ -388,6 +388,14 @@ describe("delete patch", () => {
       }],
     };
     applyPatch(dir, update, { selectedOpIds: ["op_update"], now: "2026-05-19T09:30:00.000Z" });
+    const transactionRoot = ensureMemoryDirs(dir).governance.transactions;
+    const firstId = readdirSync(transactionRoot)[0]!;
+    const historical = join(transactionRoot, firstId);
+    const orphan = join(historical, "workspace");
+    mkdirSync(orphan);
+    writeFileSync(join(orphan, "private.txt"), secret);
+    const orphanTemp = join(historical, "intent.json.tmp-111-222-333");
+    writeFileSync(orphanTemp, secret);
     expect(() => applyPatch(dir, patch("privacy_purge"), {
       selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
       faultAfterStage: "intent_written",
@@ -396,6 +404,8 @@ describe("delete patch", () => {
     const report = recoverGovernanceTransactions(dir, "2026-05-19T10:01:00.000Z");
     expect(report.blocked).toEqual([]);
     expect(report.completed).toHaveLength(1);
+    expect(existsSync(orphan)).toBe(false);
+    expect(existsSync(orphanTemp)).toBe(false);
     const txRoot = ensureMemoryDirs(dir).governance.transactions;
     for (const id of readdirSync(txRoot)) {
       const raw = readFileSync(join(txRoot, id, "intent.json"), "utf8");
