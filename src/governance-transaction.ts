@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, cpSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { readCanonicalState, writeCanonicalStateAtomic } from "./governance-generation";
 import { acquireGovernanceWriterLock, StaleCanonicalGenerationError } from "./governance-writer-lock";
@@ -119,6 +119,38 @@ function publishPrivacyManifestRedactions(root: string, workspace: string): void
     changes.push(manifest);
   }
   for (const manifest of changes) writeTransactionManifest(root, manifest);
+
+  // A completed transaction no longer needs its workspace or orphaned
+  // manifest temp writes. Those leftovers can retain the pre-purge content
+  // even after intent.json itself has been redacted. Purge them only after
+  // durable privacy intent, while the exclusive governance writer lock is
+  // held; interruption is recoverable by rerunning this publication step.
+  for (const entry of readdirSync(working, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) {
+      throw new GovernanceRecoveryBlockedError("Invalid governance cleanup snapshot");
+    }
+    const id = entry.name.slice(0, -5);
+    const historical = readTransactionManifest(root, id);
+    if (historical?.stage !== "complete") {
+      throw new GovernanceRecoveryBlockedError(`Incomplete historical transaction ${id} during privacy cleanup`);
+    }
+    const directory = transactionDirectory(root, id);
+    for (const child of readdirSync(directory, { withFileTypes: true })) {
+      if (child.name === "workspace") {
+        const leftover = join(directory, child.name);
+        if (!lstatSync(leftover).isDirectory()) {
+          throw new GovernanceRecoveryBlockedError(`Unexpected historical workspace type for ${id}`);
+        }
+        rmSync(leftover, { recursive: true, force: true });
+      } else if (child.name.startsWith("intent.json.tmp-")) {
+        const temporary = join(directory, child.name);
+        if (!lstatSync(temporary).isFile()) {
+          throw new GovernanceRecoveryBlockedError(`Unexpected historical manifest temporary type for ${id}`);
+        }
+        unlinkSync(temporary);
+      }
+    }
+  }
 }
 function publishEntry(root: string, workspace: string, entry: string): void { const source = join(workspace, entry); if (!existsSync(source)) return; const destination = join(root, entry); const staged = `${destination}.tx-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`; rmSync(staged, { recursive: true, force: true }); cpSync(source, staged, { recursive: true, force: true }); rmSync(destination, { recursive: true, force: true }); renameSync(staged, destination); }
 function publishEntries(root: string, workspace: string, entries: readonly string[]): void { for (const entry of entries) publishEntry(root, workspace, entry); }
