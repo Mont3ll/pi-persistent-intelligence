@@ -59,7 +59,8 @@ function transactionIdForAttempt(root: string, patch: MemoryPatch, selectedOpIds
 /** Compatibility only: never reuse a pre-selection-identity legacy receipt
  * unless its persisted proposal and selected subset exactly match this call. */
 function matchingLegacyReceipt(patch: MemoryPatch, selectedOpIds: string[] | undefined, result: MemoryPatch): boolean {
-  if (result.patch_id !== patch.patch_id || result.generated_by !== patch.generated_by
+  if (!Array.isArray(result.ops) || !Array.isArray(result.skipped_ops)
+    || result.patch_id !== patch.patch_id || result.generated_by !== patch.generated_by
     || result.mode !== patch.mode || JSON.stringify(result.ops) !== JSON.stringify(patch.ops)) return false;
   const selected = selectedOps(patch, selectedOpIds).map((op) => op.op_id);
   const unselected = new Set(result.skipped_ops
