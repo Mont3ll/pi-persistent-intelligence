@@ -1,6 +1,6 @@
 # 0.17.5-rc.1 release notes
 
-**Status: candidate source, not published.** These notes describe R0–R3a, merged into `main` at `3104209c1f4792d338bd95b982844b1011cda1d3`. The RC version change and this release document still need independent verification at their own exact commit before an npm publish is considered.
+**Status: unpublished release candidate.** These notes describe R0–R3a, merged into `main` at `3104209c1f4792d338bd95b982844b1011cda1d3`. The RC version change and this release document still need independent verification at their own exact commit before an npm publish is considered.
 
 The currently installed runtime and published npm package are `0.17.4`.
 
