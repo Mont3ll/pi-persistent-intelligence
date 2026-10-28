@@ -6,6 +6,7 @@ import { appendDailyLog, todayString } from "./daily";
 import { listCandidates } from "./inbox";
 import { curateInbox } from "./curator";
 import { selectInboxBatchApplyOpIds } from "./curation-selection";
+import { retryVerifiedSourceCandidatesAtSessionStart } from "./next-session-source-retry";
 import { renderInboxCurationSummary, summarizeInboxCuration } from "./inbox-curation-summary";
 import { applyPatch } from "./patch";
 import { buildRetrievalContext, syncFtsIndex } from "./retriever";
@@ -105,6 +106,33 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
           ctx.ui.notify(`Session index: ${state.sessionStore.size()} sessions (${added} new, ${updated} updated)`, "info");
         }
       } catch { /* best-effort */ }
+
+      // A previous session may have ended before its transcript was flushed.
+      // On the next primary-session start, retry ONLY attributable one-source
+      // candidates and ONLY with explicit source-aware auto curation enabled.
+      // No timers, legacy backfill, or relaxed eligibility. The apply boundary
+      // independently revalidates the original source and governs every write.
+      if (!isChildProcess()) {
+        try {
+          const retry = retryVerifiedSourceCandidatesAtSessionStart(state.root, {
+            now: dependencies.nowIso(),
+          });
+          if (retry.applied_ops > 0 && retry.proposed_patch && retry.apply_receipt) {
+            dependencies.syncFtsAfterPatch(retry.proposed_patch, retry.apply_receipt);
+            await updateQmd();
+            if (ctx.hasUI) {
+              ctx.ui.notify(`Retained ${retry.applied_ops} previously held, transcript-verified memory candidate(s).`, "success");
+            }
+          }
+        } catch (error) {
+          // Preserve the session startup path if the optional retry fails.
+          // Avoid transcript paths or user text in logs.
+          appendRuntimeEvent(state.root, {
+            type: "warn", severity: "medium", component: "curation",
+            message: `Next-session source retry held after error: ${error instanceof Error ? error.name : "unknown"}`,
+          });
+        }
+      }
 
       // ── Session tools ─────────────────────────────────────────────────
       const sessionTools = buildSessionSearchTools(state.root, state.sessionStore);

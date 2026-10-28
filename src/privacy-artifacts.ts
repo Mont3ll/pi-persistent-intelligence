@@ -15,6 +15,37 @@ import type { CaptureCandidate, MemoryPatch, PatchOp } from "./types";
 
 const PURGED = "[privacy purged]";
 
+/** Only populated for a privacy-purge transaction workspace, never live
+ * governance state. Original snapshots remain intact for crash recovery. */
+export function governanceManifestSnapshotDirectory(root: string): string {
+  return join(root, "governance-manifest-snapshots");
+}
+
+function manifestWorkingFiles(root: string): string[] {
+  const working = join(governanceManifestSnapshotDirectory(root), "working");
+  if (!existsSync(working)) return [];
+  return readdirSync(working, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => join(working, entry.name));
+}
+
+function validGovernanceSnapshot(contents: unknown): asserts contents is {
+  transaction_id: string; stage: string; result?: MemoryPatch;
+} {
+  if (!contents || typeof contents !== "object" || Array.isArray(contents)) {
+    throw new Error("Malformed governance manifest snapshot");
+  }
+  const manifest = contents as Record<string, unknown>;
+  if (typeof manifest.transaction_id !== "string" || !manifest.transaction_id
+    || typeof manifest.stage !== "string"
+    || !["complete"].includes(manifest.stage)) {
+    throw new Error("Malformed or incomplete governance manifest snapshot");
+  }
+  if (manifest.result === undefined) throw new Error("Missing completed governance receipt");
+  assertPatchShape(manifest.result);
+}
+
+
 function redactedCandidate(candidate: CaptureCandidate): CaptureCandidate {
   return {
     id: candidate.id,
@@ -59,6 +90,7 @@ function redactPatch(
   preserveExecutablePrivacyDelete: boolean,
 ): { patch: MemoryPatch; changed: boolean } {
   let changed = false;
+  const redactedIds = new Set<string>();
   const ops = patch.ops.map((op) => {
     const correlated = directlyReferencesTarget(op, targetId)
       || Boolean(op.candidate_id && candidateIds.has(op.candidate_id));
@@ -70,9 +102,14 @@ function redactPatch(
       && op.target_id === targetId
     ) return op;
     changed = true;
+    redactedIds.add(op.op_id);
     return redactedOp(op);
   });
-  return { patch: changed ? { ...patch, summary: PURGED, ops } : patch, changed };
+  // Existing completed receipts may carry free-text policy details about an
+  // operation even after its structured payload has been redacted.
+  const skipped_ops = patch.skipped_ops?.map((skip) =>
+    skip && redactedIds.has(skip.op_id) ? { ...skip, detail: PURGED } : skip);
+  return { patch: changed ? { ...patch, summary: PURGED, ops, skipped_ops } : patch, changed };
 }
 
 function assertPatchShape(value: unknown): asserts value is MemoryPatch {
@@ -144,6 +181,21 @@ function walkFiles(dir: string): string[] {
   });
 }
 
+/** Include immutable selection receipts when validating/correlating/redacting
+ * privacy artifacts. Legacy top-level patch files are still supported. */
+function patchArtifactFiles(patchesDir: string): string[] {
+  const topLevel = readdirSync(patchesDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+    .map((entry) => join(patchesDir, entry.name));
+  const receiptsDir = join(patchesDir, "receipts");
+  const receipts = existsSync(receiptsDir)
+    ? readdirSync(receiptsDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => join(receiptsDir, entry.name))
+    : [];
+  return [...topLevel, ...receipts];
+}
+
 function reportChange(file: string, needles: string[]): ArtifactChange | null {
   const extension = extname(file).toLowerCase();
   if (![".json", ".jsonl", ".md", ".txt"].includes(extension)) return null;
@@ -159,8 +211,12 @@ function reportChange(file: string, needles: string[]): ArtifactChange | null {
 
 export function validatePrivacyArtifactSet(root: string): void {
   const paths = ensureMemoryDirs(root);
-  for (const name of readdirSync(paths.patches).filter((entry) => entry.endsWith(".json"))) {
-    const parsed: unknown = JSON.parse(readFileSync(join(paths.patches, name), "utf-8"));
+  for (const file of manifestWorkingFiles(root)) {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf-8"));
+    validGovernanceSnapshot(parsed);
+  }
+  for (const file of patchArtifactFiles(paths.patches)) {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf-8"));
     assertPatchShape(parsed);
   }
   for (const line of readFileSync(paths.inbox.captured, "utf-8").split(/\r?\n/)) {
@@ -181,6 +237,7 @@ function redactCurrentPrivacyPatch(
     ...targetIds.flatMap((targetId) => correlatedCandidateIds(patch, targetId)),
   ]);
   let changed = false;
+  const redactedIds = new Set<string>();
   const ops = patch.ops.map((op) => {
     const correlated = targetIds.some((targetId) => directlyReferencesTarget(op, targetId))
       || Boolean(op.candidate_id && candidateIds.has(op.candidate_id));
@@ -191,16 +248,19 @@ function redactCurrentPrivacyPatch(
       && Boolean(op.target_id && targetIds.includes(op.target_id));
     if (executableDelete) return op;
     changed = true;
+    redactedIds.add(op.op_id);
     return redactedOp(op);
   });
-  return changed ? { ...patch, summary: PURGED, ops } : patch;
+  const skipped_ops = patch.skipped_ops?.map((skip) =>
+    skip && redactedIds.has(skip.op_id) ? { ...skip, detail: PURGED } : skip);
+  return changed ? { ...patch, summary: PURGED, ops, skipped_ops } : patch;
 }
 
 export function collectPrivacyCandidateCorrelations(root: string, targetIds: string[]): string[] {
   const paths = ensureMemoryDirs(root);
   const ids = new Set<string>();
-  for (const name of readdirSync(paths.patches).filter((entry) => entry.endsWith(".json"))) {
-    const parsed: unknown = JSON.parse(readFileSync(join(paths.patches, name), "utf-8"));
+  for (const file of patchArtifactFiles(paths.patches)) {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf-8"));
     assertPatchShape(parsed);
     for (const targetId of targetIds) {
       for (const id of correlatedCandidateIds(parsed, targetId)) ids.add(id);
@@ -233,10 +293,8 @@ export function redactPrivacyPatchForExecution(
 
 export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string, sensitiveValues: string[] = []): { changedFiles: string[] } {
   const paths = ensureMemoryDirs(root);
-  const parsedPatches = readdirSync(paths.patches)
-    .filter((name) => name.endsWith(".json"))
-    .map((name) => {
-      const file = join(paths.patches, name);
+  const parsedPatches = patchArtifactFiles(paths.patches)
+    .map((file) => {
       const original = readFileSync(file, "utf-8");
       const parsed: unknown = JSON.parse(original);
       assertPatchShape(parsed);
@@ -252,8 +310,15 @@ export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string, 
       assertCandidateShape(parsed);
       return parsed;
     });
+  const manifestSnapshots = manifestWorkingFiles(root).map((file) => {
+    const original = readFileSync(file, "utf-8");
+    const manifest: unknown = JSON.parse(original);
+    validGovernanceSnapshot(manifest);
+    return { file, original, manifest };
+  });
   const candidateIds = new Set([
     ...parsedPatches.flatMap(({ patch }) => correlatedCandidateIds(patch, targetId)),
+    ...manifestSnapshots.flatMap(({ manifest }) => correlatedCandidateIds(manifest.result!, targetId)),
     ...candidates
       .filter((candidate) => candidate.matched_memory_ids?.includes(targetId))
       .map((candidate) => candidate.id),
@@ -261,6 +326,17 @@ export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string, 
   const patchResults = parsedPatches
     .map(({ file, original, patch }) => ({ file, original, ...redactPatch(patch, targetId, candidateIds, false) }))
     .filter((entry) => entry.changed);
+  // Governance transaction results are authoritative replay receipts as well.
+  // Redact snapshot copies inside the workspace and publish them through
+  // transaction recovery, never directly against the live store pre-commit.
+  const manifestResults = manifestSnapshots.flatMap(({ file, original, manifest }) => {
+    const updated = redactPatch(manifest.result!, targetId, candidateIds, false);
+    if (!updated.changed) return [];
+    return [{ file, original, content: `${JSON.stringify({
+      ...manifest,
+      result: updated.patch,
+    }, null, 2)}\n` }];
+  });
   let candidatesChanged = false;
   const redactedCandidates = candidates.map((candidate) => {
     const directlyRelated = candidate.matched_memory_ids?.includes(targetId) ?? false;
@@ -296,6 +372,7 @@ export function purgeCorrelatedPrivacyArtifacts(root: string, targetId: string, 
       content: `${JSON.stringify(entry.patch, null, 2)}\n`,
       original: entry.original,
     })),
+    ...manifestResults,
     ...derivativeChanges,
     ...reportChanges,
   ];

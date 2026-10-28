@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyPatch } from "../../src/patch";
@@ -21,6 +21,146 @@ describe("K3 crash recovery and replay semantics", () => {
     expect(first.status).toBe("applied"); expect(second.status).toBe("applied"); expect(second.applied_ops).toEqual(first.applied_ops);
     expect(loadAllRecords(dir).filter((item) => item.id === "mem_replay")).toHaveLength(1);
   });
+  test("legacy completed receipts replay only an identical selected subset after upgrade", () => {
+    const dir = root();
+    const original: MemoryPatch = {
+      ...patch("legacy_multi"), patch_id: "patch_pre_upgrade",
+      ops: [
+        { op_id: "op_001", op: "add", record: record("mem_legacy_1"),
+          risk: "low", default_selected: false },
+        { op_id: "op_002", op: "add", record: record("mem_legacy_2"),
+          risk: "low", default_selected: false },
+      ],
+    };
+    const first = applyPatch(dir, original, {
+      selectedOpIds: ["op_001"], now: "2026-09-28T09:01:00Z",
+    });
+    expect(first.applied_ops).toEqual(["op_001"]);
+    const txRoot = join(dir, "governance", "transactions");
+    const [qualified] = readdirSync(txRoot);
+    expect(qualified).toMatch(/^patch_pre_upgrade\.s/);
+    renameSync(join(txRoot, qualified!), join(txRoot, original.patch_id));
+    const manifestPath = join(txRoot, original.patch_id, "intent.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.transaction_id = original.patch_id;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    // Simulate a previous runtime's transaction namespace and exact replay.
+    const repeat = applyPatch(dir, original, {
+      selectedOpIds: ["op_001"], now: "2026-09-28T09:01:01Z",
+    });
+    expect(repeat.applied_ops).toEqual(["op_001"]);
+    expect(loadAllRecords(dir).filter((r) => r.id === "mem_legacy_1")).toHaveLength(1);
+
+    // A different request may NOT inherit that legacy receipt.
+    const different = applyPatch(dir, original, {
+      selectedOpIds: ["op_002"], now: "2026-09-28T09:01:02Z",
+    });
+    expect(different.applied_ops).toEqual(["op_002"]);
+    expect(loadAllRecords(dir).filter((r) => r.id === "mem_legacy_2")).toHaveLength(1);
+    expect(readdirSync(txRoot)).toHaveLength(2);
+  });
+
+  test("recovering an interrupted subset cannot substitute its receipt for a different subset", () => {
+    const dir = root();
+    const request: MemoryPatch = {
+      ...patch("subset_interrupted"), patch_id: "patch_interrupted_selection",
+      ops: [
+        { op_id: "op_001", op: "add", record: record("mem_interrupted_1"),
+          risk: "low", default_selected: false },
+        { op_id: "op_002", op: "add", record: record("mem_interrupted_2"),
+          risk: "low", default_selected: false },
+      ],
+    };
+    expect(() => applyPatch(dir, request, {
+      now: "2026-10-28T08:00:01Z", selectedOpIds: ["op_001"],
+      faultAfterStage: "intent_written",
+    })).toThrow();
+    expect(loadAllRecords(dir)).toHaveLength(0);
+    const other = applyPatch(dir, request, {
+      now: "2026-10-28T08:00:02Z", selectedOpIds: ["op_002"],
+    });
+    // Recovery completes the original durable intent, then the distinct
+    // selected subset is applied through its own governed transaction.
+    expect(other.applied_ops).toEqual(["op_002"]);
+    expect(loadAllRecords(dir).map((item) => item.id).sort())
+      .toEqual(["mem_interrupted_1", "mem_interrupted_2"]);
+    const txRoot = join(dir, "governance", "transactions");
+    expect(readdirSync(txRoot)).toHaveLength(2);
+    const originalReplay = applyPatch(dir, request, {
+      now: "2026-10-28T08:00:03Z", selectedOpIds: ["op_001"],
+    });
+    expect(originalReplay.applied_ops).toEqual(["op_001"]);
+    expect(loadAllRecords(dir)).toHaveLength(2);
+  });
+
+  test("ambiguous legacy receipts fail closed instead of authorizing a selected subset", () => {
+    const corruptions: Array<{
+      label: string; modify: (result: any) => void; selected: string[];
+    }> = [
+      {
+        label: "missing applied_ops",
+        modify: (result) => { delete result.applied_ops; },
+        selected: ["op_001"],
+      },
+      {
+        label: "opaque legacy_unknown skip",
+        modify: (result) => { result.skipped_ops[0].reason = "legacy_unknown"; },
+        selected: ["op_001", "op_002"],
+      },
+      {
+        label: "missing skipped_ops",
+        modify: (result) => { delete result.skipped_ops; },
+        selected: ["op_001"],
+      },
+      {
+        label: "double applied",
+        modify: (result) => { result.applied_ops.push("op_001"); },
+        selected: ["op_001"],
+      },
+      {
+        label: "contradictory applied and not_selected",
+        modify: (result) => { result.applied_ops.push("op_002"); },
+        selected: ["op_001", "op_002"],
+      },
+      {
+        label: "unknown skipped operation",
+        modify: (result) => { result.skipped_ops[0].op_id = "op_foreign"; },
+        selected: ["op_001"],
+      },
+    ];
+    for (const corruption of corruptions) {
+      const dir = root();
+      const original: MemoryPatch = {
+        ...patch("legacy_corrupt"), patch_id: "patch_legacy_corrupt",
+        ops: [
+          { op_id: "op_001", op: "add", record: record("mem_legacy_1"),
+            risk: "low", default_selected: false },
+          { op_id: "op_002", op: "add", record: record("mem_legacy_2"),
+            risk: "low", default_selected: false },
+        ],
+      };
+      const first = applyPatch(dir, original, {
+        now: "2026-10-28T08:00:00Z", selectedOpIds: ["op_001"],
+      });
+      expect(first.applied_ops).toEqual(["op_001"]);
+      const txRoot = join(dir, "governance", "transactions");
+      const [qualified] = readdirSync(txRoot);
+      renameSync(join(txRoot, qualified!), join(txRoot, original.patch_id));
+      const manifestPath = join(txRoot, original.patch_id, "intent.json");
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      manifest.transaction_id = original.patch_id;
+      corruption.modify(manifest.result);
+      writeFileSync(manifestPath, JSON.stringify(manifest));
+
+      expect(() => applyPatch(dir, original, {
+        now: "2026-10-28T08:00:01Z", selectedOpIds: corruption.selected,
+      })).toThrow(/Ambiguous legacy governance receipt/);
+      expect(loadAllRecords(dir).map((item) => item.id)).toEqual(["mem_legacy_1"]);
+      expect(readdirSync(txRoot)).toEqual(["patch_legacy_corrupt"]);
+    }
+  });
+
   test("fault after durable commit intent does not silently commit live canonical state", () => {
     const dir = root(); const request = patch("mem_fault");
     expect(() => applyPatch(dir, request, { now: "2026-09-28T09:01:00Z", faultAfterStage: "intent_written" })).toThrow();

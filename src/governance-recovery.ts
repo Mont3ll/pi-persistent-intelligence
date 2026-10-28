@@ -6,6 +6,7 @@ import {
   listTransactionIds,
   readTransactionManifest,
   transactionDirectory,
+  validatePrivacyHistoricalInventory,
   type GovernanceTransactionManifest,
 } from "./governance-transaction";
 import { renderMemoryToDisk } from "./render";
@@ -27,8 +28,29 @@ export function recoverGovernanceTransactions(root: string, now: string): Recove
   const lock = acquireGovernanceWriterLock(root, { transactionId: "__recovery__", now });
   try {
     const report: RecoveryReport = { completed: [], discarded: [], projection_rebuilt: [], blocked: [] };
+    const transactionIds = listTransactionIds(root);
+    // A durable privacy purge must account for every historical manifest.
+    // Do not discard a missing-intent directory before the pending purge's
+    // recovery has a chance to flag it as an irreconcilable source gap.
+    const pendingPurgeIds = transactionIds.filter((id) => {
+      try {
+        const manifest = readTransactionManifest(root, id);
+        return manifest?.privacy_manifest_snapshot === true && manifest.stage !== "complete";
+      } catch { return false; }
+    });
+    for (const pendingId of pendingPurgeIds) {
+      try {
+        validatePrivacyHistoricalInventory(root, pendingId, true);
+      } catch (error) {
+        report.blocked.push({
+          transaction_id: pendingId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (report.blocked.length > 0) return report;
 
-    for (const transactionId of listTransactionIds(root)) {
+    for (const transactionId of transactionIds) {
       const dir = transactionDirectory(root, transactionId);
       const manifest = readTransactionManifest(root, transactionId);
       if (!manifest) {
