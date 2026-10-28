@@ -18,10 +18,10 @@ describe("versioned capture source contract", () => {
   test("event identity wins when present, then host session manager", () => {
     expect(resolveCaptureSessionIdentity({ session_id: "source-s1" }, {
       sessionManager: { getSessionId: () => "source-s2" },
-    })).toEqual({ session_id: "source-s1", identity_quality: "stable_session_id" });
+    })).toEqual({ session_id: "source-s1", identity_quality: "observed_session_id" });
     expect(resolveCaptureSessionIdentity({}, {
       sessionManager: { getSessionId: () => "source-s2" },
-    })).toEqual({ session_id: "source-s2", identity_quality: "stable_session_id" });
+    })).toEqual({ session_id: "source-s2", identity_quality: "observed_session_id" });
   });
 
   test("missing identity is explicitly unresolved, never invented", () => {
@@ -53,16 +53,17 @@ describe("versioned capture source contract", () => {
       policy_version: CAPTURE_POLICY_VERSION,
       session_id: "actual-session-id",
       turn_id: "turn-42",
-      identity_quality: "stable_session_id",
+      identity_quality: "observed_session_id",
       original_message_sha256: hash,
       original_character_count: message.trim().length,
+      transcript_verification: "unverified",
       persisted_excerpt_character_count: candidate.text.length,
     });
     expect(evidence).toMatchObject({
       source_session_id: "actual-session-id",
       source_turn_id: "turn-42",
       source_message_sha256: hash,
-      source_identity_quality: "stable_session_id",
+      source_identity_quality: "observed_session_id",
       source_ref: "session:actual-session-id:turn:turn-42",
     });
     expect(candidate.source_turn_ids).toContain("actual-session-id:turn-42");
