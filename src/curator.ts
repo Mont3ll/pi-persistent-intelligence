@@ -234,7 +234,7 @@ function withCurationDiscovery(root: string, options: CurateOptions): CurateOpti
 function eligibleCandidates(
   root: string,
   options: CurateOptions,
-  sourceProofs?: Map<string, AutoEvidenceDecision>,
+  sourceProofs?: Map<CaptureCandidate, AutoEvidenceDecision>,
 ): CaptureCandidate[] {
   const config = loadConfig(root).curator;
   const minConfidence = options.minConfidence ?? config.minConfidence;
@@ -248,7 +248,7 @@ function eligibleCandidates(
     if (decision.basis !== "transcript_verified_direct_user") return false;
     // Reuse solely within this synchronous proposal construction. No proof
     // result is persisted or carried over to apply/replay or the async LLM pass.
-    sourceProofs?.set(candidate.id, decision);
+    sourceProofs?.set(candidate, decision);
     return true;
   });
 }
@@ -268,7 +268,7 @@ function currentPolicyAllowsAutoApply(candidate: CaptureCandidate): boolean {
 
 function buildPatch(root: string, options: CurateOptions, llmContradictions = new Map<string, LlmContradiction>()): MemoryPatch {
   options = withCurationDiscovery(root, options);
-  const sourceProofs = new Map<string, AutoEvidenceDecision>();
+  const sourceProofs = new Map<CaptureCandidate, AutoEvidenceDecision>();
   const eligible = eligibleCandidates(root, options, sourceProofs);
   const curatorConfig = loadConfig(root).curator;
   const configuredEvidenceFloor = curatorConfig.minEvidenceCount;
@@ -361,7 +361,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       const isGlobalPreference = scopeTarget?.type === "global" && candidate.capture_intent === "user_preference";
       // A human may explicitly review a verified single-source candidate,
       // but that exception must not silently lower configured auto-apply floors.
-      const evidenceDecision = sourceProofs.get(rawCandidate.id)
+      const evidenceDecision = sourceProofs.get(rawCandidate)
         ?? decideTrustedAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig, options.trustedTranscriptOptions);
       const evidenceCountMeetsConfiguredFloor = evidenceDecision.eligible;
       const autoApplyEligible = evidenceCountMeetsConfiguredFloor
