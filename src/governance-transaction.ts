@@ -37,6 +37,33 @@ function publishEntry(root: string, workspace: string, entry: string): void { co
 function publishEntries(root: string, workspace: string, entries: readonly string[]): void { for (const entry of entries) publishEntry(root, workspace, entry); }
 export function publishTransactionWorkspace(root: string, transactionId: string): void { const workspace = transactionWorkspacePath(root, transactionId); if (!existsSync(workspace)) throw new GovernanceRecoveryBlockedError(`Missing transaction workspace for ${transactionId}`); publishEntries(root, workspace, [...CANONICAL_ENTRIES, ...AUXILIARY_ENTRIES]); }
 
+/**
+ * Preserve every successful governed selection as its own immutable receipt.
+ * patches/<patch_id>.json remains the legacy latest-view path, but must not
+ * be treated as an exhaustive history when multiple subsets are applied.
+ *
+ * The result is already privacy-redacted by applyPatchDirect. This snapshot
+ * lives in the transaction workspace and is published atomically with the
+ * canonical change. Never write an attempt snapshot for a no-change result.
+ */
+function writeImmutableAttemptReceipt(workspace: string, transactionId: string, result: MemoryPatch): void {
+  const directory = join(workspace, "patches", "receipts");
+  mkdirSync(directory, { recursive: true });
+  const filename = join(directory, `${safeTransactionId(transactionId)}.json`);
+  const contents = `${JSON.stringify(result, null, 2)}\n`;
+  if (existsSync(filename)) {
+    if (readFileSync(filename, "utf8") !== contents) {
+      throw new GovernanceRecoveryBlockedError(`Conflicting governed attempt receipt for ${transactionId}`);
+    }
+    return;
+  }
+  const fd = openSync(filename, "wx", 0o600);
+  try {
+    writeSync(fd, contents, undefined, "utf8");
+    fsyncSync(fd);
+  } finally { closeSync(fd); }
+}
+
 /** Caller must hold the governance writer lock. */
 export function completeInterruptedTransaction(root: string, manifest: GovernanceTransactionManifest, now: string): MemoryPatch {
   if (!manifest.result) throw new GovernanceRecoveryBlockedError(`Transaction ${manifest.transaction_id} has no persisted result`);
@@ -68,6 +95,7 @@ export function runGovernanceTransaction(root: string, options: GovernanceTransa
     try {
       const beforeCanonical = fingerprint(root, CANONICAL_ENTRIES); const result = mutateWorkspace(workspace); const canonicalChanged = beforeCanonical !== fingerprint(workspace, CANONICAL_ENTRIES);
       if (!canonicalChanged) { publishEntries(root, workspace, AUXILIARY_ENTRIES); rmSync(transactionDirectory(root, transactionId), { recursive: true, force: true }); return result; }
+      writeImmutableAttemptReceipt(workspace, transactionId, result);
       manifest = { ...manifest, stage: "staged", updated_at: options.now, result }; maybeFault(options, "staged");
       manifest = { ...manifest, stage: "intent_written", updated_at: options.now }; writeTransactionManifest(root, manifest); durableIntent = true; maybeFault(options, "intent_written");
       publishTransactionWorkspace(root, transactionId); manifest = { ...manifest, stage: "canonical_published", updated_at: options.now }; writeTransactionManifest(root, manifest); maybeFault(options, "canonical_published");
