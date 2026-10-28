@@ -16,7 +16,7 @@ function evidence(id: string, sessionId = "s1", turnId = "t1"): EvidenceRecord {
     created_at: "2026-10-28T00:00:00Z", source_kind: "conversation",
     source_ref: `session:${sessionId}:turn:${turnId}`,
     source_session_id: sessionId, source_turn_id: turnId,
-    source_identity_quality: "stable_session_id",
+    source_identity_quality: "observed_session_id",
     source_summary: "Accepted release process", trust_class: "direct_user_instruction",
     polarity: "supports", related_memory_ids: [],
   };
@@ -28,7 +28,9 @@ describe("read-only source evidence assessment", () => {
     expect(result.reference_count).toBe(2);
     expect(result.resolved_count).toBe(2);
     expect(result.distinct_source_locator_count).toBe(1);
-    expect(result.attributed_direct_user_turn_count).toBe(1);
+    expect(result.observed_direct_user_turn_count).toBe(1);
+    expect(result.transcript_verified_direct_user_turn_count).toBe(0);
+    expect(result.authority).toBe("unverified");
     expect(result.semantic_independence).toBe("unverified");
   });
 
@@ -36,7 +38,18 @@ describe("read-only source evidence assessment", () => {
     const result = assessSourceEvidence(candidate(["e1", "e2"]), [
       evidence("e1", "s1", "t1"), evidence("e2", "s2", "t2"),
     ]);
-    expect(result.attributed_direct_user_turn_count).toBe(2);
+    expect(result.observed_direct_user_turn_count).toBe(2);
+    expect(result.transcript_verified_direct_user_turn_count).toBe(0);
+    expect(result.authority).toBe("unverified");
+    expect(result.semantic_independence).toBe("unverified");
+  });
+
+  test("transcript-verified evidence can establish attributed direct-user authority", () => {
+    const original = { ...evidence("e1"), source_transcript_verified: true, source_message_sha256: "hash" };
+    const result = assessSourceEvidence(candidate(["e1"]), [original]);
+    expect(result.observed_direct_user_turn_count).toBe(1);
+    expect(result.transcript_verified_direct_user_turn_count).toBe(1);
+    expect(result.authority).toBe("direct_user_attributed");
     expect(result.semantic_independence).toBe("unverified");
   });
 
@@ -45,7 +58,7 @@ describe("read-only source evidence assessment", () => {
     const legacy = { ...evidence("e2", "s1", "t2"), source_identity_quality: undefined };
     const result = assessSourceEvidence(candidate(["e1", "e2"]), [old, legacy]);
     expect(result.reference_count).toBe(2);
-    expect(result.attributed_direct_user_turn_count).toBe(0);
+    expect(result.observed_direct_user_turn_count).toBe(0);
     expect(result.authority).toBe("unverified");
   });
 
@@ -56,7 +69,7 @@ describe("read-only source evidence assessment", () => {
     expect(result.reference_count).toBe(3);
     expect(result.unresolved_count).toBe(1);
     expect(result.invalidated_count).toBe(1);
-    expect(result.attributed_direct_user_turn_count).toBe(0);
+    expect(result.observed_direct_user_turn_count).toBe(0);
     expect(result.authority).toBe("unverified");
   });
 });
