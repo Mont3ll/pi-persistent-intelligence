@@ -403,8 +403,15 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
   });
 
   const stamp = options.now.replace(/[-:T]/g, "").slice(0, 12);
+  // A minute-stamped constant suffix causes distinct same-minute proposals
+  // to reuse one governance transaction/receipt. Bind curator patch identity
+  // to the materialized operation content and mode, preserving deterministic
+  // replay for an identical proposal while separating changed candidate sets.
+  const proposalDigest = createHash("sha256")
+    .update(JSON.stringify({ mode: options.mode, ops }))
+    .digest("hex").slice(0, 16);
   return {
-    patch_id: `patch_${stamp}_001`,
+    patch_id: `patch_${stamp}_${proposalDigest}`,
     created_at: options.now,
     generated_by: "curator",
     mode: options.mode,
