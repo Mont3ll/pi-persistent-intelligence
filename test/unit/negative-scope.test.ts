@@ -56,6 +56,43 @@ describe("NegativeScopeProcessor", () => {
     expect(result.traces.find((trace) => trace.processor === "NegativeScopeProcessor")?.exclusion_reasons.mem_skip).toBe("known_exceptions:GitHub Packages");
   });
 
+  test("hyphenated project identifiers are atomic rather than fuzzy shared tokens", () => {
+    const records = [record("mem_scoped", { does_not_apply_when: ["repo-b"] })];
+    const inRepoA = runMemoryProcessorPipeline(records, {
+      ...context("Avoid em dashes in my public writing."),
+      repository_id: "repo-a",
+      working_directory: "/projects/repo-a",
+    });
+    expect(inRepoA.records.map((item) => item.id)).toEqual(["mem_scoped"]);
+
+    const inRepoB = runMemoryProcessorPipeline(records, {
+      ...context("Avoid em dashes in my public writing."),
+      repository_id: "repo-b",
+      working_directory: "/projects/repo-b",
+    });
+    expect(inRepoB.records).toHaveLength(0);
+    expect(inRepoB.traces.find((item) => item.processor === "NegativeScopeProcessor")?.exclusion_reasons.mem_scoped)
+      .toBe("does_not_apply_when:repo-b");
+  });
+
+  test("project identifier boundaries prevent prefix and suffix collisions", () => {
+    const records = [record("mem_except", { known_exceptions: ["repo-b"] })];
+    for (const project of ["repo-a", "repo-b2", "repo-b-preview", "other-repo-b"]) {
+      const result = runMemoryProcessorPipeline(records, {
+        ...context("Review the release checklist"),
+        repository_id: project,
+        working_directory: `/projects/${project}`,
+      });
+      expect(result.records.map((item) => item.id)).toEqual(["mem_except"]);
+    }
+    const exact = runMemoryProcessorPipeline(records, {
+      ...context("Review the release checklist"),
+      repository_id: "repo-b",
+      working_directory: "/projects/repo-b",
+    });
+    expect(exact.records).toHaveLength(0);
+  });
+
   test("legacy records without exception fields remain compatible", () => {
     const records = [record("mem_legacy")];
     const result = runMemoryProcessorPipeline(records, context("run bun tests"));

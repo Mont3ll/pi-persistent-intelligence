@@ -3,7 +3,7 @@ import { appendSessionActivity, collectSessionActivity, type CaptureActivityActi
 import { hasProcessedMessage, readCaptureCheckpoint, writeCaptureCheckpoint } from "./capture-checkpoint";
 import { classifyCaptureIntent } from "./capture-intent";
 import { buildCaptureSourceAttribution } from "./capture-provenance";
-import { appendOrReinforceCandidate, normalizedPreferenceKey } from "./capture-recurrence";
+import { appendOrReinforceCandidate, findExactActiveCanonical, normalizedPreferenceKey } from "./capture-recurrence";
 import { resolveCaptureScopes } from "./capture-scope";
 import { loadConfig } from "./config";
 import { appendDailyLog } from "./daily";
@@ -31,6 +31,7 @@ export interface CaptureTurnResult {
   processed_turn_id: string;
   candidates_created: number;
   candidates_reinforced: number;
+  already_represented: number;
   daily_only: number;
   rejected: number;
   skipped_checkpointed: boolean;
@@ -76,7 +77,7 @@ function globalTarget(scopes: CaptureScopeTarget[]): boolean {
 }
 
 function emptyResult(turnId: string): CaptureTurnResult {
-  return { processed_turn_id: turnId, candidates_created: 0, candidates_reinforced: 0, daily_only: 0, rejected: 0, skipped_checkpointed: false };
+  return { processed_turn_id: turnId, candidates_created: 0, candidates_reinforced: 0, already_represented: 0, daily_only: 0, rejected: 0, skipped_checkpointed: false };
 }
 
 export function processCaptureTurn(root: string, input: CaptureTurnInput): CaptureTurnResult {
@@ -115,10 +116,11 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
   } else if (intent.intent === "not_memory") {
     result.rejected++;
   } else {
+    const launchProject = (input.resolver ?? resolveProjectIdentity)(input.launch_cwd);
     scopes = resolveCaptureScopes({
       text: input.message,
       decision: intent,
-      launch_project: (input.resolver ?? resolveProjectIdentity)(input.launch_cwd),
+      launch_project: launchProject,
       activity: [activity],
     });
     const durability = globalTarget(scopes) ? "user_global" : "project";
@@ -138,68 +140,84 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
       outcome = "daily_only";
       reason = "memory_worth_daily_only";
     } else {
-      const key = normalizedPreferenceKey(input.message, intent.intent);
-      const groupHash = hash(`${messageHash}:${input.session_id}`).slice(0, 20);
-      const sourceRef = `session:${input.session_id}:turn:${input.turn_id}`;
-      const capturedText = input.message.trim().slice(0, 300).replace(/\s+/g, " ");
-      const captureSource = buildCaptureSourceAttribution(input.session_id, input.turn_id, input.message, capturedText);
-      const evidence = appendEvidenceRecord(root, {
-        id: "",
-        resource_id: "curation",
-        profile_id: "legacy-default",
-        created_at: now,
-        source_kind: "conversation",
-        source_session_id: input.session_id,
-        source_turn_id: input.turn_id,
-        source_message_sha256: captureSource.original_message_sha256,
-        source_identity_quality: captureSource.identity_quality,
-        source_ref: sourceRef,
-        source_summary: input.message.trim().slice(0, 300).replace(/\s+/g, " "),
-        trust_class: trustClass,
-        polarity: "supports",
-        durability_signal: durability,
-        related_memory_ids: [],
-        scope_level: scopes.length === 1 ? scopes[0].type : "multi",
-        tags: ["capture-evidence"],
-        notes: "capture_evidence_v1",
-      });
-      const candidate: CaptureCandidate = {
-        id: `cap_pref_${groupHash}`,
-        created_at: now,
-        source: { type: trustClass, ref: sourceRef },
-        text: capturedText,
-        capture_source: captureSource,
-        tags: [...new Set(["capture", intent.intent, ...intent.applicability])],
-        evidence_refs: [evidence.id],
-        evidence_ids: [evidence.id],
-        confidence: intent.confidence,
-        status: "new",
-        ruleType: candidateRuleType(intent.intent, input.message),
-        memory_kind: "instruction",
-        worth_decision: worth.decision,
-        worth_score: worth.worth_score,
-        worth_reasons: worth.reasons,
-        ...trust,
-        promotion_eligibility: globalTarget(scopes) ? "review_only" : trust.promotion_eligibility,
-        capture_group_id: `capture_group_${groupHash}`,
-        capture_intent: intent.intent,
-        scope_targets: scopes,
-        normalized_preference_key: key,
-        recurrence_count: 1,
-        source_session_ids: [input.session_id],
-        source_turn_ids: [`${input.session_id}:${input.turn_id}`],
-        activity_evidence_ids: [activity.id],
-        proposed_applies_when: intent.applicability,
-      };
-      const persisted = appendOrReinforceCandidate(root, candidate);
-      if (persisted.action === "created") {
-        result.candidates_created++;
-        outcome = "candidate_created";
+      const canonicalMatch = worth.decision === "candidate" ? findExactActiveCanonical(
+        root, input.message, scopes, {
+          session_id: input.session_id,
+          launch_cwd: input.launch_cwd,
+          project_id: launchProject.project_id,
+          recent_files_touched: input.actions
+            .filter((action) => action.kind === "read" || action.kind === "write")
+            .map((action) => (action as { path: string }).path),
+        },
+      ) : null;
+      if (canonicalMatch) {
+        result.already_represented++;
+        outcome = "candidate_already_represented";
+        reason = "active_canonical_exact_match";
       } else {
-        result.candidates_reinforced++;
-        outcome = "candidate_reinforced";
+        const key = normalizedPreferenceKey(input.message, intent.intent);
+        const groupHash = hash(`${messageHash}:${input.session_id}`).slice(0, 20);
+        const sourceRef = `session:${input.session_id}:turn:${input.turn_id}`;
+        const capturedText = input.message.trim().slice(0, 300).replace(/\s+/g, " ");
+        const captureSource = buildCaptureSourceAttribution(input.session_id, input.turn_id, input.message, capturedText);
+        const evidence = appendEvidenceRecord(root, {
+          id: "",
+          resource_id: "curation",
+          profile_id: "legacy-default",
+          created_at: now,
+          source_kind: "conversation",
+          source_session_id: input.session_id,
+          source_turn_id: input.turn_id,
+          source_message_sha256: captureSource.original_message_sha256,
+          source_identity_quality: captureSource.identity_quality,
+          source_ref: sourceRef,
+          source_summary: input.message.trim().slice(0, 300).replace(/\s+/g, " "),
+          trust_class: trustClass,
+          polarity: "supports",
+          durability_signal: durability,
+          related_memory_ids: [],
+          scope_level: scopes.length === 1 ? scopes[0].type : "multi",
+          tags: ["capture-evidence"],
+          notes: "capture_evidence_v1",
+        });
+        const candidate: CaptureCandidate = {
+          id: `cap_pref_${groupHash}`,
+          created_at: now,
+          source: { type: trustClass, ref: sourceRef },
+          text: capturedText,
+          capture_source: captureSource,
+          tags: [...new Set(["capture", intent.intent, ...intent.applicability])],
+          evidence_refs: [evidence.id],
+          evidence_ids: [evidence.id],
+          confidence: intent.confidence,
+          status: "new",
+          ruleType: candidateRuleType(intent.intent, input.message),
+          memory_kind: "instruction",
+          worth_decision: worth.decision,
+          worth_score: worth.worth_score,
+          worth_reasons: worth.reasons,
+          ...trust,
+          promotion_eligibility: globalTarget(scopes) ? "review_only" : trust.promotion_eligibility,
+          capture_group_id: `capture_group_${groupHash}`,
+          capture_intent: intent.intent,
+          scope_targets: scopes,
+          normalized_preference_key: key,
+          recurrence_count: 1,
+          source_session_ids: [input.session_id],
+          source_turn_ids: [`${input.session_id}:${input.turn_id}`],
+          activity_evidence_ids: [activity.id],
+          proposed_applies_when: intent.applicability,
+        };
+        const persisted = appendOrReinforceCandidate(root, candidate);
+        if (persisted.action === "created") {
+          result.candidates_created++;
+          outcome = "candidate_created";
+        } else {
+          result.candidates_reinforced++;
+          outcome = "candidate_reinforced";
+        }
+        reason = intent.reasons[0] ?? "captured";
       }
-      reason = intent.reasons[0] ?? "captured";
     }
   }
 

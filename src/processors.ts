@@ -42,6 +42,13 @@ function contextText(context: SessionContext): string {
 function phraseMatchesContext(phrase: string, text: string): boolean {
   const normalized = phrase.trim().toLowerCase();
   if (!normalized) return false;
+  // Treat hyphenated/underscored identifiers as atomic scope keys. The
+  // natural-language fuzzy fallback otherwise matches repo-b against repo-a
+  // merely because they share the token "repo".
+  if (/^[a-z0-9]+(?:[-_][a-z0-9]+)+$/.test(normalized)) {
+    // The strict pattern above allows only regex-literal characters.
+    return new RegExp(`(^|[^a-z0-9_-])${normalized}(?=$|[^a-z0-9_-])`).test(text);
+  }
   if (text.includes(normalized) || normalize(text).includes(normalize(normalized))) return true;
   const phraseTokens = normalized.split(/[^a-z0-9]+/).filter((token) => token.length > 3);
   const textTokens = text.split(/[^a-z0-9]+/).filter(Boolean);

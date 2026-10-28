@@ -71,6 +71,7 @@ export type CaptureEventOutcome =
   | "inquiry"
   | "candidate_created"
   | "candidate_reinforced"
+  | "candidate_already_represented"
   | "candidate_promoted"
   | "candidate_rejected";
 
