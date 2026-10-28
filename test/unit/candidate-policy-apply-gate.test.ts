@@ -36,6 +36,28 @@ function manuallyApply(dir: string) {
 }
 
 describe("capture policy at governed apply boundary", () => {
+  test("automatically scored reject-worth candidate is held even when manually selected", () => {
+    const dir = root();
+    // Do not inject a test-only worth decision: appendCandidate derives one.
+    appendCandidate(dir, {
+      id: "cap_scored_reject", created_at: "2026-10-21T10:00:00Z",
+      source: { type: "manual", ref: "fixture" },
+      text: "Use patch files before canonical writes.",
+      tags: ["testing"], evidence_refs: ["fixture-a", "fixture-b"],
+      confidence: 0.94, status: "new",
+    });
+    expect(listCandidates(dir).find((c) => c.id === "cap_scored_reject")?.worth_decision).toBe("reject");
+    const patch = curateInbox(dir, { now: "2026-10-21T10:01:00Z", mode: "supervised" });
+    expect(patch.ops).toHaveLength(1);
+    const result = applyPatch(dir, patch, {
+      selectedOpIds: [patch.ops[0]!.op_id], now: "2026-10-21T10:02:00Z",
+    });
+    expect(result.applied_ops).toHaveLength(0);
+    expect(result.skipped_ops).toContainEqual(expect.objectContaining({ reason: "capture_policy_hold" }));
+    expect(loadActiveRecords(dir)).toHaveLength(0);
+    expect(listCandidates(dir).find((c) => c.id === "cap_scored_reject")?.status).toBe("new");
+  });
+
   test("worth_decision=reject blocks explicit manual promotion and keeps candidate for review", () => {
     const dir = root();
     seed(dir, "For this project, always use the verified release checklist.", "reject");
