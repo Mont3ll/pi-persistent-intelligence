@@ -319,6 +319,12 @@ export interface EvidenceRecord {
   created_at: string;
   source_kind: EvidenceSourceKind;
   source_session_id?: string;
+  /** Genuine source-turn identifier when known; absent on historical records. */
+  source_turn_id?: string;
+  /** Hash of full original user message before any display truncation. */
+  source_message_sha256?: string;
+  /** Unresolved source identity must never count as independent corroboration. */
+  source_identity_quality?: "stable_session_id" | "unresolved";
   source_file?: string;
   source_tool?: string;
   source_ref?: string;
@@ -518,6 +524,8 @@ export interface CaptureCandidate {
   verification_result?: VerificationResult;
   capture_group_id?: string;
   capture_intent?: CaptureIntent;
+  /** Additive source attribution; historical records may not have this field. */
+  capture_source?: import("./capture-provenance").CaptureSourceAttribution;
   scope_targets?: CaptureScopeTarget[];
   normalized_preference_key?: string;
   recurrence_count?: number;
