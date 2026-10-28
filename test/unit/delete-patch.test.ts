@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureMemoryDirs } from "../../src/paths";
@@ -12,6 +12,7 @@ import { loadAllRecords, unsafeAddMemoryRecord } from "../../src/store";
 import { isTombstonedRecord, readDeletionTombstones } from "../../src/tombstones";
 import { MemoryFtsIndex } from "../../src/search/fts";
 import { runMemoryDiagnostics } from "../../src/diagnostics";
+import { recoverGovernanceTransactions } from "../../src/governance-recovery";
 import type { EvidenceRecord, MemoryPatch, MemoryRecord } from "../../src/types";
 
 let dirs: string[] = [];
@@ -245,6 +246,97 @@ describe("delete patch", () => {
     expect(readFileSync(join(paths.patches, "patch_private_receipt_update.json"), "utf8"))
       .not.toContain(privateValue);
     expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("deleted");
+  });
+
+  test("privacy purge redacts completed governance manifest results and replay cannot reveal their private payload", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    const secret = "PRIVATE_MANIFEST_MARKER_57982";
+    const update: MemoryPatch = {
+      ...patch("audit_preserving"), patch_id: "patch_manifest_secret_update",
+      ops: [{
+        op_id: "op_update", op: "update", target_id: "mem_delete",
+        updates: { review: { cadence_days: 30, next_review: "2026-06-18", change_condition: secret } },
+        risk: "low", default_selected: true,
+      }],
+    };
+    const result = applyPatch(dir, update, {
+      selectedOpIds: ["op_update"], now: "2026-05-19T09:30:00.000Z",
+    });
+    expect(result.applied_ops).toEqual(["op_update"]);
+    const txRoot = ensureMemoryDirs(dir).governance.transactions;
+    const before = readdirSync(txRoot);
+    expect(before).toHaveLength(1);
+    const earlier = join(txRoot, before[0]!, "intent.json");
+    expect(readFileSync(earlier, "utf8")).toContain(secret);
+
+    const purge = applyPatch(dir, patch("privacy_purge"), {
+      selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
+    });
+    expect(purge.applied_ops).toEqual(["op_001"]);
+    for (const id of readdirSync(txRoot)) {
+      const original = readFileSync(join(txRoot, id, "intent.json"), "utf8");
+      expect(original).not.toContain(secret);
+      expect(JSON.parse(original).stage).toBe("complete");
+    }
+    expect(JSON.parse(readFileSync(earlier, "utf8")).result.ops[0].op).toBe("reject_candidate");
+    const replay = applyPatch(dir, update, {
+      selectedOpIds: ["op_update"], now: "2026-05-19T10:01:00.000Z",
+    });
+    expect(JSON.stringify(replay)).not.toContain(secret);
+    expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("deleted");
+    expect(readdirSync(txRoot)).toHaveLength(2);
+  });
+
+  test("recovering interrupted privacy purge completes historical manifest redaction without resurrecting content", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    const secret = "PRIVATE_RECOVERY_MANIFEST_MARKER_951";
+    const update: MemoryPatch = {
+      ...patch("audit_preserving"), patch_id: "patch_manifest_recovery_fixture",
+      ops: [{
+        op_id: "op_update", op: "update", target_id: "mem_delete",
+        updates: { review: { cadence_days: 30, next_review: "2026-06-18", change_condition: secret } },
+        risk: "low", default_selected: true,
+      }],
+    };
+    applyPatch(dir, update, { selectedOpIds: ["op_update"], now: "2026-05-19T09:30:00.000Z" });
+    expect(() => applyPatch(dir, patch("privacy_purge"), {
+      selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
+      faultAfterStage: "intent_written",
+    })).toThrow();
+    expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("active");
+    const report = recoverGovernanceTransactions(dir, "2026-05-19T10:01:00.000Z");
+    expect(report.blocked).toEqual([]);
+    expect(report.completed).toHaveLength(1);
+    const txRoot = ensureMemoryDirs(dir).governance.transactions;
+    for (const id of readdirSync(txRoot)) {
+      const raw = readFileSync(join(txRoot, id, "intent.json"), "utf8");
+      expect(raw).not.toContain(secret);
+      expect(JSON.parse(raw).stage).toBe("complete");
+    }
+    expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("deleted");
+    const replay = applyPatch(dir, update, {
+      selectedOpIds: ["op_update"], now: "2026-05-19T10:02:00.000Z",
+    });
+    expect(JSON.stringify(replay)).not.toContain(secret);
+  });
+
+  test("a malformed historical governance manifest blocks privacy purge without redacting unrelated live artifacts", () => {
+    const dir = root();
+    unsafeAddMemoryRecord(dir, record());
+    const badId = "patch_bad_privacy_manifest";
+    const txDir = join(ensureMemoryDirs(dir).governance.transactions, badId);
+    mkdirSync(txDir, { recursive: true });
+    writeFileSync(join(txDir, "intent.json"), JSON.stringify({
+      transaction_id: badId, stage: "complete",
+      expected_generation: 0, next_generation: 1,
+      created_at: "2026-05-19T09:00:00.000Z",
+    }));
+    expect(() => applyPatch(dir, patch("privacy_purge"), {
+      selectedOpIds: ["op_001"], now: "2026-05-19T10:00:00.000Z",
+    })).toThrow(/Incomplete or invalid governance manifest/);
+    expect(loadAllRecords(dir).find((item) => item.id === "mem_delete")?.status).toBe("active");
   });
 
   test("executes multiple selected privacy deletes even when they share a candidate", () => {
