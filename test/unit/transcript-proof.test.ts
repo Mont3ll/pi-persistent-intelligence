@@ -214,7 +214,8 @@ describe("trusted original Pi session transcript proof", () => {
     }).verified).toBe(false);
   });
 
-  test.skipIf(process.platform !== "linux")("FIFO replacing indexed session never blocks discovery or source verification", () => {
+  test("FIFO replacing indexed session never blocks discovery or source verification", () => {
+    if (process.platform !== "linux") return;
     const f = fixture();
     const validIndex = createTranscriptDiscoveryIndex({ trustedSessionDirs: [f.sessionDir] });
     expect(validIndex.bySessionId.get("recorded-session-001")).toHaveLength(1);
@@ -251,7 +252,8 @@ describe("trusted original Pi session transcript proof", () => {
     expect(result.verified).toBe(false);
   });
 
-  test.skipIf(process.platform !== "linux")("non-regular transcript present during discovery cannot become proof", () => {
+  test("non-regular transcript present during discovery cannot become proof", () => {
+    if (process.platform !== "linux") return;
     const f = fixture();
     rmSync(f.transcript);
     const fifo = spawnSync("mkfifo", [f.transcript], { timeout: 2000, encoding: "utf8" });
