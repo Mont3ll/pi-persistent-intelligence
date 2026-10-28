@@ -164,6 +164,10 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
     root,
     {
       transactionId: transactionIdForAttempt(root, patch, options.selectedOpIds),
+      // Historical governance results are redacted in a recoverable workspace
+      // only for selected privacy-purge operations.
+      snapshotPrivacyManifests: selectedOps(patch, options.selectedOpIds).some(
+        (op) => op.op === "delete" && op.deletion_mode === "privacy_purge"),
       expectedGeneration: options.expectedGeneration,
       now: options.now,
       faultAfterStage: options.faultAfterStage,
