@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
+import { readSessionId } from "./sessions/parser";
 import { resolveProjectIdentity } from "./profile";
 import type { CaptureCandidate, EvidenceRecord } from "./types";
 
@@ -184,11 +185,9 @@ export function verifyCandidateTranscriptSource(
   try {
     for (const file of sessionFiles(options.trustedSessionDirs ?? defaultSessionDirectories())) {
       if (statSync(file).size < 2) continue;
-      // Small header read: don't materialize arbitrary huge sessions.
-      const fd = readFileSync(file, "utf8").split("\n", 1)[0];
-      let header: any;
-      try { header = JSON.parse(fd.replace(/^\uFEFF/, "").trim()); } catch { continue; }
-      if (header.type === "session" && header.id === source.session_id) matching.push(file);
+      // Only a bounded header read during discovery; open full transcript
+      // after an exact session-id match and size check.
+      if (readSessionId(file) === source.session_id) matching.push(file);
       if (matching.length > 1) return held("ambiguous_session_files");
     }
     if (matching.length !== 1) return held("no_trusted_session_file");
