@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyPatch } from "../../src/patch";
@@ -21,6 +21,46 @@ describe("K3 crash recovery and replay semantics", () => {
     expect(first.status).toBe("applied"); expect(second.status).toBe("applied"); expect(second.applied_ops).toEqual(first.applied_ops);
     expect(loadAllRecords(dir).filter((item) => item.id === "mem_replay")).toHaveLength(1);
   });
+  test("legacy completed receipts replay only an identical selected subset after upgrade", () => {
+    const dir = root();
+    const original: MemoryPatch = {
+      ...patch("legacy_multi"), patch_id: "patch_pre_upgrade",
+      ops: [
+        { op_id: "op_001", op: "add", record: record("mem_legacy_1"),
+          risk: "low", default_selected: false },
+        { op_id: "op_002", op: "add", record: record("mem_legacy_2"),
+          risk: "low", default_selected: false },
+      ],
+    };
+    const first = applyPatch(dir, original, {
+      selectedOpIds: ["op_001"], now: "2026-09-28T09:01:00Z",
+    });
+    expect(first.applied_ops).toEqual(["op_001"]);
+    const txRoot = join(dir, "governance", "transactions");
+    const [qualified] = readdirSync(txRoot);
+    expect(qualified).toMatch(/^patch_pre_upgrade\.s/);
+    renameSync(join(txRoot, qualified!), join(txRoot, original.patch_id));
+    const manifestPath = join(txRoot, original.patch_id, "intent.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.transaction_id = original.patch_id;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    // Simulate a previous runtime's transaction namespace and exact replay.
+    const repeat = applyPatch(dir, original, {
+      selectedOpIds: ["op_001"], now: "2026-09-28T09:01:01Z",
+    });
+    expect(repeat.applied_ops).toEqual(["op_001"]);
+    expect(loadAllRecords(dir).filter((r) => r.id === "mem_legacy_1")).toHaveLength(1);
+
+    // A different request may NOT inherit that legacy receipt.
+    const different = applyPatch(dir, original, {
+      selectedOpIds: ["op_002"], now: "2026-09-28T09:01:02Z",
+    });
+    expect(different.applied_ops).toEqual(["op_002"]);
+    expect(loadAllRecords(dir).filter((r) => r.id === "mem_legacy_2")).toHaveLength(1);
+    expect(readdirSync(txRoot)).toHaveLength(2);
+  });
+
   test("fault after durable commit intent does not silently commit live canonical state", () => {
     const dir = root(); const request = patch("mem_fault");
     expect(() => applyPatch(dir, request, { now: "2026-09-28T09:01:00Z", faultAfterStage: "intent_written" })).toThrow();
