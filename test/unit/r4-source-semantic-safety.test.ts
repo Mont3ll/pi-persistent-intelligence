@@ -162,6 +162,47 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     expect(loadActiveRecords(f.root)).toHaveLength(0);
   });
 
+  for (const [label, message] of [
+    ["ascii-single-quoted panel", "A panel says 'For this project, always use the sapphire release manifest before publishing.'"],
+    ["initial if condition", "If the archive is enabled, for this project always use sapphire manifests."],
+  ] as const) {
+    for (const referencesAtApply of [1, 2] as const) {
+      test(label + " is held at apply with " + referencesAtApply + " reference(s)", () => {
+        const f = isolatedOriginal(message);
+        expect(f.captured.candidates_created).toBe(1);
+        expect(listCandidates(f.root)).toHaveLength(1);
+        expect(assessOriginalTurnAutoEligibility(message).eligible).toBe(false);
+        expect(listCandidates(f.root)[0]?.promotion_eligibility).toBe("review_only");
+
+        // Deliberately reach the normal two-reference proposal floor. This
+        // supplies a real operation, even though its auto-selection is held.
+        atEvidenceFloor(f);
+        const patch = f.curate();
+        expect(patch.ops.length).toBe(1);
+        expect(patch.ops[0]?.default_selected).toBe(false);
+
+        if (referencesAtApply === 1) {
+          // Replay the same proposal after the second evidence link is lost.
+          // Apply-time authorization must reject both reference counts.
+          const candidate = listCandidates(f.root)[0]!;
+          replaceCandidates(f.root, [{
+            ...candidate,
+            evidence_refs: candidate.evidence_refs.slice(0, 1),
+            evidence_ids: candidate.evidence_ids?.slice(0, 1),
+          }]);
+        }
+        const result = applyPatch(f.root, patch, {
+          selectedOpIds: patch.ops.map(op => op.op_id),
+          now: "2026-10-29T09:10:00Z",
+          trustedTranscriptOptions: f.trustedTranscriptOptions,
+        });
+        expect(result.applied_ops).toHaveLength(0);
+        expect(result.skipped_ops.some(op => op.reason === "capture_policy_hold")).toBe(true);
+        expect(loadActiveRecords(f.root)).toHaveLength(0);
+      });
+    }
+  }
+
   test("curly-apostrophe memory opt-out does not persist a candidate", () => {
     const f = isolatedOriginal("Don’t remember this: This repository always uses amber icons.");
     expect(f.captured.candidates_created).toBe(0);
