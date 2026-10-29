@@ -134,10 +134,16 @@ export function assessOriginalTurnAutoEligibility(rawText: string): OriginalTurn
     || /\b(?:this task|this run|this sprint|during this task|stop after the report|do not modify source|only for now|for this response|for this session|temporarily)\b/i.test(text)) {
     return held("operational_or_temporary_wrapper");
   }
-  if (/\b(?:across\s+(?:all\s+|every\s+)?(?:projects?|repositories|repos|codebases)|(?:for|in|on)\s+(?:all|every|any)\s+(?:projects?|repositories|repos|codebases)|regardless\s+of\s+(?:the\s+)?(?:project|repository|repo|codebase)|all\s+my\s+(?:projects?|repositories|repos|codebases))\b/i.test(text)) {
+  if (/\b(?:across\s+(?:(?:all|every|our|my|the|any)\s+)?(?:projects?|repositories|repos|codebases)|(?:for|in|on)\s+(?:all|every|any)\s+(?:projects?|repositories|repos|codebases)|regardless\s+of\s+(?:the\s+)?(?:project|repository|repo|codebase)|(?:all\s+my|our|my)\s+(?:projects?|repositories|repos|codebases))\b/i.test(text)) {
     return held("cross_project_scope_requires_review");
   }
-  if (/\b(?:unless|except|only (?:if|when)|if and only if|but not when)\b/i.test(text)) return held("conditional_scope_requires_review");
+  if (/\b(?:unless|except|only (?:if|when)|if and only if|but not when|provided that|as long as|subject to (?:approval|review|confirmation))\b/i.test(text)) return held("conditional_scope_requires_review");
+  // Draft or proposed language is not a user-approved standing decision.
+  // In this capture version the whole turn stays review-only.
+  if (/\b(?:(?:this|that|it|the above)\s+(?:is|was|remains)\s+(?:only\s+|just\s+)?(?:a\s+)?(?:draft|proposal|suggestion|hypothetical|nondecision)|(?:draft|proposal)\s+only|not\s+(?:yet\s+)?(?:a\s+)?(?:final\s+|approved\s+)?decision|no\s+(?:final\s+|approved\s+)?decision\s+(?:was|has been|is)\s+made|not\s+yet\s+(?:decided|approved|adopted|agreed)|(?:still|only)\s+(?:a\s+)?draft|(?:not|never)\s+(?:approved|adopted|endorsed)\s+as\s+(?:a\s+)?(?:policy|decision|rule))\b/i.test(text)) {
+    return held("draft_or_unapproved_decision");
+  }
+
   // A later disclaimer cannot inherit the authority of an earlier durable-looking clause.
   // Whole-turn capture is review-only until proposition/span extraction can separate them.
   if (/\b(?:not\s+(?:(?:an?|the)\s+)?(?:approved|endorsed|standing|permanent|lasting|durable)(?:\s+(?:approved|endorsed|standing|permanent|lasting|durable))*\s+(?:policy|rule|instruction|preference)|not\s+(?:(?:an?|the)\s+)?approved\s+permanent\s+instruction|(?:not|never)\s+(?:meant|intended|approved|endorsed)\s+(?:as|to be)\s+(?:a\s+)?(?:standing|permanent|lasting|durable)|(?:this|that|the above)\s+(?:is\s+)?(?:not|isn't)\s+(?:an?\s+)?(?:approved|standing|durable|lasting|permanent)\s+(?:policy|rule|instruction|preference))\b/i.test(text)) {
