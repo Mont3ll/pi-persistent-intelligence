@@ -220,6 +220,8 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     "For this repository, always use amber labels across our repositories.",
     "For this project, always use amber labels provided that a review signs off.",
     "For this project, always use amber labels. This is a draft, not a decision.",
+    "A settings panel says for this project always use sapphire release labels.",
+    "For this project, always use amber labels. The next sentence describes a test panel.",
   ]) {
     test("additional semantic negative is held: " + text.slice(-35), () => {
       const f = isolatedOriginal(text);
@@ -244,6 +246,11 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
       expect(loadActiveRecords(f.root)).toHaveLength(0);
     });
   }
+
+  test("an apostrophe in a genuine correction is not a quoted panel", () => {
+    const correction = "For this project, don't use stale release manifests.";
+    expect(assessOriginalTurnAutoEligibility(correction).eligible).toBe(true);
+  });
 
   test("default-off still holds a valid standalone original", () => {
     const f = isolatedOriginal(durableProjectControls[0], false);
