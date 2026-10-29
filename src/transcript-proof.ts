@@ -53,6 +53,8 @@ export interface TranscriptProofOptions {
   trustedSessionDirs?: readonly string[];
   /** In-memory hint scoped to one curation pass; never persisted or trusted at apply. */
   discoveryIndex?: TranscriptDiscoveryIndex;
+  /** Opt in to semantic assessment. Ordinary source-proof results remain unchanged. */
+  assessAutoSemantics?: boolean;
 }
 
 function hash(text: string): string {
@@ -327,8 +329,10 @@ export function verifyCandidateTranscriptSource(
     return {
       verified: true,
       reason: "verified",
-      auto_semantic_eligible: semantics.eligible,
-      ...(!semantics.eligible ? { semantic_hold_reason: semantics.reason } : {}),
+      ...(options.assessAutoSemantics ? {
+        auto_semantic_eligible: semantics.eligible,
+        ...(!semantics.eligible ? { semantic_hold_reason: semantics.reason } : {}),
+      } : {}),
       source_hash: source.original_message_sha256,
       matched_session_id: source.session_id,
       matched_user_turn_id: turns[0]!.turnId,
