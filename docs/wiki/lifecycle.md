@@ -61,6 +61,9 @@ Meta-consolidation reports
 
 ### Automatic correction capture
 
+A genuine user role alone is insufficient for unattended memory creation. A quoted UI example, an agent verification handoff or an explicit instruction not to save content can appear inside a valid user turn. The R4 safety change (unreleased, under verification) checks those semantics and the intended project scope separately from source authenticity. Mixed or clipped turns remain for supervised review until proposition-level extraction is available. The manual path still requires its governed evidence and patch checks.
+
+
 Every user message is scanned at the end of each agent turn. Structural task, subagent, and implementation-agent wrappers are rejected before scoring. Remaining correction signals pass through memory-worth and durability classification: durable guidance may become an inbox candidate, temporary guidance stays daily-only, ambiguous guidance becomes an inquiry, and rejected guidance is not persisted. No tool call is required.
 
 Detected patterns include:
