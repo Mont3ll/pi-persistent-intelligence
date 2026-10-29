@@ -8,7 +8,7 @@ import { isAutoApplyEligibleCandidate } from "./trust";
 import { classifyCaptureIntent } from "./capture-intent";
 import { loadConfig } from "./config";
 import { decideTrustedAutoEvidenceEligibility, type AutoEvidenceDecision } from "./auto-evidence-policy";
-import { createTranscriptDiscoveryIndex, type TranscriptProofOptions } from "./transcript-proof";
+import { createTranscriptDiscoveryIndex, verifyCandidateTranscriptSource, type TranscriptProofOptions } from "./transcript-proof";
 import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
 import { createInquiryFromCandidate } from "./inquiries";
@@ -220,7 +220,7 @@ function withCurationDiscovery(root: string, options: CurateOptions): CurateOpti
   if (config.sourceAwareAuto !== "transcript-verified-direct-user") return options;
   // Avoid scanning the session archive when no under-floor NEW candidate exists.
   const hasUnderfloor = listCandidates(root).some((candidate) =>
-    candidate.status === "new" && candidate.evidence_refs.length < config.minEvidenceCount);
+    candidate.status === "new" && Boolean(candidate.capture_source));
   if (!hasUnderfloor) return options;
   return {
     ...options,
@@ -364,12 +364,20 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       const evidenceDecision = sourceProofs.get(rawCandidate)
         ?? decideTrustedAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig, options.trustedTranscriptOptions);
       const evidenceCountMeetsConfiguredFloor = evidenceDecision.eligible;
+      const originalProof = candidate.capture_source && candidate.capture_intent
+        ? (candidate.evidence_refs.length === 1
+          ? verifyCandidateTranscriptSource(candidate, existingEvidence.find((e) => e.id === candidate.evidence_refs[0])!, options.trustedTranscriptOptions)
+          : undefined)
+        : undefined;
+      const semanticAllowed = !candidate.capture_source || (originalProof?.verified === true && originalProof.semantic_auto_eligible === true);
       const autoApplyEligible = evidenceCountMeetsConfiguredFloor
+        && semanticAllowed
         && !isGlobalPreference
         && currentPolicyAllowsAutoApply(candidate)
         && isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
       const holdCodes: string[] = [];
       if (!evidenceCountMeetsConfiguredFloor) holdCodes.push("below_configured_evidence_floor");
+      if (!semanticAllowed) holdCodes.push("original_source_semantic_hold");
       if (isGlobalPreference) holdCodes.push("global_preference_review");
       if (!currentPolicyAllowsAutoApply(candidate)) holdCodes.push("current_capture_policy");
       if (candidate.verification_status === "review_required") holdCodes.push("verification_review_required");
