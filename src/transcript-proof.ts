@@ -325,11 +325,13 @@ export function verifyCandidateTranscriptSource(
       || excerpt !== candidate.text
       || excerpt.length !== source.persisted_excerpt_character_count
       || evidence.source_summary !== excerpt) return held("source_excerpt_mismatch");
-    const semantics = assessSingleSourceAutoIntent(full, target);
+    const semantics = options.assessAutoSemantics
+      ? assessSingleSourceAutoIntent(full, target)
+      : null;
     return {
       verified: true,
       reason: "verified",
-      ...(options.assessAutoSemantics ? {
+      ...(semantics ? {
         auto_semantic_eligible: semantics.eligible,
         ...(!semantics.eligible ? { semantic_hold_reason: semantics.reason } : {}),
       } : {}),
