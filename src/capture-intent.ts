@@ -128,7 +128,10 @@ export function assessOriginalTurnAutoEligibility(rawText: string): OriginalTurn
   if (hasExplicitMemoryOptOut(rawText)) return held("explicit_memory_opt_out");
   if (!text || text.length > 300 || /[\r\n]/.test(text)) return held("unextracted_or_mixed_turn");
   if (/<(?:file|skill)\b|^\s*(?:#{1,6}\s+|>\s*|[*-]\s+)|\x60{3}/m.test(rawText)) return held("structured_or_quoted_material");
-  if (/[“”‘’"]/u.test(text) || /\x60/.test(text)
+  // Require quote delimiters in a non-word context so contractions such as
+  // "don't" or "it's" do not look like quoted external instructions.
+  const asciiQuotedSpan = /(?:^|\s|\(|\[|\{)'[^'\r\n]{8,}'(?=$|\s|[.,;:!?)}\]])/.test(text);
+  if (/[“”‘’"]/u.test(text) || /\x60/.test(text) || asciiQuotedSpan
     || /\b(?:quoted|quotation|example|sample|fixture|false[- ]positive|expected classification|transcript excerpt|pasted|the article|the documentation|the source says|the user said|someone said|prompt says|verification handoff|implementation handoff|review handoff|task wrapper|delegated agent instructions)\b/i.test(text)) return held("unendorsed_example_or_quote");
   if (/^(?:verify|reverify|resume|complete|continue|implement|review|run|test|check|fix|task|instructions?|handoff|verification|delegated|agent|assistant|report)\b/i.test(text)
     || /\b(?:this task|this run|this sprint|during this task|stop after the report|do not modify source|only for now|for this response|for this session|temporarily)\b/i.test(text)) {
@@ -137,7 +140,9 @@ export function assessOriginalTurnAutoEligibility(rawText: string): OriginalTurn
   if (/\b(?:across\s+(?:(?:all|every|our|my|the|any)\s+)?(?:projects?|repositories|repos|codebases)|(?:for|in|on)\s+(?:all|every|any)\s+(?:projects?|repositories|repos|codebases)|regardless\s+of\s+(?:the\s+)?(?:project|repository|repo|codebase)|(?:all\s+my|our|my)\s+(?:projects?|repositories|repos|codebases))\b/i.test(text)) {
     return held("cross_project_scope_requires_review");
   }
-  if (/\b(?:unless|except|only (?:if|when)|if and only if|but not when|provided that|as long as|subject to (?:approval|review|confirmation))\b/i.test(text)) return held("conditional_scope_requires_review");
+  // Without proposition-level applicability, a plain "if" makes the rule
+  // conditional even when the clause appears *before* the project cue.
+  if (/\b(?:if|unless|except|only when|but not when|provided that|as long as|subject to (?:approval|review|confirmation))\b/i.test(text)) return held("conditional_scope_requires_review");
   // Draft or proposed language is not a user-approved standing decision.
   // In this capture version the whole turn stays review-only.
   if (/\b(?:(?:this|that|it|the above)\s+(?:is|was|remains)\s+(?:only\s+|just\s+)?(?:a\s+)?(?:draft|proposal|suggestion|hypothetical|nondecision)|(?:draft|proposal)\s+only|not\s+(?:yet\s+)?(?:a\s+)?(?:final\s+|approved\s+)?decision|no\s+(?:final\s+|approved\s+)?decision\s+(?:was|has been|is)\s+made|not\s+yet\s+(?:decided|approved|adopted|agreed)|(?:still|only)\s+(?:a\s+)?draft|(?:not|never)\s+(?:approved|adopted|endorsed)\s+as\s+(?:a\s+)?(?:policy|decision|rule))\b/i.test(text)) {
