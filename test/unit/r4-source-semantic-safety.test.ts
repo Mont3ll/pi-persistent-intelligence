@@ -77,8 +77,10 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     test("nondurable source case " + (index + 1) + " never auto-applies", () => {
       const f = isolatedOriginal(message);
       expect(assessOriginalTurnAutoEligibility(message).eligible).toBe(false);
+      if (listCandidates(f.root).length) atEvidenceFloor(f);
       const patch = f.curate();
       expect(patch.ops.filter((op) => op.default_selected)).toHaveLength(0);
+      if (listCandidates(f.root).length) expect(patch.ops.length).toBeGreaterThan(0);
       if (patch.ops.length) {
         const attempted = applyPatch(f.root, patch, {
           selectedOpIds: patch.ops.map((op) => op.op_id),
@@ -98,8 +100,10 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     test("scope bypass " + (index + 1) + " cannot inherit launch-project authority", () => {
       const f = isolatedOriginal(message);
       expect(assessOriginalTurnAutoEligibility(message).eligible).toBe(false);
+      if (listCandidates(f.root).length) atEvidenceFloor(f);
       const patch = f.curate();
       expect(patch.ops.filter((op) => op.default_selected)).toHaveLength(0);
+      if (listCandidates(f.root).length) expect(patch.ops.length).toBeGreaterThan(0);
       if (patch.ops.length) {
         const attempted = applyPatch(f.root, patch, {
           selectedOpIds: patch.ops.map((op) => op.op_id),
