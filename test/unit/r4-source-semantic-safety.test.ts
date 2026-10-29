@@ -114,7 +114,7 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     });
   }
 
-  test("two references never override a nonendorsed original or a missing transcript", () => {
+  test("two references never override a nonendorsed original", () => {
     const text = "For this project, always use amber labels. This is not an endorsed standing policy.";
     const f = isolatedOriginal(text);
     const original = listCandidates(f.root)[0];
