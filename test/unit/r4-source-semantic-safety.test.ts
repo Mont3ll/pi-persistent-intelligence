@@ -151,14 +151,14 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     replaceCandidates(f.root, [{ ...original!, evidence_refs: [first.id, second.id],
       evidence_ids: [first.id, second.id], promotion_eligibility: "auto_candidate" }]);
     const patch = f.curate();
+    expect(patch.ops).toHaveLength(1);
     expect(patch.ops.filter(op => op.default_selected)).toHaveLength(0);
-    if (patch.ops.length) {
-      const forced = applyPatch(f.root, patch, {
-        selectedOpIds: patch.ops.map(op => op.op_id),
-        now: "2026-10-29T08:04:00Z", trustedTranscriptOptions: f.trustedTranscriptOptions,
-      });
-      expect(forced.applied_ops).toHaveLength(0);
-    }
+    const forced = applyPatch(f.root, patch, {
+      selectedOpIds: patch.ops.map(op => op.op_id),
+      now: "2026-10-29T08:04:00Z", trustedTranscriptOptions: f.trustedTranscriptOptions,
+    });
+    expect(forced.applied_ops).toHaveLength(0);
+    expect(forced.skipped_ops.some(op => op.reason === "capture_policy_hold")).toBe(true);
     expect(loadActiveRecords(f.root)).toHaveLength(0);
   });
 
