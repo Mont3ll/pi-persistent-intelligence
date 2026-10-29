@@ -45,7 +45,7 @@ function isolatedOriginal(message: string, optIn = true) {
   const curate = () => curateInbox(root, {
     now: "2026-10-29T08:02:00Z", mode: "auto", governanceMode: "compatibility", trustedTranscriptOptions,
   });
-  return { root, captured, sessionFile, curate, trustedTranscriptOptions };
+  return { root, captured, sessionFile, configPath, curate, trustedTranscriptOptions };
 }
 
 describe("R4 PR1 original-turn semantic authority safety", () => {
@@ -148,6 +148,9 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     "For this project, always use amber labels. This is not an endorsed standing policy.",
     "For this project, always use amber labels only if the green fixture passes.",
     "For this repository, always use amber labels across all repositories.",
+    "For this repository, always use amber labels across our repositories.",
+    "For this project, always use amber labels provided that a review signs off.",
+    "For this project, always use amber labels. This is a draft, not a decision.",
   ]) {
     test("additional semantic negative is held: " + text.slice(-35), () => {
       const f = isolatedOriginal(text);
@@ -174,31 +177,108 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     expect(loadActiveRecords(f.root)).toHaveLength(0);
   });
 
-  test("forged review-only metadata and persisted verified flag cannot promote quoted original", () => {
-    const message = "For this project, always use the checklist in this quoted UI sample.";
+  test("forged metadata and stored verified flag cannot promote a real unendorsed candidate", () => {
+    const message = "For this project, always use amber headings. This wording is a quotation, not an approved decision.";
     const f = isolatedOriginal(message);
     const candidates = listCandidates(f.root);
-    // A daily-only result is already safe; inject a persisted captured candidate
-    // from a genuine positive rule to test forged metadata independently.
-    const sourceCandidate = candidates[0];
-    if (!sourceCandidate) {
-      expect(f.captured.daily_only).toBeGreaterThan(0);
-      return;
-    }
-    replaceCandidates(f.root, [{ ...sourceCandidate, promotion_eligibility: "auto_candidate" }]);
+    expect(f.captured.candidates_created).toBe(1);
+    expect(candidates).toHaveLength(1);
+    replaceCandidates(f.root, [{ ...candidates[0]!, promotion_eligibility: "auto_candidate" }]);
     const path = join(f.root, "memory", "evidence.jsonl");
     const forged = readFileSync(path, "utf8").trim().split("\n").map((line) =>
       JSON.stringify({ ...JSON.parse(line), source_transcript_verified: true }));
     writeFileSync(path, forged.join("\n") + "\n");
     const patch = f.curate();
     expect(patch.ops.filter((op) => op.default_selected)).toHaveLength(0);
-    if (patch.ops.length) {
-      const result = applyPatch(f.root, patch, {
-        selectedOpIds: patch.ops.map((op) => op.op_id),
-        now: "2026-10-29T08:03:00Z", trustedTranscriptOptions: f.trustedTranscriptOptions,
-      });
-      expect(result.applied_ops).toHaveLength(0);
-    }
+    expect(patch.ops.length).toBeGreaterThan(0);
+    const result = applyPatch(f.root, patch, {
+      selectedOpIds: patch.ops.map((op) => op.op_id),
+      now: "2026-10-29T08:03:00Z", trustedTranscriptOptions: f.trustedTranscriptOptions,
+    });
+    expect(result.applied_ops).toHaveLength(0);
+    expect(result.skipped_ops.some((op) => op.reason === "capture_policy_hold")).toBe(true);
     expect(loadActiveRecords(f.root)).toHaveLength(0);
   });
+
+  test("removing capture source and intent cannot auto-promote an unendorsed captured turn", () => {
+    const f = isolatedOriginal("For this project, always use amber headings. This is only a draft.");
+    const original = listCandidates(f.root)[0];
+    expect(original).toBeDefined();
+    const first = readEvidenceRecords(f.root).find(e => e.id === original!.evidence_refs[0])!;
+    const second = appendEvidenceRecord(f.root, { ...first, id: "r4-forged-second-reference",
+      source_kind: "test_result", source_ref: "test:second-reference",
+      source_session_id: undefined, source_turn_id: undefined,
+      source_message_sha256: undefined, source_identity_quality: undefined });
+    replaceCandidates(f.root, [{ ...original!, capture_source: undefined, capture_intent: undefined,
+      evidence_refs: [first.id, second.id], evidence_ids: [first.id, second.id],
+      promotion_eligibility: "auto_candidate" }]);
+    const patch = f.curate();
+    expect(patch.ops.length).toBeGreaterThan(0);
+    expect(patch.ops.filter(op => op.default_selected)).toHaveLength(0);
+    const result = applyPatch(f.root, patch, {
+      selectedOpIds: patch.ops.map(op => op.op_id),
+      now: "2026-10-29T08:04:00Z", trustedTranscriptOptions: f.trustedTranscriptOptions,
+    });
+    expect(result.applied_ops).toHaveLength(0);
+    expect(result.skipped_ops.some(op => op.reason === "capture_policy_hold")).toBe(true);
+    expect(loadActiveRecords(f.root)).toHaveLength(0);
+  });
+
+  test("missing transcript at the reference floor rejects a previously selected proposal", () => {
+    const f = isolatedOriginal(durableProjectControls[0]);
+    const original = listCandidates(f.root)[0]!;
+    const first = readEvidenceRecords(f.root).find(e => e.id === original.evidence_refs[0])!;
+    const second = appendEvidenceRecord(f.root, { ...first, id: "r4-source-loss-second-reference",
+      source_kind: "test_result", source_ref: "test:source-loss",
+      source_session_id: undefined, source_turn_id: undefined,
+      source_message_sha256: undefined, source_identity_quality: undefined });
+    replaceCandidates(f.root, [{ ...original, evidence_refs: [first.id, second.id],
+      evidence_ids: [first.id, second.id] }]);
+    const patch = f.curate();
+    expect(patch.ops).toHaveLength(1);
+    expect(patch.ops[0]?.default_selected).toBe(true);
+    rmSync(f.sessionFile);
+    const result = applyPatch(f.root, patch, {
+      selectedOpIds: [patch.ops[0]!.op_id],
+      now: "2026-10-29T08:05:00Z", trustedTranscriptOptions: f.trustedTranscriptOptions,
+    });
+    expect(result.applied_ops).toHaveLength(0);
+    expect(result.skipped_ops.some(op => op.reason === "capture_policy_hold")).toBe(true);
+    expect(loadActiveRecords(f.root)).toHaveLength(0);
+  });
+
+  for (const attack of ["statement", "scope", "auto_disabled", "minimum_confidence"] as const) {
+    test("automatic apply rebinds " + attack + " even when evidence floor is met", () => {
+      const f = isolatedOriginal(durableProjectControls[0]);
+      const original = listCandidates(f.root)[0]!;
+      const first = readEvidenceRecords(f.root).find(e => e.id === original.evidence_refs[0])!;
+      const second = appendEvidenceRecord(f.root, { ...first, id: "r4-binding-second-reference",
+        source_kind: "test_result", source_ref: "test:binding",
+        source_session_id: undefined, source_turn_id: undefined,
+        source_message_sha256: undefined, source_identity_quality: undefined });
+      replaceCandidates(f.root, [{ ...original, evidence_refs: [first.id, second.id],
+        evidence_ids: [first.id, second.id] }]);
+      const patch = f.curate();
+      expect(patch.ops).toHaveLength(1);
+      expect(patch.ops[0]?.default_selected).toBe(true);
+      const op = patch.ops[0]!;
+      if (!op.record) throw new Error("Missing ADD record");
+      if (attack === "statement") op.record.statement = "For this project, always use fabricated labels.";
+      if (attack === "scope") Object.assign(op.record.scope, { project: "foreign-project" });
+      if (attack === "auto_disabled" || attack === "minimum_confidence") {
+        const cfg = JSON.parse(readFileSync(f.configPath, "utf8"));
+        if (attack === "auto_disabled") cfg.curator.autoCurate = "off";
+        else cfg.curator.minConfidence = 0.99;
+        writeFileSync(f.configPath, JSON.stringify(cfg));
+      }
+      const result = applyPatch(f.root, patch, {
+        selectedOpIds: [op.op_id], now: "2026-10-29T08:06:00Z",
+        trustedTranscriptOptions: f.trustedTranscriptOptions,
+      });
+      expect(result.applied_ops).toHaveLength(0);
+      expect(result.skipped_ops.some(x => x.reason === "capture_policy_hold")).toBe(true);
+      expect(loadActiveRecords(f.root)).toHaveLength(0);
+    });
+  }
+
 });
