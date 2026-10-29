@@ -171,7 +171,7 @@ describe("R4 semantic automatic-promotion boundary", () => {
     const decision = classifyCaptureIntent(text);
     const scope = resolveCaptureScopes({
       text, decision,
-      launch_project: { project_id: "r4-project", source: "directory" },
+      launch_project: { project_id: "r4-project", source: "cwd_fallback" },
       activity: [],
     });
     expect(scope[0]?.type).toBe("global");
