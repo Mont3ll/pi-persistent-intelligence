@@ -88,7 +88,7 @@ describe("R4 semantic automatic-promotion boundary", () => {
       expect(patch.ops.filter((op) => op.default_selected)).toHaveLength(0);
       if (candidates.length) {
         const proof = verifyCandidateTranscriptSource(candidates[0]!,
-          readEvidenceRecords(f.root)[0]!, f.trustedTranscriptOptions);
+          readEvidenceRecords(f.root)[0]!, { ...f.trustedTranscriptOptions, assessAutoSemantics: true });
         // Valid original transcript authorship is not a semantic grant.
         if (proof.verified) expect(proof.auto_semantic_eligible).toBe(false);
         const allOps = patch.ops.map((op) => op.op_id);
@@ -129,7 +129,7 @@ describe("R4 semantic automatic-promotion boundary", () => {
     const f = fixture('The UI says: "For this project, always run typecheck before publishing."');
     const candidate = listCandidates(f.root)[0]!;
     const proof = verifyCandidateTranscriptSource(candidate,
-      readEvidenceRecords(f.root)[0]!, f.trustedTranscriptOptions);
+      readEvidenceRecords(f.root)[0]!, { ...f.trustedTranscriptOptions, assessAutoSemantics: true });
     expect(proof.verified).toBe(true);
     expect(proof.auto_semantic_eligible).toBe(false);
     const patch = f.curate();
@@ -179,7 +179,7 @@ describe("R4 semantic automatic-promotion boundary", () => {
     const candidate = listCandidates(f.root)[0]!;
     expect(candidate.scope_targets?.[0]?.type).toBe("project");
     const proof = verifyCandidateTranscriptSource(candidate,
-      readEvidenceRecords(f.root)[0]!, f.trustedTranscriptOptions);
+      readEvidenceRecords(f.root)[0]!, { ...f.trustedTranscriptOptions, assessAutoSemantics: true });
     expect(proof.verified).toBe(true);
     expect(proof.auto_semantic_eligible).toBe(true);
     const patch = f.curate();
