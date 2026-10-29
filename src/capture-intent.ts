@@ -101,10 +101,11 @@ export function isSyntheticCaptureContext(rawText: string): boolean {
  * ("this", "that", "the above"), not general rules such as "never store tokens".
  */
 export function hasExplicitMemoryOptOut(rawText: string): boolean {
-  return /\b(?:do not|don't|please don't|never)\s+(?:remember|retain|store|save|capture|record|memorise|memorize|add)\s+(?:any\s+of\s+)?(?:this|that|it|these|the\s+(?:above|following|preceding|current)\s+(?:content|instructions|message|text))\b[^.!?\n]{0,90}\b(?:memory|memories|preference|long[- ]term)?/i.test(rawText)
-    || /\b(?:this|the above|the following)\s+(?:is\s+)?(?:not|isn't)\s+(?:for|to be|a)\s+(?:long[- ]term\s+)?memor(?:y|ies)\b/i.test(rawText)
-    || /\b(?:do not|don't)\s+(?:treat|use)\s+(?:this|that|it)\s+as\s+(?:a\s+)?(?:durable\s+|long[- ]term\s+)?(?:memory|preference)\b/i.test(rawText)
-    || /\bforget\s+(?:this|that|what i just said)\b/i.test(rawText);
+  const text = rawText.replace(/[\u2018\u2019]/g, "'");
+  return /\b(?:do not|don't|please don't|never)\s+(?:remember|retain|store|save|capture|record|memorise|memorize|add)\s+(?:any\s+of\s+)?(?:this|that|it|these|the\s+(?:above|following|preceding|current)\s+(?:content|instructions|message|text))\b[^.!?\n]{0,90}\b(?:memory|memories|preference|long[- ]term)?/i.test(text)
+    || /\b(?:this|the above|the following)\s+(?:is\s+)?(?:not|isn't)\s+(?:for|to be|a)\s+(?:long[- ]term\s+)?memor(?:y|ies)\b/i.test(text)
+    || /\b(?:do not|don't)\s+(?:treat|use)\s+(?:this|that|it)\s+as\s+(?:a\s+)?(?:durable\s+|long[- ]term\s+)?(?:memory|preference)\b/i.test(text)
+    || /\bforget\s+(?:this|that|what i just said)\b/i.test(text);
 }
 
 export interface OriginalTurnAutoEligibility {
@@ -133,10 +134,16 @@ export function assessOriginalTurnAutoEligibility(rawText: string): OriginalTurn
     || /\b(?:this task|this run|this sprint|during this task|stop after the report|do not modify source|only for now|for this response|for this session|temporarily)\b/i.test(text)) {
     return held("operational_or_temporary_wrapper");
   }
-  if (/\b(?:across\s+(?:all\s+|every\s+)?projects?|(?:for|in|on)\s+(?:all|every|any)\s+projects?|regardless\s+of\s+(?:the\s+)?project|all\s+my\s+projects)\b/i.test(text)) {
+  if (/\b(?:across\s+(?:all\s+|every\s+)?(?:projects?|repositories|repos|codebases)|(?:for|in|on)\s+(?:all|every|any)\s+(?:projects?|repositories|repos|codebases)|regardless\s+of\s+(?:the\s+)?(?:project|repository|repo|codebase)|all\s+my\s+(?:projects?|repositories|repos|codebases))\b/i.test(text)) {
     return held("cross_project_scope_requires_review");
   }
-  if (/\b(?:unless|except|only when|but not when)\b/i.test(text)) return held("conditional_scope_requires_review");
+  if (/\b(?:unless|except|only (?:if|when)|if and only if|but not when)\b/i.test(text)) return held("conditional_scope_requires_review");
+  // A later disclaimer cannot inherit the authority of an earlier durable-looking clause.
+  // Whole-turn capture is review-only until proposition/span extraction can separate them.
+  if (/\b(?:not\s+(?:(?:an?|the)\s+)?(?:approved|endorsed|standing|permanent|lasting|durable)\s+(?:policy|rule|instruction|preference)|not\s+(?:(?:an?|the)\s+)?approved\s+permanent\s+instruction|(?:not|never)\s+(?:meant|intended|approved|endorsed)\s+(?:as|to be)\s+(?:a\s+)?(?:standing|permanent|lasting|durable)|(?:this|that|the above)\s+(?:is\s+)?(?:not|isn't)\s+(?:an?\s+)?(?:approved|standing|durable|lasting|permanent)\s+(?:policy|rule|instruction|preference))\b/i.test(text)) {
+    return held("not_endorsed_as_standing_policy");
+  }
+
   // The session header proves where the message occurred, not that the user
   // intended a project rule. A launch-project fallback cannot grant authority.
   if (!/\b(?:this|the)\s+(?:project|repository|repo|codebase)\b/i.test(text)
