@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Capture safety (R4, pending independent verification)
+
+- Treat an original user-role transcript match as source proof, not permission to remember examples, verification handoffs or explicit memory opt-outs.
+- Require clear project-specific wording before a source-attributed, single-reference instruction can be auto-applied. Cross-project intent is scoped globally for review rather than silently inferred from the current checkout.
+- Check semantic eligibility from the original transcript during curation and again during governed application. Uncertain, mixed or truncated turns stay review-only; this does not add new capture phrases or authorize historical backlog promotion.
+- Add disposable-store regression controls for seven nondurable patterns, three scope-bypass cases and explicitly endorsed project guidance.
+
+
 ## [0.17.4] - 2026-10-07
 
 ### Fixed
