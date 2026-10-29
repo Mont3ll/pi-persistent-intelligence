@@ -8,7 +8,7 @@ import { isAutoApplyEligibleCandidate } from "./trust";
 import { classifyCaptureIntent } from "./capture-intent";
 import { loadConfig } from "./config";
 import { decideTrustedAutoEvidenceEligibility, type AutoEvidenceDecision } from "./auto-evidence-policy";
-import { createTranscriptDiscoveryIndex, verifyCandidateTranscriptSource, type TranscriptProofOptions } from "./transcript-proof";
+import { createTranscriptDiscoveryIndex, verifyAutoCaptureSource, type TranscriptProofOptions } from "./transcript-proof";
 import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
 import { createInquiryFromCandidate } from "./inquiries";
@@ -364,12 +364,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       const evidenceDecision = sourceProofs.get(rawCandidate)
         ?? decideTrustedAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig, options.trustedTranscriptOptions);
       const evidenceCountMeetsConfiguredFloor = evidenceDecision.eligible;
-      const originalProof = candidate.capture_source && candidate.capture_intent
-        ? (candidate.evidence_refs.length === 1
-          ? verifyCandidateTranscriptSource(candidate, existingEvidence.find((e) => e.id === candidate.evidence_refs[0])!, options.trustedTranscriptOptions)
-          : undefined)
-        : undefined;
-      const semanticAllowed = !candidate.capture_source || (originalProof?.verified === true && originalProof.semantic_auto_eligible === true);
+      const semanticAllowed = !candidate.capture_source || verifyAutoCaptureSource(candidate, existingEvidence, options.trustedTranscriptOptions);
       const autoApplyEligible = evidenceCountMeetsConfiguredFloor
         && semanticAllowed
         && !isGlobalPreference
