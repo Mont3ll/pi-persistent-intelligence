@@ -140,7 +140,7 @@ export function assessOriginalTurnAutoEligibility(rawText: string): OriginalTurn
   if (/\b(?:unless|except|only (?:if|when)|if and only if|but not when)\b/i.test(text)) return held("conditional_scope_requires_review");
   // A later disclaimer cannot inherit the authority of an earlier durable-looking clause.
   // Whole-turn capture is review-only until proposition/span extraction can separate them.
-  if (/\b(?:not\s+(?:(?:an?|the)\s+)?(?:approved|endorsed|standing|permanent|lasting|durable)\s+(?:policy|rule|instruction|preference)|not\s+(?:(?:an?|the)\s+)?approved\s+permanent\s+instruction|(?:not|never)\s+(?:meant|intended|approved|endorsed)\s+(?:as|to be)\s+(?:a\s+)?(?:standing|permanent|lasting|durable)|(?:this|that|the above)\s+(?:is\s+)?(?:not|isn't)\s+(?:an?\s+)?(?:approved|standing|durable|lasting|permanent)\s+(?:policy|rule|instruction|preference))\b/i.test(text)) {
+  if (/\b(?:not\s+(?:(?:an?|the)\s+)?(?:approved|endorsed|standing|permanent|lasting|durable)(?:\s+(?:approved|endorsed|standing|permanent|lasting|durable))*\s+(?:policy|rule|instruction|preference)|not\s+(?:(?:an?|the)\s+)?approved\s+permanent\s+instruction|(?:not|never)\s+(?:meant|intended|approved|endorsed)\s+(?:as|to be)\s+(?:a\s+)?(?:standing|permanent|lasting|durable)|(?:this|that|the above)\s+(?:is\s+)?(?:not|isn't)\s+(?:an?\s+)?(?:approved|standing|durable|lasting|permanent)\s+(?:policy|rule|instruction|preference))\b/i.test(text)) {
     return held("not_endorsed_as_standing_policy");
   }
 
