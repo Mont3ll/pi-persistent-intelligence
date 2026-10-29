@@ -154,6 +154,10 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
   ]) {
     test("additional semantic negative is held: " + text.slice(-35), () => {
       const f = isolatedOriginal(text);
+      if (text.includes("provided that") || text.includes("across our repositories") || text.includes("a draft, not a decision")) {
+        expect(f.captured.candidates_created).toBe(1);
+        expect(listCandidates(f.root)).toHaveLength(1);
+      }
       expect(assessOriginalTurnAutoEligibility(text).eligible).toBe(false);
       const patch = f.curate();
       expect(patch.ops.filter(op => op.default_selected)).toHaveLength(0);
