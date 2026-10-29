@@ -364,7 +364,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       const evidenceDecision = sourceProofs.get(rawCandidate)
         ?? decideTrustedAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig, options.trustedTranscriptOptions);
       const evidenceCountMeetsConfiguredFloor = evidenceDecision.eligible;
-      const semanticAllowed = !candidate.capture_source || verifyAutoCaptureSource(candidate, existingEvidence, options.trustedTranscriptOptions);
+      const semanticAllowed = !candidate.capture_intent || verifyAutoCaptureSource(candidate, existingEvidence, options.trustedTranscriptOptions);
       const autoApplyEligible = evidenceCountMeetsConfiguredFloor
         && semanticAllowed
         && !isGlobalPreference
