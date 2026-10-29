@@ -6,6 +6,7 @@ import { runConfiguredLlmAssist, type LlmAssistConfig } from "./llmAssist";
 import { suggestVaultRefs } from "./retriever";
 import { isAutoApplyEligibleCandidate } from "./trust";
 import { classifyCaptureIntent } from "./capture-intent";
+import { assessSingleSourceAutoIntent } from "./capture-semantics";
 import { loadConfig } from "./config";
 import { decideTrustedAutoEvidenceEligibility, type AutoEvidenceDecision } from "./auto-evidence-policy";
 import { createTranscriptDiscoveryIndex, type TranscriptProofOptions } from "./transcript-proof";
@@ -254,6 +255,13 @@ function eligibleCandidates(
 }
 
 function currentPolicyAllowsAutoApply(candidate: CaptureCandidate): boolean {
+  // Don't treat a truncated 300-character excerpt as a durable proposition.
+  // These source-backed records may still be reviewed manually.
+  if (candidate.capture_source) {
+    const target = candidate.scope_targets?.length === 1 ? candidate.scope_targets[0] : undefined;
+    if (candidate.capture_source.original_character_count !== candidate.capture_source.persisted_excerpt_character_count
+      || !assessSingleSourceAutoIntent(candidate.text, target).eligible) return false;
+  }
   // Legacy/manual candidates without capture-intent provenance retain the
   // existing compatibility contract.
   if (!candidate.capture_intent) return true;
