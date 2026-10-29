@@ -1,4 +1,4 @@
-import type { CaptureIntentDecision } from "./capture-intent";
+import { hasCrossProjectOrGlobalCue, type CaptureIntentDecision } from "./capture-intent";
 import type { CaptureScopeTarget, ProjectIdentity, SessionActivity } from "./types";
 
 export interface ResolveCaptureScopeInput {
@@ -20,6 +20,12 @@ export function isVaultApplicable(text: string): boolean {
 export function resolveCaptureScopes(input: ResolveCaptureScopeInput): CaptureScopeTarget[] {
   if (input.decision.intent === "temporary_instruction" || input.decision.intent === "not_memory") {
     return [{ type: "session", confidence: 0.98, basis: ["non_durable_intent"] }];
+  }
+
+  // A project checkout is a location, not evidence that a rule was
+  // intended only for that project. Explicit cross-project wording wins.
+  if (hasCrossProjectOrGlobalCue(input.text)) {
+    return [{ type: "global", confidence: 0.95, basis: ["explicit_cross_project"] }];
   }
 
   const strongGlobalCue = input.decision.global_cues.some((cue) => !["\\bmy preference\\b", "\\bi prefer\\b", "\\bi do not like\\b"].includes(cue));
