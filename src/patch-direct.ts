@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { addMemoryRecordFromPatch, loadAllRecords, PATCH_APPLY_CONTEXT, updateMemoryRecord } from "./store";
 import { listCandidates, updateCandidateStatus } from "./inbox";
 import { classifyCaptureIntent } from "./capture-intent";
+import { assessSingleSourceAutoIntent } from "./capture-semantics";
 import { decideTrustedAutoEvidenceEligibility } from "./auto-evidence-policy";
 import type { TranscriptProofOptions } from "./transcript-proof";
 import { loadConfig } from "./config";
@@ -53,6 +54,15 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
       }
       if (candidate.capture_intent === "not_memory" || candidate.capture_intent === "temporary_instruction") {
         return reject("capture_policy_hold", `Candidate ${candidate.id} was captured as ${candidate.capture_intent}; promotion is prohibited.`);
+      }
+      if (candidate.capture_source && (mode === "auto" || !explicitlySelected)) {
+        const target = candidate.scope_targets?.length === 1 ? candidate.scope_targets[0] : undefined;
+        const originalNotTruncated = candidate.capture_source.original_character_count
+          === candidate.capture_source.persisted_excerpt_character_count;
+        if (!originalNotTruncated || !assessSingleSourceAutoIntent(candidate.text, target).eligible) {
+          return reject("capture_policy_hold",
+            `Candidate ${candidate.id} has incomplete, ambiguous or non-project original-turn semantics; automatic promotion is held for supervised review.`);
+        }
       }
       const current = classifyCaptureIntent(candidate.text);
       const noDurableCueOnly = current.intent === "not_memory"
