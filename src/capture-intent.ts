@@ -127,6 +127,14 @@ export function assessOriginalTurnAutoEligibility(rawText: string): OriginalTurn
   const held = (reason: string): OriginalTurnAutoEligibility => ({ eligible: false, reason });
   if (hasExplicitMemoryOptOut(rawText)) return held("explicit_memory_opt_out");
   if (!text || text.length > 300 || /[\r\n]/.test(text)) return held("unextracted_or_mixed_turn");
+  // Whole-turn prefix capture cannot safely extract one lasting statement
+  // from a mixed multi-sentence message. Review until source-span extraction.
+  if (/[.!?]\s+\S/.test(text)) return held("multiple_sentences_require_review");
+  // A durable-sounding sentence inside a panel, handoff or narrated task is
+  // not a directly endorsed project rule. Require the original *opening* to
+  // declare the project instruction, instead of searching anywhere in a turn.
+  const projectOpening = /^(?:(?:please\s*,?\s*)?(?:(?:for|in|on|within)\s+this\s+(?:project|repository|repo|codebase)|(?:this|the)\s+(?:project|repository|repo|codebase))\b|(?:going forward|from now on)\s*,?\s*(?:(?:for|in|on|within)\s+this\s+(?:project|repository|repo|codebase)|(?:this|the)\s+(?:project|repository|repo|codebase))\b)/i.test(text);
+  if (!projectOpening) return held("no_direct_project_rule_opening");
   if (/<(?:file|skill)\b|^\s*(?:#{1,6}\s+|>\s*|[*-]\s+)|\x60{3}/m.test(rawText)) return held("structured_or_quoted_material");
   // Require quote delimiters in a non-word context so contractions such as
   // "don't" or "it's" do not look like quoted external instructions.
