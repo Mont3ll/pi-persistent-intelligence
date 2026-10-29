@@ -4,7 +4,7 @@ import { addMemoryRecordFromPatch, loadAllRecords, PATCH_APPLY_CONTEXT, updateMe
 import { listCandidates, updateCandidateStatus } from "./inbox";
 import { classifyCaptureIntent } from "./capture-intent";
 import { decideTrustedAutoEvidenceEligibility } from "./auto-evidence-policy";
-import { verifyAutoCaptureSource, type TranscriptProofOptions } from "./transcript-proof";
+import { isCapturePipelineCandidate, verifyAutoCaptureSource, type TranscriptProofOptions } from "./transcript-proof";
 import { loadConfig } from "./config";
 import { attachVerification } from "./verifier";
 import { applyCandidateMatch } from "./matching";
@@ -70,39 +70,48 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
       if (noDurableCueOnly && candidate.capture_intent && (mode === "auto" || !explicitlySelected)) {
         return reject("capture_policy_hold", `Candidate ${candidate.id} has no currently recognized durability cue; promotion requires an explicit manual selection from a non-auto proposal.`);
       }
-      // Revalidate the independent auto-source evidence gate at application.
-      // A proposal's default_selected flag or prior verified marker is not
-      // sufficient when its underlying evidence/configuration has changed.
+      // Automatic promotion must be reauthorized at the write boundary.
+      // A second reference can corroborate evidence, not endorse an original
+      // turn or permit a changed statement, scope, or current policy.
       const cfg = loadConfig(root);
-      if ((mode === "auto" || !explicitlySelected) && candidate.capture_source
-        && !verifyAutoCaptureSource(candidate, readEvidenceRecords(root), proofOptions)) {
+      const evidence = readEvidenceRecords(root);
+      const automatic = mode === "auto" || !explicitlySelected;
+      const captured = isCapturePipelineCandidate(candidate, evidence);
+      if (automatic && captured && !verifyAutoCaptureSource(candidate, evidence, proofOptions)) {
         return reject("capture_policy_hold", `Candidate ${candidate.id} lacks fresh endorsed original-turn proof.`);
       }
+
       const referenceFloor = cfg.curator.minEvidenceCount;
-      if (candidate.evidence_refs.length < referenceFloor && (mode === "auto" || !explicitlySelected)) {
-        const evidenceDecision = decideTrustedAutoEvidenceEligibility(candidate, readEvidenceRecords(root), cfg.curator, proofOptions);
+      if (candidate.evidence_refs.length < referenceFloor && automatic) {
+        const evidenceDecision = decideTrustedAutoEvidenceEligibility(candidate, evidence, cfg.curator, proofOptions);
         if (!evidenceDecision.eligible) {
           return reject("capture_policy_hold", `Candidate ${candidate.id} does not satisfy the current automatic evidence policy; explicit non-auto review is required.`);
         }
-        const verified = attachVerification(root, applyCandidateMatch(candidate, loadAllRecords(root).filter((record) => record.status === "active")));
-          const projectScope = candidate.scope_targets?.length === 1 ? candidate.scope_targets[0] : undefined;
-          const proposed = op.record;
-          const staleAutoConfig = mode === "auto"
-            && (cfg.curator.autoCurate === "off"
-              || (cfg.curator.autoCurate === "high-only"
-                && (candidate.confidence ?? 0) < cfg.curator.autoCurateHighThreshold));
-          const staleOrEditedPatch = !proposed
-            || proposed.statement !== candidate.text
-            || proposed.scope.type !== "project"
-            || proposed.scope.project !== projectScope?.project
-            || proposed.resource_id !== candidate.resource_id
-            || proposed.profile_id !== candidate.profile_id;
-          if (staleAutoConfig || staleOrEditedPatch
-            || (candidate.confidence ?? 0) < cfg.curator.minConfidence
-            || op.op !== "add" || op.risk !== "low" || op.default_selected !== true
-            || !isAutoApplyEligibleCandidate(verified, cfg.governance.mode)) {
-            return reject("capture_policy_hold", `Candidate ${candidate.id} failed the current automatic trust, scope, configuration, verification, or match gate.`);
-          }
+      }
+
+      // Keep these guards independent of the evidence floor. They bind an
+      // automatically selected operation to the current candidate, project,
+      // governance decision and configuration at the moment of application.
+      if (automatic && captured) {
+        const verified = attachVerification(root,
+          applyCandidateMatch(candidate, records.filter((record) => record.status === "active")));
+        const projectScope = candidate.scope_targets?.length === 1 ? candidate.scope_targets[0] : undefined;
+        const proposed = op.record;
+        const staleAutoConfig = cfg.curator.autoCurate === "off"
+          || (cfg.curator.autoCurate === "high-only"
+            && (candidate.confidence ?? 0) < cfg.curator.autoCurateHighThreshold);
+        const staleOrEditedPatch = !proposed
+          || proposed.statement !== candidate.text
+          || proposed.scope.type !== "project"
+          || proposed.scope.project !== projectScope?.project
+          || proposed.resource_id !== candidate.resource_id
+          || proposed.profile_id !== candidate.profile_id;
+        if (staleAutoConfig || staleOrEditedPatch
+          || (candidate.confidence ?? 0) < cfg.curator.minConfidence
+          || op.op !== "add" || op.risk !== "low" || op.default_selected !== true
+          || !isAutoApplyEligibleCandidate(verified, cfg.governance.mode)) {
+          return reject("capture_policy_hold", `Candidate ${candidate.id} failed current automatic trust, scope, configuration, verification, or match checks.`);
+        }
       }
       const replacement = op.record ?? op.to_record;
       if (replacement && replacement.statement !== candidate.text) {
