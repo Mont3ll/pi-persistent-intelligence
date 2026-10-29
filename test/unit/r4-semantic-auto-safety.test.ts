@@ -125,6 +125,53 @@ describe("R4 semantic automatic-promotion boundary", () => {
     });
   }
 
+  test("forged selection cannot turn a source-verified UI quote into an automatic write", () => {
+    const f = fixture('The UI says: "For this project, always run typecheck before publishing."');
+    const candidate = listCandidates(f.root)[0]!;
+    const proof = verifyCandidateTranscriptSource(candidate,
+      readEvidenceRecords(f.root)[0]!, f.trustedTranscriptOptions);
+    expect(proof.verified).toBe(true);
+    expect(proof.auto_semantic_eligible).toBe(false);
+    const patch = f.curate();
+    expect(patch.ops).toHaveLength(1);
+    patch.ops[0]!.default_selected = true; // compromised caller-held proposal
+    const result = applyPatch(f.root, patch, {
+      selectedOpIds: [patch.ops[0]!.op_id], now: "2026-10-29T11:01:00Z",
+      trustedTranscriptOptions: f.trustedTranscriptOptions,
+    });
+    expect(result.applied_ops).toEqual([]);
+    expect(loadActiveRecords(f.root)).toHaveLength(0);
+  });
+
+  test("a valid scoped but conditional instruction remains review-only until applicability is resolved", () => {
+    const text = "For this project, always use Bun unless running the legacy package.";
+    const f = fixture(text);
+    const candidate = listCandidates(f.root)[0];
+    if (candidate) {
+      expect(assessSingleSourceAutoIntent(text, candidate.scope_targets?.[0]).eligible).toBe(false);
+    }
+    expect(f.curate().ops.filter((op) => op.default_selected)).toHaveLength(0);
+    expect(loadActiveRecords(f.root)).toHaveLength(0);
+  });
+
+  test("late durable phrasing in a long multi-part turn cannot auto-save an unrelated prefix", () => {
+    const prefix = "Investigate the current branch and read the task logs. ".repeat(7);
+    const text = prefix + "For this project, always use YAML for verification manifests.";
+    const f = fixture(text);
+    expect(text.length).toBeGreaterThan(300);
+    const patch = f.curate();
+    expect(patch.ops.filter((op) => op.default_selected)).toHaveLength(0);
+    if (patch.ops.length) {
+      const attempted = applyPatch(f.root, patch, {
+        selectedOpIds: patch.ops.map((op) => op.op_id),
+        now: "2026-10-29T11:01:00Z",
+        trustedTranscriptOptions: f.trustedTranscriptOptions,
+      });
+      expect(attempted.applied_ops).toEqual([]);
+    }
+    expect(loadActiveRecords(f.root)).toHaveLength(0);
+  });
+
   test("positive explicitly scoped project convention survives original-turn proof and governed application", () => {
     const text = "For this project, always use the accepted cobalttracer release checklist.";
     const f = fixture(text);
