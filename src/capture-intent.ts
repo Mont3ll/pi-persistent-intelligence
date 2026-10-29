@@ -1,5 +1,5 @@
 import type { CaptureIntent } from "./types";
-import { containsMemoryOptOut, hasCrossProjectOrGlobalCue } from "./capture-semantics";
+
 
 export interface CaptureIntentDecision {
   intent: CaptureIntent;
@@ -9,6 +9,18 @@ export interface CaptureIntentDecision {
   project_cues: string[];
   applicability: string[];
   reasons: string[];
+}
+
+/** Respect explicit instructions not to save the current content as memory. */
+export function containsMemoryOptOut(text: string): boolean {
+  return /\b(?:do not|don['’]t|never|please do not|please don['’]t)\s+(?:(?:save|store|retain|record|remember|memorize)\b[^.!?\n]{0,65}\b(?:memory|memories|long[- ]term|this|that|it|information|instruction)|(?:add|put|turn)\b[^.!?\n]{0,60}\b(?:memory|memories))\b/i.test(text)
+    || /\b(?:not for (?:long[- ]term )?memory|do not memorize|not to be (?:remembered|stored|retained)|forget (?:this|that) (?:after|once|when)\b)/i.test(text)
+    || /\b(?:don't|do not)\s+remember\s+(?:this|that|it)\b/i.test(text);
+}
+
+/** Global cues must beat a launch-project fallback or explicit local mention. */
+export function hasCrossProjectOrGlobalCue(text: string): boolean {
+  return /\b(?:across\s+(?:(?:all|every|multiple)\s+)?(?:(?:my|our)\s+)?(?:projects|repositories|repos|codebases)|(?:for|in|throughout)\s+(?:all|every|any)\s+(?:(?:my|our)\s+)?(?:projects|repositories|repos|codebases)|regardless\s+of\s+(?:the\s+)?(?:project|repo|repository)|(?:in|for)\s+every\s+(?:project|repo|repository)|globally\s+for\s+(?:my\s+)?(?:projects|repositories))\b/i.test(text);
 }
 
 function normalize(text: string): string {
