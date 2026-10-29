@@ -95,7 +95,7 @@ export function decideTrustedAutoEvidenceEligibility(
   }
   const source = evidenceRecords.find((item) => item.id === candidate.evidence_refs[0]);
   if (!source) return { eligible: false, basis: "below_configured_evidence_floor" };
-  const proof = verifyCandidateTranscriptSource(candidate, source, trustedOptions);
+  const proof = verifyCandidateTranscriptSource(candidate, source, { ...trustedOptions, assessAutoSemantics: true });
   // Source authenticity is necessary, but the original turn must also be
   // an endorsed durable instruction for this exact project. A quoted UI
   // example or an opt-out may have a perfectly valid user-role source.
