@@ -121,7 +121,7 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     expect(original).toBeDefined();
     const first = readEvidenceRecords(f.root).find((e) => e.id === original!.evidence_refs[0])!;
     const second = appendEvidenceRecord(f.root, { ...first, id: "independent-review-reference",
-      source_kind: "artifact", source_ref: "test:separate-evidence",
+      source_kind: "test_result", source_ref: "test:separate-evidence",
       source_session_id: undefined, source_turn_id: undefined,
       source_message_sha256: undefined, source_identity_quality: undefined });
     replaceCandidates(f.root, [{ ...original!, evidence_refs: [first.id, second.id],
