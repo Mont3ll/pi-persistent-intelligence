@@ -41,6 +41,7 @@ function isTaskHandoff(text: string): boolean {
 function hasTemporaryOrMixedContext(text: string): boolean {
   return /\b(?:for\s+this\s+(?:task|response|session|exercise|run|test)|during\s+this\s+(?:task|session|run)|(?:right\s+now|for\s+now|temporarily|only\s+this\s+time)|(?:this\s+(?:step|slice|stage|issue|ticket|bug|PR|request|response)\s+(?:only|is\s+only))|(?:once\s+(?:this|the)\s+(?:task|test|fix|PR)\s+(?:is|has)))\b/i.test(text)
     || /(?:^|\n)\s*(?:[-*]\s+|\d+[.)]\s+|#{1,6}\s+)/m.test(text)
+    || /\b(?:unless|except(?: for| when)?|only when|only if|only for|depending on|provided that)\b/i.test(text)
     || text.split(/\n/).filter((part) => part.trim()).length > 1;
 }
 
