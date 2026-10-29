@@ -344,6 +344,18 @@ export function verifyCandidateTranscriptSource(
   }
 }
 
+/**
+ * Identify host-captured candidates without trusting removable capture_source
+ * or capture_intent fields. Legacy manually authored candidates with none of
+ * these signals continue through their separate governance contract.
+ */
+export function isCapturePipelineCandidate(candidate: CaptureCandidate, records: readonly EvidenceRecord[]): boolean {
+  return candidate.id.startsWith("cap_pref_")
+    || candidate.tags?.includes("capture") === true
+    || Boolean(candidate.capture_source || candidate.capture_intent || candidate.capture_group_id)
+    || records.some(e => candidate.evidence_refs.includes(e.id) && e.notes === "capture_evidence_v1");
+}
+
 /** Fresh source check for automatic capture, irrespective of evidence count. */
 export function verifyAutoCaptureSource(candidate: CaptureCandidate, records: readonly EvidenceRecord[], options: TranscriptProofOptions = {}): boolean {
   if (!candidate.capture_source || !candidate.capture_intent) return false;
