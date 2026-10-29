@@ -247,6 +247,11 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     });
   }
 
+  test("balanced ASCII quotes inside an otherwise direct rule remain review-only", () => {
+    const quoted = "For this project, always use the panel label 'keep this exact line'.";
+    expect(assessOriginalTurnAutoEligibility(quoted).eligible).toBe(false);
+  });
+
   test("an apostrophe in a genuine correction is not a quoted panel", () => {
     const correction = "For this project, don't use stale release manifests.";
     expect(assessOriginalTurnAutoEligibility(correction).eligible).toBe(true);
