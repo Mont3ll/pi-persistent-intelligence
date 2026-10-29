@@ -161,6 +161,13 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
       expect(assessOriginalTurnAutoEligibility(text).eligible).toBe(false);
       const patch = f.curate();
       expect(patch.ops.filter(op => op.default_selected)).toHaveLength(0);
+      if (patch.ops.length) {
+        const forced = applyPatch(f.root, patch, {
+          selectedOpIds: patch.ops.map(op => op.op_id),
+          now: "2026-10-29T08:08:00Z", trustedTranscriptOptions: f.trustedTranscriptOptions,
+        });
+        expect(forced.applied_ops).toHaveLength(0);
+      }
       expect(loadActiveRecords(f.root)).toHaveLength(0);
     });
   }
