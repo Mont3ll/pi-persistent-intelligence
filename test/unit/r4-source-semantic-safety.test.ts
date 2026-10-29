@@ -255,9 +255,27 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     const text = "For this project, always use the release checklist. "
       + "This sprint is a temporary UI exercise, not an approved permanent instruction.";
     const f = isolatedOriginal(text);
-    expect(f.captured.candidates_created).toBeGreaterThanOrEqual(0);
-    for (const candidate of listCandidates(f.root)) expect(candidate.promotion_eligibility).toBe("review_only");
-    expect(f.curate().ops.filter((op) => op.default_selected)).toHaveLength(0);
+    expect(assessOriginalTurnAutoEligibility(text).eligible).toBe(false);
+    const candidates = listCandidates(f.root);
+    if (candidates.length === 0) {
+      // Capture rejected the task-bound turn before curation: assert the
+      // durable inbox is actually empty, not merely an empty patch.
+      expect(f.captured.daily_only + f.captured.rejected).toBeGreaterThan(0);
+      expect(f.curate().ops).toHaveLength(0);
+    } else {
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]?.promotion_eligibility).toBe("review_only");
+      atEvidenceFloor(f);
+      const patch = f.curate();
+      expect(patch.ops.length).toBeGreaterThan(0);
+      expect(patch.ops.filter(op => op.default_selected)).toHaveLength(0);
+      const attempted = applyPatch(f.root, patch, {
+        selectedOpIds: patch.ops.map(op => op.op_id),
+        now: "2026-10-29T09:11:00Z",
+        trustedTranscriptOptions: f.trustedTranscriptOptions,
+      });
+      expect(attempted.applied_ops).toHaveLength(0);
+    }
     expect(loadActiveRecords(f.root)).toHaveLength(0);
   });
 
