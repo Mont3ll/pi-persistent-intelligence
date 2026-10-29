@@ -1,4 +1,5 @@
 import type { CaptureIntent } from "./types";
+import { containsMemoryOptOut, hasCrossProjectOrGlobalCue } from "./capture-semantics";
 
 export interface CaptureIntentDecision {
   intent: CaptureIntent;
@@ -44,6 +45,9 @@ function decision(
     /\bfor (?:all )?my writing\b/,
     /\bwhen writing for me\b/,
     /\bacross projects\b/,
+    /\bacross (?:all|every|my|our) projects\b/,
+    /\bfor (?:all|every) (?:my |our )?(?:projects|repositories|repos)\b/,
+    /\bregardless of (?:the )?(?:project|repository|repo)\b/,
     /\bpublic (?:writing|documentation)\b/,
   ].filter((pattern) => pattern.test(lower)).map((pattern) => pattern.source);
   const projectCues = [
@@ -98,6 +102,12 @@ export function classifyCaptureIntent(rawText: string): CaptureIntentDecision {
   const text = normalize(rawText);
   const lower = text.toLowerCase();
   if (!text || text.length < 8) return decision("not_memory", 0, "temporary", text, ["too_short"]);
+
+  // An explicit request not to retain this turn takes precedence over any
+  // quoted or embedded phrase that otherwise looks like durable policy.
+  if (containsMemoryOptOut(rawText)) {
+    return decision("not_memory", 0.99, "temporary", text, ["explicit_memory_opt_out"]);
+  }
 
   if (isSyntheticCaptureContext(rawText)) {
     return decision("not_memory", 0.99, "temporary", text, ["synthetic_harness_context"]);
