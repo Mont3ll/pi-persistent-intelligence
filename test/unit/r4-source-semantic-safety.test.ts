@@ -207,6 +207,73 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     }
   }
 
+  test("project-prefixed report is context rather than user-endorsed authority", () => {
+    const text = "For this project, the panel says always run the sapphire release audit.";
+    expect(assessOriginalTurnAutoEligibility(text)).toEqual({
+      eligible: false, reason: "project_context_without_direct_endorsement",
+    });
+  });
+
+  for (const referenceCount of [1, 2] as const) {
+    test("project-prefixed indirect panel report cannot apply at " + referenceCount + " reference(s)", () => {
+      const text = "For this project, the panel says always run the sapphire release audit.";
+      const f = isolatedOriginal(text);
+      expect(f.captured.candidates_created).toBe(1);
+      const candidates = listCandidates(f.root);
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]?.promotion_eligibility).toBe("review_only");
+      atEvidenceFloor(f);
+      const patch = f.curate();
+      expect(patch.ops).toHaveLength(1);
+      expect(patch.ops[0]?.default_selected).toBe(false);
+      if (referenceCount === 1) {
+        const persisted = listCandidates(f.root)[0]!;
+        replaceCandidates(f.root, [{
+          ...persisted,
+          evidence_refs: persisted.evidence_refs.slice(0, 1),
+          evidence_ids: persisted.evidence_ids?.slice(0, 1),
+        }]);
+      }
+      const result = applyPatch(f.root, patch, {
+        selectedOpIds: patch.ops.map(op => op.op_id),
+        now: "2026-10-29T19:00:00Z",
+        trustedTranscriptOptions: f.trustedTranscriptOptions,
+      });
+      expect(result.applied_ops).toHaveLength(0);
+      expect(result.skipped_ops.some(op => op.reason === "capture_policy_hold")).toBe(true);
+      expect(loadActiveRecords(f.root)).toHaveLength(0);
+    });
+
+    test("curly contraction preserves an endorsed project rule at " + referenceCount + " reference(s)", () => {
+      const message = "For this project, never use stale manifests; they’re unreliable.";
+      expect(assessOriginalTurnAutoEligibility(message)).toEqual({
+        eligible: true, reason: "explicit_original_project_rule",
+      });
+      const f = isolatedOriginal(message);
+      expect(f.captured.candidates_created).toBe(1);
+      expect(listCandidates(f.root)).toHaveLength(1);
+      expect(listCandidates(f.root)[0]?.promotion_eligibility).toBe("auto_candidate");
+      if (referenceCount === 2) atEvidenceFloor(f);
+      const patch = f.curate();
+      expect(patch.ops).toHaveLength(1);
+      expect(patch.ops[0]?.default_selected).toBe(true);
+      const result = applyPatch(f.root, patch, {
+        selectedOpIds: [patch.ops[0]!.op_id],
+        now: "2026-10-29T19:01:00Z",
+        trustedTranscriptOptions: f.trustedTranscriptOptions,
+      });
+      expect(result.applied_ops).toEqual([patch.ops[0]!.op_id]);
+      expect(loadActiveRecords(f.root)).toHaveLength(1);
+    });
+  }
+
+  test("ASCII contractions remain eligible and typographic quotes remain held", () => {
+    const ascii = "For this project, never use stale manifests; they're unreliable.";
+    expect(assessOriginalTurnAutoEligibility(ascii).eligible).toBe(true);
+    const curlyQuote = "For this project, always use the label ‘run the sapphire audit’.";
+    expect(assessOriginalTurnAutoEligibility(curlyQuote).eligible).toBe(false);
+  });
+
   test("curly-apostrophe memory opt-out does not persist a candidate", () => {
     const f = isolatedOriginal("Don’t remember this: This repository always uses amber icons.");
     expect(f.captured.candidates_created).toBe(0);
