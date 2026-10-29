@@ -100,7 +100,9 @@ export function decideTrustedAutoEvidenceEligibility(
   // Treat it as transient proof only after independently validating the original.
   const assessed = evidenceRecords.map((record) => ({
     ...record,
-    source_transcript_verified: record.id === source.id && proof.verified,
+    // Transcript authenticity is necessary but not enough: the original
+    // user turn must independently qualify as a standalone project rule.
+    source_transcript_verified: record.id === source.id && proof.verified && proof.semantic_auto_eligible === true,
   }));
   return decideAutoEvidenceEligibility(candidate, assessed, curatorConfig);
 }

@@ -94,16 +94,82 @@ export function isSyntheticCaptureContext(rawText: string): boolean {
   return /^\s*<skill(?:\s|>)/i.test(rawText);
 }
 
+
+/**
+ * An explicit request not to remember the current material outranks any
+ * durable-sounding words inside that material. Scope this to deictic requests
+ * ("this", "that", "the above"), not general rules such as "never store tokens".
+ */
+export function hasExplicitMemoryOptOut(rawText: string): boolean {
+  return /\b(?:do not|don't|please don't|never)\s+(?:remember|retain|store|save|capture|record|memorise|memorize|add)\s+(?:any\s+of\s+)?(?:this|that|it|these|the\s+(?:above|following|preceding|current)\s+(?:content|instructions|message|text))\b[^.!?\n]{0,90}\b(?:memory|memories|preference|long[- ]term)?/i.test(rawText)
+    || /\b(?:this|the above|the following)\s+(?:is\s+)?(?:not|isn't)\s+(?:for|to be|a)\s+(?:long[- ]term\s+)?memor(?:y|ies)\b/i.test(rawText)
+    || /\b(?:do not|don't)\s+(?:treat|use)\s+(?:this|that|it)\s+as\s+(?:a\s+)?(?:durable\s+|long[- ]term\s+)?(?:memory|preference)\b/i.test(rawText)
+    || /\bforget\s+(?:this|that|what i just said)\b/i.test(rawText);
+}
+
+export interface OriginalTurnAutoEligibility {
+  eligible: boolean;
+  reason: string;
+}
+
+/**
+ * The single-transcript exception is narrower than manual review. Only a
+ * short, standalone, directly endorsed, explicitly project-scoped rule can
+ * cross this boundary. Until proposition/span extraction exists, long or
+ * mixed turns must not use an unrelated 300-character prefix as authority.
+ *
+ * This is recalculated from the original Pi transcript during curation AND
+ * governed apply. It is not a persisted candidate flag or a proof of source.
+ */
+export function assessOriginalTurnAutoEligibility(rawText: string): OriginalTurnAutoEligibility {
+  const text = rawText.trim();
+  const held = (reason: string): OriginalTurnAutoEligibility => ({ eligible: false, reason });
+  if (hasExplicitMemoryOptOut(rawText)) return held("explicit_memory_opt_out");
+  if (!text || text.length > 300 || /[\r\n]/.test(text)) return held("unextracted_or_mixed_turn");
+  if (/<(?:file|skill)\b|^\s*(?:#{1,6}\s+|>\s*|[*-]\s+)|\x60{3}/m.test(rawText)) return held("structured_or_quoted_material");
+  if (/[“”‘’"]/u.test(text) || /\x60/.test(text)
+    || /\b(?:quoted|quotation|example|sample|fixture|false[- ]positive|expected classification|transcript excerpt|pasted|the article|the documentation|the source says|the user said|someone said|prompt says|verification handoff|implementation handoff|review handoff|task wrapper|delegated agent instructions)\b/i.test(text)) return held("unendorsed_example_or_quote");
+  if (/^(?:verify|reverify|resume|complete|continue|implement|review|run|test|check|fix|task|instructions?|handoff|verification|delegated|agent|assistant|report)\b/i.test(text)
+    || /\b(?:this task|this run|this sprint|during this task|stop after the report|do not modify source|only for now|for this response|for this session|temporarily)\b/i.test(text)) {
+    return held("operational_or_temporary_wrapper");
+  }
+  if (/\b(?:across\s+(?:all\s+|every\s+)?projects?|(?:for|in|on)\s+(?:all|every|any)\s+projects?|regardless\s+of\s+(?:the\s+)?project|all\s+my\s+projects)\b/i.test(text)) {
+    return held("cross_project_scope_requires_review");
+  }
+  if (/\b(?:unless|except|only when|but not when)\b/i.test(text)) return held("conditional_scope_requires_review");
+  // The session header proves where the message occurred, not that the user
+  // intended a project rule. A launch-project fallback cannot grant authority.
+  if (!/\b(?:this|the)\s+(?:project|repository|repo|codebase)\b/i.test(text)
+    && !/\b(?:for|in)\s+this\s+(?:project|repository|repo|codebase)\b/i.test(text)) {
+    return held("no_explicit_project_intent");
+  }
+  const intent = classifyCaptureIntent(rawText);
+  if (!["project_convention", "workflow_playbook", "behavior_correction"].includes(intent.intent)
+    || intent.durability !== "project") return held("not_unambiguous_durable_project_rule");
+  return { eligible: true, reason: "explicit_original_project_rule" };
+}
+
 export function classifyCaptureIntent(rawText: string): CaptureIntentDecision {
   const text = normalize(rawText);
   const lower = text.toLowerCase();
   if (!text || text.length < 8) return decision("not_memory", 0, "temporary", text, ["too_short"]);
 
+  if (hasExplicitMemoryOptOut(rawText)) {
+    return decision("not_memory", 0.99, "temporary", text, ["explicit_memory_opt_out"]);
+  }
   if (isSyntheticCaptureContext(rawText)) {
     return decision("not_memory", 0.99, "temporary", text, ["synthetic_harness_context"]);
   }
   if (/^(?:task:|your goal is|you are a delegated|you are a subagent|<file name=|# instructions)/i.test(text)) {
     return decision("not_memory", 0.98, "temporary", text, ["task_or_agent_wrapper"]);
+  }
+  if (/^\s*#{1,6}\s*(?:verification|handoff|task|instructions|example|fixture|test plan)\b/im.test(rawText)
+    || /^\s*>\s*(?:going forward|from now on|always|never|this (?:project|repository))\b/im.test(rawText)
+    || /\b(?:false[- ]positive control|expected classification|quoted (?:ui|memory|instruction)|fixture:|example:)\b/i.test(rawText)) {
+    return decision("temporary_instruction", 0.97, "task", text, ["unendorsed_or_operational_material"]);
+  }
+  if (/\b(?:verification handoff|implementation handoff|review handoff|delegated agent instructions|task wrapper)\b/i.test(rawText)) {
+    return decision("temporary_instruction", 0.97, "task", text, ["operational_wrapper"]);
   }
   if (/\b(?:the article|the documentation|repository documentation|the source|the paper)\s+(?:says|states|recommends|discusses)\b/i.test(text)) {
     return decision("not_memory", 0.95, "temporary", text, ["quoted_or_third_party_guidance"]);

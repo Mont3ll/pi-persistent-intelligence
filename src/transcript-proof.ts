@@ -3,6 +3,7 @@ import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readS
 import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { resolveProjectIdentity } from "./profile";
+import { assessOriginalTurnAutoEligibility, classifyCaptureIntent } from "./capture-intent";
 import type { CaptureCandidate, EvidenceRecord } from "./types";
 
 const MAX_TRANSCRIPT_BYTES = 32 * 1024 * 1024;
@@ -33,6 +34,9 @@ export interface TranscriptProofResult {
   matched_session_id?: string;
   matched_user_turn_id?: string;
   method?: "unique_user_message_hash";
+  /** Ephemeral semantic assessment of the full source turn, not persisted proof. */
+  semantic_auto_eligible?: boolean;
+  semantic_hold_reason?: string;
 }
 
 export interface TranscriptDiscoveryIndex {
@@ -319,9 +323,17 @@ export function verifyCandidateTranscriptSource(
       || excerpt !== candidate.text
       || excerpt.length !== source.persisted_excerpt_character_count
       || evidence.source_summary !== excerpt) return held("source_excerpt_mismatch");
+    const originalIntent = classifyCaptureIntent(full);
+    const semantic = assessOriginalTurnAutoEligibility(full);
+    const endorsedProjectRule = semantic.eligible
+      && originalIntent.intent === candidate.capture_intent
+      && target.type === "project"
+      && candidate.scope_targets?.length === 1;
     return {
       verified: true,
       reason: "verified",
+      semantic_auto_eligible: endorsedProjectRule,
+      semantic_hold_reason: endorsedProjectRule ? undefined : semantic.eligible ? "intent_mismatch" : semantic.reason,
       source_hash: source.original_message_sha256,
       matched_session_id: source.session_id,
       matched_user_turn_id: turns[0]!.turnId,
