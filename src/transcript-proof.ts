@@ -343,3 +343,22 @@ export function verifyCandidateTranscriptSource(
     return held("invalid_transcript");
   }
 }
+
+/** Fresh source check for automatic capture, irrespective of evidence count. */
+export function verifyAutoCaptureSource(candidate: CaptureCandidate, records: readonly EvidenceRecord[], options: TranscriptProofOptions = {}): boolean {
+  if (!candidate.capture_source || !candidate.capture_intent) return false;
+  if (candidate.evidence_refs.length < 1 || !candidate.evidence_ids
+    || candidate.evidence_ids.length !== candidate.evidence_refs.length
+    || candidate.evidence_refs.some(id => !candidate.evidence_ids!.includes(id))) return false;
+  const source = candidate.capture_source;
+  const matches = records.filter(e => candidate.evidence_refs.includes(e.id)
+    && e.source_ref === candidate.source.ref
+    && e.source_session_id === source.session_id
+    && e.source_turn_id === source.turn_id
+    && e.source_message_sha256 === source.original_message_sha256
+    && e.source_summary === candidate.text);
+  if (matches.length !== 1) return false;
+  const single = { ...candidate, evidence_refs: [matches[0]!.id], evidence_ids: [matches[0]!.id] };
+  const proof = verifyCandidateTranscriptSource(single, matches[0]!, options);
+  return proof.verified && proof.semantic_auto_eligible === true;
+}
