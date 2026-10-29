@@ -48,6 +48,30 @@ function isolatedOriginal(message: string, optIn = true) {
   return { root, captured, sessionFile, configPath, curate, trustedTranscriptOptions };
 }
 
+/**
+ * Make a real candidate eligible for a curator proposal through the normal
+ * two-reference floor. The second reference is *not* original user authority:
+ * it only makes the held operation reachable by a governed attempt.
+ */
+function atEvidenceFloor(f: ReturnType<typeof isolatedOriginal>): void {
+  const candidate = listCandidates(f.root)[0];
+  expect(candidate).toBeDefined();
+  if (!candidate) throw new Error("Expected a persisted capture candidate");
+  const first = readEvidenceRecords(f.root).find(e => e.id === candidate.evidence_refs[0]);
+  expect(first).toBeDefined();
+  if (!first) throw new Error("Expected captured source evidence");
+  const second = appendEvidenceRecord(f.root, {
+    ...first, id: "r4-independent-test-reference", source_kind: "test_result",
+    source_ref: "test:corroborating-reference", source_session_id: undefined,
+    source_turn_id: undefined, source_message_sha256: undefined,
+    source_identity_quality: undefined, source_transcript_verified: undefined,
+  });
+  replaceCandidates(f.root, [{
+    ...candidate, evidence_refs: [first.id, second.id],
+    evidence_ids: [first.id, second.id],
+  }]);
+}
+
 describe("R4 PR1 original-turn semantic authority safety", () => {
   for (const [index, message] of nondurableSourceControls.entries()) {
     test("nondurable source case " + (index + 1) + " never auto-applies", () => {
@@ -195,6 +219,7 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     expect(f.captured.candidates_created).toBe(1);
     expect(candidates).toHaveLength(1);
     replaceCandidates(f.root, [{ ...candidates[0]!, promotion_eligibility: "auto_candidate" }]);
+    atEvidenceFloor(f);
     const path = join(f.root, "memory", "evidence.jsonl");
     const forged = readFileSync(path, "utf8").trim().split("\n").map((line) =>
       JSON.stringify({ ...JSON.parse(line), source_transcript_verified: true }));
@@ -202,6 +227,7 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     const patch = f.curate();
     expect(patch.ops.filter((op) => op.default_selected)).toHaveLength(0);
     expect(patch.ops.length).toBeGreaterThan(0);
+    expect(patch.ops.every(op => op.default_selected === false)).toBe(true);
     const result = applyPatch(f.root, patch, {
       selectedOpIds: patch.ops.map((op) => op.op_id),
       now: "2026-10-29T08:03:00Z", trustedTranscriptOptions: f.trustedTranscriptOptions,
