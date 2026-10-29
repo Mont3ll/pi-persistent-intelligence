@@ -4,7 +4,7 @@ import { addMemoryRecordFromPatch, loadAllRecords, PATCH_APPLY_CONTEXT, updateMe
 import { listCandidates, updateCandidateStatus } from "./inbox";
 import { classifyCaptureIntent } from "./capture-intent";
 import { decideTrustedAutoEvidenceEligibility } from "./auto-evidence-policy";
-import type { TranscriptProofOptions } from "./transcript-proof";
+import { verifyAutoCaptureSource, type TranscriptProofOptions } from "./transcript-proof";
 import { loadConfig } from "./config";
 import { attachVerification } from "./verifier";
 import { applyCandidateMatch } from "./matching";
@@ -74,6 +74,10 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
       // A proposal's default_selected flag or prior verified marker is not
       // sufficient when its underlying evidence/configuration has changed.
       const cfg = loadConfig(root);
+      if ((mode === "auto" || !explicitlySelected) && candidate.capture_source
+        && !verifyAutoCaptureSource(candidate, readEvidenceRecords(root), proofOptions)) {
+        return reject("capture_policy_hold", `Candidate ${candidate.id} lacks fresh endorsed original-turn proof.`);
+      }
       const referenceFloor = cfg.curator.minEvidenceCount;
       if (candidate.evidence_refs.length < referenceFloor && (mode === "auto" || !explicitlySelected)) {
         const evidenceDecision = decideTrustedAutoEvidenceEligibility(candidate, readEvidenceRecords(root), cfg.curator, proofOptions);
