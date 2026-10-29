@@ -133,13 +133,25 @@ export function assessOriginalTurnAutoEligibility(rawText: string): OriginalTurn
   // A durable-sounding sentence inside a panel, handoff or narrated task is
   // not a directly endorsed project rule. Require the original *opening* to
   // declare the project instruction, instead of searching anywhere in a turn.
-  const projectOpening = /^(?:(?:please\s*,?\s*)?(?:(?:for|in|on|within)\s+this\s+(?:project|repository|repo|codebase)|(?:this|the)\s+(?:project|repository|repo|codebase))\b|(?:going forward|from now on)\s*,?\s*(?:(?:for|in|on|within)\s+this\s+(?:project|repository|repo|codebase)|(?:this|the)\s+(?:project|repository|repo|codebase))\b)/i.test(text);
+  const projectOpening = text.match(/^(?:(?:please\s*,?\s*)?(?:(?:for|in|on|within)\s+this\s+(?:project|repository|repo|codebase)|(?:this|the)\s+(?:project|repository|repo|codebase))\b|(?:going forward|from now on)\s*,?\s*(?:(?:for|in|on|within)\s+this\s+(?:project|repository|repo|codebase)|(?:this|the)\s+(?:project|repository|repo|codebase))\b)/i);
   if (!projectOpening) return held("no_direct_project_rule_opening");
+  // A project-scoped opening is context, not endorsement. Only an immediately
+  // following direct imperative or project-convention predicate can qualify.
+  // Reported text ("For this project, the panel says ...") stays review-only
+  // even when its embedded instruction looks durable.
+  const afterProjectOpening = text.slice(projectOpening[0].length).replace(/^\s*,?\s*/, "");
+  if (!/^(?:(?:please\s+)?(?:always|never)\s+)?(?:use|keep|store|run|require|check|verify|build|test|avoid|prefer|ensure|enforce|maintain|do\s+not|don't|don’t)\b|^(?:always\s+)?(?:uses|requires|runs|keeps|stores|checks|verifies|builds|tests|avoids|enforces)\b/i.test(afterProjectOpening)) {
+    return held("project_context_without_direct_endorsement");
+  }
   if (/<(?:file|skill)\b|^\s*(?:#{1,6}\s+|>\s*|[*-]\s+)|\x60{3}/m.test(rawText)) return held("structured_or_quoted_material");
   // Require quote delimiters in a non-word context so contractions such as
   // "don't" or "it's" do not look like quoted external instructions.
   const asciiQuotedSpan = /(?:^|\s|\(|\[|\{)'[^'\r\n]{8,}'(?=$|\s|[.,;:!?)}\]])/.test(text);
-  if (/[“”‘’"]/u.test(text) || /\x60/.test(text) || asciiQuotedSpan
+  // A curly apostrophe inside a word is punctuation, not an opening quote.
+  // Curly single quotes at a token boundary and all double quotes still
+  // require review; this preserves genuine "they’re" / "don’t" corrections.
+  const curlyQuotedMaterial = /(?:^|[^\p{L}\p{N}])[\u2018\u2019]/u.test(text);
+  if (/[“”"]/u.test(text) || curlyQuotedMaterial || /\x60/.test(text) || asciiQuotedSpan
     || /\b(?:quoted|quotation|example|sample|fixture|false[- ]positive|expected classification|transcript excerpt|pasted|the article|the documentation|the source says|the user said|someone said|prompt says|verification handoff|implementation handoff|review handoff|task wrapper|delegated agent instructions)\b/i.test(text)) return held("unendorsed_example_or_quote");
   if (/^(?:verify|reverify|resume|complete|continue|implement|review|run|test|check|fix|task|instructions?|handoff|verification|delegated|agent|assistant|report)\b/i.test(text)
     || /\b(?:this task|this run|this sprint|during this task|stop after the report|do not modify source|only for now|for this response|for this session|temporarily)\b/i.test(text)) {
