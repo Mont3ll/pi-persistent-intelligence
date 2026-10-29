@@ -217,11 +217,15 @@ function candidateToRecord(candidate: CaptureCandidate, now: string, target?: Ca
 function withCurationDiscovery(root: string, options: CurateOptions): CurateOptions {
   if (options.trustedTranscriptOptions?.discoveryIndex) return options;
   const config = loadConfig(root).curator;
-  if (config.sourceAwareAuto !== "transcript-verified-direct-user") return options;
-  // Avoid scanning the session archive when no under-floor NEW candidate exists.
-  const hasUnderfloor = listCandidates(root).some((candidate) =>
-    candidate.status === "new" && Boolean(candidate.capture_source));
-  if (!hasUnderfloor) return options;
+  // Index once only when a candidate could reach the automatic write path.
+  // Default-OFF, single-reference capture still avoids transcript discovery;
+  // at the regular evidence floor, semantic proof is now required regardless
+  // of the source-aware opt-in switch.
+  const needsProof = listCandidates(root).some((candidate) =>
+    candidate.status === "new" && Boolean(candidate.capture_source)
+    && (candidate.evidence_refs.length >= config.minEvidenceCount
+      || config.sourceAwareAuto === "transcript-verified-direct-user"));
+  if (!needsProof) return options;
   return {
     ...options,
     trustedTranscriptOptions: {
