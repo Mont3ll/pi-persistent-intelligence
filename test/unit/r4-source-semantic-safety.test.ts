@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assessOriginalTurnAutoEligibility, classifyCaptureIntent } from "../../src/capture-intent";
 import { processCaptureTurn } from "../../src/capture-coordinator";
+import { appendEvidenceRecord, readEvidenceRecords } from "../../src/evidence";
 import { writeDefaultConfig } from "../../src/config";
 import { curateInbox } from "../../src/curator";
 import { listCandidates, replaceCandidates } from "../../src/inbox";
@@ -110,6 +111,50 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
       });
       expect(result.applied_ops).toEqual([patch.ops[0]!.op_id]);
       expect(loadActiveRecords(f.root)).toHaveLength(1);
+    });
+  }
+
+  test("two references never override a nonendorsed original or a missing transcript", () => {
+    const text = "For this project, always use amber labels. This is not an endorsed standing policy.";
+    const f = isolatedOriginal(text);
+    const original = listCandidates(f.root)[0];
+    expect(original).toBeDefined();
+    const first = readEvidenceRecords(f.root).find((e) => e.id === original!.evidence_refs[0])!;
+    const second = appendEvidenceRecord(f.root, { ...first, id: "independent-review-reference",
+      source_kind: "artifact", source_ref: "test:separate-evidence",
+      source_session_id: undefined, source_turn_id: undefined,
+      source_message_sha256: undefined, source_identity_quality: undefined });
+    replaceCandidates(f.root, [{ ...original!, evidence_refs: [first.id, second.id],
+      evidence_ids: [first.id, second.id], promotion_eligibility: "auto_candidate" }]);
+    const patch = f.curate();
+    expect(patch.ops.filter(op => op.default_selected)).toHaveLength(0);
+    if (patch.ops.length) {
+      const forced = applyPatch(f.root, patch, {
+        selectedOpIds: patch.ops.map(op => op.op_id),
+        now: "2026-10-29T08:04:00Z", trustedTranscriptOptions: f.trustedTranscriptOptions,
+      });
+      expect(forced.applied_ops).toHaveLength(0);
+    }
+    expect(loadActiveRecords(f.root)).toHaveLength(0);
+  });
+
+  test("curly-apostrophe memory opt-out does not persist a candidate", () => {
+    const f = isolatedOriginal("Don’t remember this: This repository always uses amber icons.");
+    expect(f.captured.candidates_created).toBe(0);
+    expect(listCandidates(f.root)).toHaveLength(0);
+  });
+
+  for (const text of [
+    "For this project, always use amber labels. This is not an endorsed standing policy.",
+    "For this project, always use amber labels only if the green fixture passes.",
+    "For this repository, always use amber labels across all repositories.",
+  ]) {
+    test("additional semantic negative is held: " + text.slice(-35), () => {
+      const f = isolatedOriginal(text);
+      expect(assessOriginalTurnAutoEligibility(text).eligible).toBe(false);
+      const patch = f.curate();
+      expect(patch.ops.filter(op => op.default_selected)).toHaveLength(0);
+      expect(loadActiveRecords(f.root)).toHaveLength(0);
     });
   }
 
