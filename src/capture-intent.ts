@@ -145,6 +145,23 @@ export function assessOriginalTurnAutoEligibility(rawText: string): OriginalTurn
   if (!/^(?:(?:please\s+)?(?:always|never)\s+)?(?:use|keep|store|run|require|check|verify|build|test|avoid|prefer|ensure|enforce|maintain|do\s+not|don't|don’t)\b|^(?:always\s+)?(?:uses|requires|runs|keeps|stores|checks|verifies|builds|tests|avoids|enforces)\b/i.test(afterProjectOpening)) {
     return held("project_context_without_direct_endorsement");
   }
+  // PR1 is a *positive* authority gate, not a claim to understand every
+  // possible English temporal clause. The preceding parser can authenticate a
+  // direct project instruction, but it must not authorize unknown additions.
+  // Any contextual qualifier in its remainder requires review until PR3 can
+  // extract source-backed propositions and identify their applicability.
+  //
+  // Do not mistake a durable generic use ("for integration tests", "before
+  // publishing") for one-off authority. We reject deictic, bounded, conditional
+  // or purposive scope instead of enumerating finite phrasings of "test only".
+  const unqualifiedRule = afterProjectOpening.replace(/[.!?]$/, "").trim();
+  if (!unqualifiedRule || unqualifiedRule.split(/\s+/).length > 24
+    || /\b(?:only|solely|merely|just|until|during|within|throughout|pending|unless|while|whenever|once|temporary|temporarily|one[- ]off|one[- ]time|duration|remainder|remaining|rest\s+of|trial|experiment|session|sprint|task|test[- ]only|expiry|expiration|conclusion|deadline)\b/i.test(unqualifiedRule)
+    || /\b(?:this|that|these|those|current)\b/i.test(unqualifiedRule)
+    || /\b(?:for|in|on|at|over|through)\s+(?:an?|the|one|each\s+of\s+the)\b/i.test(unqualifiedRule)
+    || /\b(?:so\s+that|in\s+order\s+to|according\s+to|as\s+reported\s+by|for\s+(?:diagnostic|test|trial)\s+purposes|to\s+(?:collect|validate)\s+diagnostics)\b/i.test(unqualifiedRule)) {
+    return held("qualified_rule_requires_manual_review");
+  }
   if (/<(?:file|skill)\b|^\s*(?:#{1,6}\s+|>\s*|[*-]\s+)|\x60{3}/m.test(rawText)) return held("structured_or_quoted_material");
   // Require quote delimiters in a non-word context so contractions such as
   // "don't" or "it's" do not look like quoted external instructions.
