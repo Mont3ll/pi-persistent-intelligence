@@ -103,6 +103,42 @@ describe("R4 temporal qualifier grammar symmetry", () => {
     expect(checked).toBe(96);
   });
 
+  test("bounded purpose continuations, modified durations and perfect-aspect expiry are temporary", () => {
+    let checked = 0;
+    const periods = ["this test", "the current trial", "this one experiment", "current exercise"];
+    const endings = [
+      (period: string) => "only within " + period + " in order to collect diagnostics",
+      (period: string) => "for " + period + " only so that we can collect diagnostics",
+      (period: string) => "during " + period + " only to collect diagnostics",
+      (period: string) => "for the full duration of " + period,
+      (period: string) => "for the entire duration of " + period,
+      (period: string) => "for the remaining duration of " + period,
+      (period: string) => "until " + period + " has ended",
+      (period: string) => "until " + period + " has finished",
+      (period: string) => "until " + period + " has concluded",
+      (period: string) => "until " + period + " is complete",
+      (period: string) => "until " + period + " is over",
+    ];
+    for (const period of periods) {
+      for (const makeEnding of endings) {
+        const statement = "For this project, always run the sapphire release audit " + makeEnding(period) + ".";
+        expect(hasExplicitTaskOnlyScope(statement)).toBe(true);
+        const intent = classifyCaptureIntent(statement);
+        expect(intent.intent).toBe("temporary_instruction");
+        expect(intent.durability).toBe("task");
+        expect(assessOriginalTurnAutoEligibility(statement).eligible).toBe(false);
+        const worth = scoreMemoryWorth({
+          observation: statement, explicitUserRequest: true,
+          recurrenceCount: 10, operationalImpact: 1, evidenceStrength: 1,
+          scope: "project", durability: "project",
+        });
+        expect(worth.decision).toBe("daily_only");
+        checked++;
+      }
+    }
+    expect(checked).toBe(44);
+  });
+
   test("duration mentions and expiry conditions in lasting workflows are not one-off scope", () => {
     const controls = [
       "For this project, always collect diagnostics for the current test suite.",
