@@ -111,6 +111,10 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     "For this project, always run the sapphire release audit for this test only; this is a one-off instruction.",
     "For this repository, always run sapphire verification in this test only; this is a single-use instruction.",
     "For this project, always run sapphire verification just for this exercise.",
+    "For this project, always run the sapphire release audit for the current test only.",
+    "For this project, always run the sapphire release audit only for the current test.",
+    "For this project, always run the sapphire release audit during the current trial only.",
+    "For this project, always run the sapphire release audit only during the current trial.",
   ]) {
     test("task-only qualifier outranks native durable capture: " + message.slice(-36), () => {
       const intent = classifyCaptureIntent(message);
