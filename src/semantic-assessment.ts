@@ -35,6 +35,58 @@ const obj = (x: unknown): x is Record<string, unknown> => x !== null && typeof x
 const choice = (x: unknown, opts: readonly string[]): boolean => typeof x === "string" && opts.includes(x);
 const abstain = (reason: string): SemanticReview => Object.freeze({ status: "abstain", reason, canApply: false });
 
+/**
+ * Capture a single inert snapshot before checking any untrusted properties.
+ * Never invoke model-owned accessors or retain references to model-owned
+ * objects. Unlike checking then copying property reads, descriptors are
+ * inspected once and their data values are recursively detached.
+ *
+ * A hostile in-process adapter may still execute arbitrary code in its own
+ * process: this is a consistency boundary, NOT a JavaScript or OS sandbox.
+ */
+function snapshotModelData(raw: unknown): unknown {
+  const seen = new WeakSet<object>();
+  let remainingFields = 96;
+  const copy = (value: unknown, depth: number): unknown => {
+    if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "object" || depth > 4 || seen.has(value)) throw new Error("invalid_model_value");
+    seen.add(value);
+    const array = Array.isArray(value);
+    const proto = Object.getPrototypeOf(value);
+    if (array ? proto !== Array.prototype : proto !== Object.prototype && proto !== null)
+      throw new Error("invalid_model_prototype");
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(descriptors);
+    remainingFields -= keys.length;
+    if (remainingFields < 0 || keys.some(key => typeof key !== "string"))
+      throw new Error("invalid_model_keys");
+    if (array) {
+      const length = descriptors.length;
+      if (!length || !Object.hasOwn(length, "value") || typeof length.value !== "number"
+        || !Number.isSafeInteger(length.value) || length.value > 12
+        || length.value < 0 || keys.length !== length.value + 1)
+        throw new Error("invalid_model_array");
+      const values: unknown[] = [];
+      for (let i = 0; i < length.value; i++) {
+        const field = descriptors[String(i)];
+        if (!field || !Object.hasOwn(field, "value")) throw new Error("accessor_or_sparse_array");
+        values.push(copy(field.value, depth + 1));
+      }
+      return values;
+    }
+    const result: Record<string, unknown> = Object.create(null);
+    for (const key of keys as string[]) {
+      const field = descriptors[key];
+      if (!field || !Object.hasOwn(field, "value")) throw new Error("accessor_not_allowed");
+      result[key] = copy(field.value, depth + 1);
+    }
+    return result;
+  };
+  return copy(raw, 0);
+}
+
+
 export function semanticRequest(turn: OriginalTurn): SemanticRequest {
   if (!turn.sessionId || !turn.turnId || !turn.text || turn.text.length > 32_000)
     throw new Error("invalid_original_turn");
@@ -59,13 +111,14 @@ export function semanticRequest(turn: OriginalTurn): SemanticRequest {
 }
 
 /** Check against an independent, private anchor and clone ALL untrusted outputs. */
-export function validateSemanticProposal(req: SemanticRequest, data: unknown): SemanticReview {
+export function validateSemanticProposal(req: SemanticRequest, raw: unknown): SemanticReview {
   try {
     const anchor = originalAnchors.get(req);
     if (!anchor || req.source.text !== anchor.text || req.source.hash !== anchor.hash
       || req.source.sessionId !== anchor.sessionId || req.source.turnId !== anchor.turnId
       || req.source.role !== "user" || hash(anchor.text) !== anchor.hash)
       return abstain("untrusted_source_anchor");
+    const data = snapshotModelData(raw);
     if (!obj(data) || Object.keys(data).some(k => !["version", "sourceHash", "outcome", "propositions"].includes(k))
       || data.version !== 1 || data.sourceHash !== anchor.hash
       || !choice(data.outcome, ["proposed", "abstain"])
@@ -105,7 +158,7 @@ export function validateSemanticProposal(req: SemanticRequest, data: unknown): S
       canApply: false,
     });
   } catch {
-    // Untrusted property getters and other malformed objects must abstain.
+    // Untrusted getters, proxies, cyclic and non-JSON objects must abstain.
     return abstain("malformed_assessment");
   }
 }
