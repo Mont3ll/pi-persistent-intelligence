@@ -98,6 +98,8 @@ observation or correction
 
 Durable memory changes are patch-governed. No record is silently mutated. Low-trust sources, generated content, repository text, contested records, and L1 identity proposals require review. Quality dashboards, relationship analysis, recall effectiveness, patch simulation, and governance reports are review-only unless you explicitly apply a patch.
 
+**Source-aware safety:** Automatic retention from a single authenticated Pi user turn is opt-in and remains disabled by default. Source verification confirms transcript origin, not whether the words express an endorsed lasting instruction. The R4 safety gate independently checks the complete original turn during curation and governed application; short, standalone project rules with explicit project intent can qualify, while task handoffs, quotes, opt-outs, long mixed turns, cross-project rules and uncertain scope remain unpromoted or held for review. The original source must still be present and unchanged at application. This conservative gate does not yet extract multiple propositions from long messages.
+
 Legacy provenance backfill and inquiry staleness are preview-first migrations: review their fingerprint before apply, which creates backups and audit reports. Explicit reinforcement records user confirmation without directly changing confidence or stability; implicit success requires observable successful execution rather than mere exposure.
 
 ## Context-sensitive preference capture

@@ -1,5 +1,6 @@
 import { scanSecrets } from "./secret-scanner";
 import type { MemoryWorthDecision } from "./types";
+import { hasExplicitTaskOnlyScope } from "./temporary-scope";
 
 export interface MemoryWorthSignals {
   user_explicitness?: number;
@@ -52,7 +53,8 @@ export function scoreMemoryWorth(input: MemoryWorthInput): MemoryWorthScore {
   const duplicate = (input.existingStatements ?? []).some((s) => similarity(observation, s) >= 0.82);
   const secretScan = scanSecrets(observation);
   const sensitivity = secretScan.hasHighConfidenceSecret ? 1 : secretScan.findings.length ? 0.6 : 0;
-  const temporary = input.durability === "temporary" || input.durability === "task" || /\b(today|right now|temporary|for now|waiting for|this session|this task|for this task)\b/.test(lower);
+  const taskOnly = hasExplicitTaskOnlyScope(observation);
+  const temporary = taskOnly || input.durability === "temporary" || input.durability === "task" || /\b(today|right now|temporary|for now|waiting for|this session|this task|for this task)\b/.test(lower);
   const ambiguousLanguage = /\b(unclear|something|stuff|maybe|probably|unspecified|not sure)\b/.test(lower);
   const vague = (tokens.length < 5 && !explicit) || ambiguousLanguage;
 
@@ -73,6 +75,7 @@ export function scoreMemoryWorth(input: MemoryWorthInput): MemoryWorthScore {
   if (duplicate) reasons.push("already_represented");
   if (sensitivity > 0.8 && !input.explicitUserRequest) reasons.push("sensitive_without_explicit_request");
   if (temporary) reasons.push("temporary_or_ephemeral");
+  if (taskOnly) reasons.push("explicit_task_only_scope");
   if (vague) reasons.push("underspecified");
 
   const worth = clamp(
@@ -90,7 +93,7 @@ export function scoreMemoryWorth(input: MemoryWorthInput): MemoryWorthScore {
 
   let decision: MemoryWorthDecision;
   if (trivial || duplicate || (sensitivity > 0.8 && !input.explicitUserRequest)) decision = "reject";
-  else if (temporary && worth < 0.62) decision = "daily_only";
+  else if (taskOnly || (temporary && worth < 0.62)) decision = "daily_only";
   else if (!explicit && (signals.operational_impact ?? 0) >= 0.8 && (vague || (signals.scope_clarity ?? 0) < 0.5)) {
     decision = "inquiry";
     reasons.push("important_but_underspecified");

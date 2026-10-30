@@ -37,6 +37,55 @@ describe("memory-worth scoring", () => {
     expect(decision.signals.sensitivity_risk).toBeGreaterThan(0.8);
   });
 
+  for (const observation of [
+    "For this project, always run the sapphire release audit for this test only; this is a one-off instruction.",
+    "For this repository, always verify release manifests in this test only; this is a single-use instruction.",
+    "For this project, always run the sapphire release audit just for this exercise.",
+    "For this project, always run the sapphire release audit for the current test only.",
+    "For this project, always run the sapphire release audit only for the current test.",
+    "For this project, always run the sapphire release audit during the current trial only.",
+    "For this project, always run the sapphire release audit only during the current trial.",
+    "For this project, always run the sapphire release audit only within the current trial.",
+    "For this project, always run the sapphire release audit within the current trial only.",
+    "For this project, always run the sapphire release audit only within the current trial in order to collect diagnostics.",
+    "For this project, always run the sapphire release audit for this test only so that we can collect diagnostics.",
+    "For this project, always run the sapphire release audit until the current trial has ended.",
+    "For this project, always run the sapphire release audit for the full duration of the current trial.",
+  ]) {
+    test("explicitly test-only scope outweighs a high durable score: " + observation.slice(-35), () => {
+      const decision = scoreMemoryWorth({
+        observation, explicitUserRequest: true, recurrenceCount: 3,
+        operationalImpact: 1, evidenceStrength: 1, durability: "project",
+        scope: "project",
+      });
+      expect(decision.decision).toBe("daily_only");
+      expect(decision.reasons).toContain("explicit_task_only_scope");
+      expect(decision.reasons).toContain("temporary_or_ephemeral");
+      expect(decision.signals.future_reuse_likelihood).toBe(0.2);
+    });
+  }
+
+  test("permanent testing conventions remain durable rather than task-only", () => {
+    const decision = scoreMemoryWorth({
+      observation: "For this project, always run Bun tests before each release.",
+      explicitUserRequest: true, durability: "project", scope: "project",
+    });
+    expect(decision.decision).toBe("candidate");
+    expect(decision.reasons).not.toContain("explicit_task_only_scope");
+    const currentRunConvention = scoreMemoryWorth({
+      observation: "This repository always verifies the current test results before publishing.",
+      explicitUserRequest: true, durability: "project", scope: "project",
+    });
+    expect(currentRunConvention.decision).toBe("candidate");
+    expect(currentRunConvention.reasons).not.toContain("explicit_task_only_scope");
+    const scopeVsContent = scoreMemoryWorth({
+      observation: "This repository always tests within the current working directory.",
+      explicitUserRequest: true, durability: "project", scope: "project",
+    });
+    expect(scopeVsContent.decision).toBe("candidate");
+    expect(scopeVsContent.reasons).not.toContain("explicit_task_only_scope");
+  });
+
   test("high-confidence repeated workflow becomes candidate", () => {
     const decision = scoreMemoryWorth({ observation: "Always run bun test and bun run typecheck before committing.", recurrenceCount: 3, operationalImpact: 0.8, evidenceStrength: 0.9, scope: "project" });
     expect(decision.decision).toBe("candidate");

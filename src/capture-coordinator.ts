@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendSessionActivity, collectSessionActivity, type CaptureActivityAction } from "./capture-activity";
 import { hasProcessedMessage, readCaptureCheckpoint, writeCaptureCheckpoint } from "./capture-checkpoint";
-import { classifyCaptureIntent } from "./capture-intent";
+import { assessOriginalTurnAutoEligibility, classifyCaptureIntent } from "./capture-intent";
 import { buildCaptureSourceAttribution } from "./capture-provenance";
 import { appendOrReinforceCandidate, findExactActiveCanonical, normalizedPreferenceKey } from "./capture-recurrence";
 import { resolveCaptureScopes } from "./capture-scope";
@@ -197,7 +197,11 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
           worth_score: worth.worth_score,
           worth_reasons: worth.reasons,
           ...trust,
-          promotion_eligibility: globalTarget(scopes) ? "review_only" : trust.promotion_eligibility,
+          // Persist a review hold as a UI hint, never an affirmative semantic
+          // permission. Original-turn authority is independently rechecked
+          // at curation and governed application.
+          promotion_eligibility: globalTarget(scopes) || !assessOriginalTurnAutoEligibility(input.message).eligible
+            ? "review_only" : trust.promotion_eligibility,
           capture_group_id: `capture_group_${groupHash}`,
           capture_intent: intent.intent,
           scope_targets: scopes,

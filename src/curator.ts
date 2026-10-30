@@ -8,7 +8,7 @@ import { isAutoApplyEligibleCandidate } from "./trust";
 import { classifyCaptureIntent } from "./capture-intent";
 import { loadConfig } from "./config";
 import { decideTrustedAutoEvidenceEligibility, type AutoEvidenceDecision } from "./auto-evidence-policy";
-import { createTranscriptDiscoveryIndex, type TranscriptProofOptions } from "./transcript-proof";
+import { createTranscriptDiscoveryIndex, isCapturePipelineCandidate, verifyAutoCaptureSource, type TranscriptProofOptions } from "./transcript-proof";
 import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
 import { createInquiryFromCandidate } from "./inquiries";
@@ -217,11 +217,15 @@ function candidateToRecord(candidate: CaptureCandidate, now: string, target?: Ca
 function withCurationDiscovery(root: string, options: CurateOptions): CurateOptions {
   if (options.trustedTranscriptOptions?.discoveryIndex) return options;
   const config = loadConfig(root).curator;
-  if (config.sourceAwareAuto !== "transcript-verified-direct-user") return options;
-  // Avoid scanning the session archive when no under-floor NEW candidate exists.
-  const hasUnderfloor = listCandidates(root).some((candidate) =>
-    candidate.status === "new" && candidate.evidence_refs.length < config.minEvidenceCount);
-  if (!hasUnderfloor) return options;
+  // Index once only when a candidate could reach the automatic write path.
+  // Default-OFF, single-reference capture still avoids transcript discovery;
+  // at the regular evidence floor, semantic proof is now required regardless
+  // of the source-aware opt-in switch.
+  const needsProof = listCandidates(root).some((candidate) =>
+    candidate.status === "new" && Boolean(candidate.capture_source)
+    && (candidate.evidence_refs.length >= config.minEvidenceCount
+      || config.sourceAwareAuto === "transcript-verified-direct-user"));
+  if (!needsProof) return options;
   return {
     ...options,
     trustedTranscriptOptions: {
@@ -364,12 +368,16 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
       const evidenceDecision = sourceProofs.get(rawCandidate)
         ?? decideTrustedAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig, options.trustedTranscriptOptions);
       const evidenceCountMeetsConfiguredFloor = evidenceDecision.eligible;
+      const semanticAllowed = !isCapturePipelineCandidate(candidate, existingEvidence)
+        || verifyAutoCaptureSource(candidate, existingEvidence, options.trustedTranscriptOptions);
       const autoApplyEligible = evidenceCountMeetsConfiguredFloor
+        && semanticAllowed
         && !isGlobalPreference
         && currentPolicyAllowsAutoApply(candidate)
         && isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
       const holdCodes: string[] = [];
       if (!evidenceCountMeetsConfiguredFloor) holdCodes.push("below_configured_evidence_floor");
+      if (!semanticAllowed) holdCodes.push("original_source_semantic_hold");
       if (isGlobalPreference) holdCodes.push("global_preference_review");
       if (!currentPolicyAllowsAutoApply(candidate)) holdCodes.push("current_capture_policy");
       if (candidate.verification_status === "review_required") holdCodes.push("verification_review_required");

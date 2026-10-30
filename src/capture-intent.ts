@@ -1,4 +1,5 @@
 import type { CaptureIntent } from "./types";
+import { hasExplicitTaskOnlyScope } from "./temporary-scope";
 
 export interface CaptureIntentDecision {
   intent: CaptureIntent;
@@ -94,16 +95,141 @@ export function isSyntheticCaptureContext(rawText: string): boolean {
   return /^\s*<skill(?:\s|>)/i.test(rawText);
 }
 
+
+/**
+ * An explicit request not to remember the current material outranks any
+ * durable-sounding words inside that material. Scope this to deictic requests
+ * ("this", "that", "the above"), not general rules such as "never store tokens".
+ */
+export function hasExplicitMemoryOptOut(rawText: string): boolean {
+  const text = rawText.replace(/[\u2018\u2019]/g, "'");
+  return /\b(?:do not|don't|please don't|never)\s+(?:remember|retain|store|save|capture|record|memorise|memorize|add)\s+(?:any\s+of\s+)?(?:this|that|it|these|the\s+(?:above|following|preceding|current)\s+(?:content|instructions|message|text))\b[^.!?\n]{0,90}\b(?:memory|memories|preference|long[- ]term)?/i.test(text)
+    || /\b(?:this|the above|the following)\s+(?:is\s+)?(?:not|isn't)\s+(?:for|to be|a)\s+(?:long[- ]term\s+)?memor(?:y|ies)\b/i.test(text)
+    || /\b(?:do not|don't)\s+(?:treat|use)\s+(?:this|that|it)\s+as\s+(?:a\s+)?(?:durable\s+|long[- ]term\s+)?(?:memory|preference)\b/i.test(text)
+    || /\bforget\s+(?:this|that|what i just said)\b/i.test(text);
+}
+
+export interface OriginalTurnAutoEligibility {
+  eligible: boolean;
+  reason: string;
+}
+
+/**
+ * The single-transcript exception is narrower than manual review. Only a
+ * short, standalone, directly endorsed, explicitly project-scoped rule can
+ * cross this boundary. Until proposition/span extraction exists, long or
+ * mixed turns must not use an unrelated 300-character prefix as authority.
+ *
+ * This is recalculated from the original Pi transcript during curation AND
+ * governed apply. It is not a persisted candidate flag or a proof of source.
+ */
+export function assessOriginalTurnAutoEligibility(rawText: string): OriginalTurnAutoEligibility {
+  const text = rawText.trim();
+  const held = (reason: string): OriginalTurnAutoEligibility => ({ eligible: false, reason });
+  if (hasExplicitMemoryOptOut(rawText)) return held("explicit_memory_opt_out");
+  if (hasExplicitTaskOnlyScope(rawText)) return held("explicit_task_only_scope");
+  if (!text || text.length > 300 || /[\r\n]/.test(text)) return held("unextracted_or_mixed_turn");
+  // Whole-turn prefix capture cannot safely extract one lasting statement
+  // from a mixed multi-sentence message. Review until source-span extraction.
+  if (/[.!?]\s+\S/.test(text)) return held("multiple_sentences_require_review");
+  // A durable-sounding sentence inside a panel, handoff or narrated task is
+  // not a directly endorsed project rule. Require the original *opening* to
+  // declare the project instruction, instead of searching anywhere in a turn.
+  const projectOpening = text.match(/^(?:(?:please\s*,?\s*)?(?:(?:for|in|on|within)\s+this\s+(?:project|repository|repo|codebase)|(?:this|the)\s+(?:project|repository|repo|codebase))\b|(?:going forward|from now on)\s*,?\s*(?:(?:for|in|on|within)\s+this\s+(?:project|repository|repo|codebase)|(?:this|the)\s+(?:project|repository|repo|codebase))\b)/i);
+  if (!projectOpening) return held("no_direct_project_rule_opening");
+  // A project-scoped opening is context, not endorsement. Only an immediately
+  // following direct imperative or project-convention predicate can qualify.
+  // Reported text ("For this project, the panel says ...") stays review-only
+  // even when its embedded instruction looks durable.
+  const afterProjectOpening = text.slice(projectOpening[0].length).replace(/^\s*,?\s*/, "");
+  if (!/^(?:(?:please\s+)?(?:always|never)\s+)?(?:use|keep|store|run|require|check|verify|build|test|avoid|prefer|ensure|enforce|maintain|do\s+not|don't|don’t)\b|^(?:always\s+)?(?:uses|requires|runs|keeps|stores|checks|verifies|builds|tests|avoids|enforces)\b/i.test(afterProjectOpening)) {
+    return held("project_context_without_direct_endorsement");
+  }
+  // PR1 is a *positive* authority gate, not a claim to understand every
+  // possible English temporal clause. The preceding parser can authenticate a
+  // direct project instruction, but it must not authorize unknown additions.
+  // Any contextual qualifier in its remainder requires review until PR3 can
+  // extract source-backed propositions and identify their applicability.
+  //
+  // Do not mistake a durable generic use ("for integration tests", "before
+  // publishing") for one-off authority. We reject deictic, bounded, conditional
+  // or purposive scope instead of enumerating finite phrasings of "test only".
+  const unqualifiedRule = afterProjectOpening.replace(/[.!?]$/, "").trim();
+  if (!unqualifiedRule || unqualifiedRule.split(/\s+/).length > 24
+    || /\b(?:only|solely|merely|just|until|during|within|throughout|pending|unless|while|whenever|once|temporary|temporarily|one[- ]off|one[- ]time|duration|remainder|remaining|rest\s+of|trial|experiment|session|sprint|task|test[- ]only|expiry|expiration|conclusion|deadline)\b/i.test(unqualifiedRule)
+    || /\b(?:this|that|these|those|current)\b/i.test(unqualifiedRule)
+    || /\b(?:for|in|on|at|over|through)\s+(?:an?|the|one|each\s+of\s+the)\b/i.test(unqualifiedRule)
+    || /\b(?:so\s+that|in\s+order\s+to|according\s+to|as\s+reported\s+by|for\s+(?:diagnostic|test|trial)\s+purposes|to\s+(?:collect|validate)\s+diagnostics)\b/i.test(unqualifiedRule)) {
+    return held("qualified_rule_requires_manual_review");
+  }
+  if (/<(?:file|skill)\b|^\s*(?:#{1,6}\s+|>\s*|[*-]\s+)|\x60{3}/m.test(rawText)) return held("structured_or_quoted_material");
+  // Require quote delimiters in a non-word context so contractions such as
+  // "don't" or "it's" do not look like quoted external instructions.
+  const asciiQuotedSpan = /(?:^|\s|\(|\[|\{)'[^'\r\n]{8,}'(?=$|\s|[.,;:!?)}\]])/.test(text);
+  // A curly apostrophe inside a word is punctuation, not an opening quote.
+  // Curly single quotes at a token boundary and all double quotes still
+  // require review; this preserves genuine "they’re" / "don’t" corrections.
+  const curlyQuotedMaterial = /(?:^|[^\p{L}\p{N}])[\u2018\u2019]/u.test(text);
+  if (/[“”"]/u.test(text) || curlyQuotedMaterial || /\x60/.test(text) || asciiQuotedSpan
+    || /\b(?:quoted|quotation|example|sample|fixture|false[- ]positive|expected classification|transcript excerpt|pasted|the article|the documentation|the source says|the user said|someone said|prompt says|verification handoff|implementation handoff|review handoff|task wrapper|delegated agent instructions)\b/i.test(text)) return held("unendorsed_example_or_quote");
+  if (/^(?:verify|reverify|resume|complete|continue|implement|review|run|test|check|fix|task|instructions?|handoff|verification|delegated|agent|assistant|report)\b/i.test(text)
+    || /\b(?:this task|this run|this sprint|during this task|stop after the report|do not modify source|only for now|for this response|for this session|temporarily)\b/i.test(text)) {
+    return held("operational_or_temporary_wrapper");
+  }
+  if (/\b(?:across\s+(?:(?:all|every|our|my|the|any)\s+)?(?:projects?|repositories|repos|codebases)|(?:for|in|on)\s+(?:all|every|any)\s+(?:projects?|repositories|repos|codebases)|regardless\s+of\s+(?:the\s+)?(?:project|repository|repo|codebase)|(?:all\s+my|our|my)\s+(?:projects?|repositories|repos|codebases))\b/i.test(text)) {
+    return held("cross_project_scope_requires_review");
+  }
+  // Without proposition-level applicability, a plain "if" makes the rule
+  // conditional even when the clause appears *before* the project cue.
+  if (/\b(?:if|unless|except|only when|but not when|provided that|as long as|subject to (?:approval|review|confirmation))\b/i.test(text)) return held("conditional_scope_requires_review");
+  // Draft or proposed language is not a user-approved standing decision.
+  // In this capture version the whole turn stays review-only.
+  if (/\b(?:(?:this|that|it|the above)\s+(?:is|was|remains)\s+(?:only\s+|just\s+)?(?:a\s+)?(?:draft|proposal|suggestion|hypothetical|nondecision)|(?:draft|proposal)\s+only|not\s+(?:yet\s+)?(?:a\s+)?(?:final\s+|approved\s+)?decision|no\s+(?:final\s+|approved\s+)?decision\s+(?:was|has been|is)\s+made|not\s+yet\s+(?:decided|approved|adopted|agreed)|(?:still|only)\s+(?:a\s+)?draft|(?:not|never)\s+(?:approved|adopted|endorsed)\s+as\s+(?:a\s+)?(?:policy|decision|rule))\b/i.test(text)) {
+    return held("draft_or_unapproved_decision");
+  }
+
+  // A later disclaimer cannot inherit the authority of an earlier durable-looking clause.
+  // Whole-turn capture is review-only until proposition/span extraction can separate them.
+  if (/\b(?:not\s+(?:(?:an?|the)\s+)?(?:approved|endorsed|standing|permanent|lasting|durable)(?:\s+(?:approved|endorsed|standing|permanent|lasting|durable))*\s+(?:policy|rule|instruction|preference)|not\s+(?:(?:an?|the)\s+)?approved\s+permanent\s+instruction|(?:not|never)\s+(?:meant|intended|approved|endorsed)\s+(?:as|to be)\s+(?:a\s+)?(?:standing|permanent|lasting|durable)|(?:this|that|the above)\s+(?:is\s+)?(?:not|isn't)\s+(?:an?\s+)?(?:approved|standing|durable|lasting|permanent)\s+(?:policy|rule|instruction|preference))\b/i.test(text)) {
+    return held("not_endorsed_as_standing_policy");
+  }
+
+  // The session header proves where the message occurred, not that the user
+  // intended a project rule. A launch-project fallback cannot grant authority.
+  if (!/\b(?:this|the)\s+(?:project|repository|repo|codebase)\b/i.test(text)
+    && !/\b(?:for|in)\s+this\s+(?:project|repository|repo|codebase)\b/i.test(text)) {
+    return held("no_explicit_project_intent");
+  }
+  const intent = classifyCaptureIntent(rawText);
+  if (!["project_convention", "workflow_playbook", "behavior_correction"].includes(intent.intent)
+    || intent.durability !== "project") return held("not_unambiguous_durable_project_rule");
+  return { eligible: true, reason: "explicit_original_project_rule" };
+}
+
 export function classifyCaptureIntent(rawText: string): CaptureIntentDecision {
   const text = normalize(rawText);
   const lower = text.toLowerCase();
   if (!text || text.length < 8) return decision("not_memory", 0, "temporary", text, ["too_short"]);
 
+  if (hasExplicitMemoryOptOut(rawText)) {
+    return decision("not_memory", 0.99, "temporary", text, ["explicit_memory_opt_out"]);
+  }
+  if (hasExplicitTaskOnlyScope(rawText)) {
+    return decision("temporary_instruction", 0.99, "task", text, ["explicit_task_only_scope"]);
+  }
   if (isSyntheticCaptureContext(rawText)) {
     return decision("not_memory", 0.99, "temporary", text, ["synthetic_harness_context"]);
   }
   if (/^(?:task:|your goal is|you are a delegated|you are a subagent|<file name=|# instructions)/i.test(text)) {
     return decision("not_memory", 0.98, "temporary", text, ["task_or_agent_wrapper"]);
+  }
+  if (/^\s*#{1,6}\s*(?:verification|handoff|task|instructions|example|fixture|test plan)\b/im.test(rawText)
+    || /^\s*>\s*(?:going forward|from now on|always|never|this (?:project|repository))\b/im.test(rawText)
+    || /\b(?:false[- ]positive control|expected classification|quoted (?:ui|memory|instruction)|fixture:|example:)\b/i.test(rawText)) {
+    return decision("temporary_instruction", 0.97, "task", text, ["unendorsed_or_operational_material"]);
+  }
+  if (/\b(?:verification handoff|implementation handoff|review handoff|delegated agent instructions|task wrapper)\b/i.test(rawText)) {
+    return decision("temporary_instruction", 0.97, "task", text, ["operational_wrapper"]);
   }
   if (/\b(?:the article|the documentation|repository documentation|the source|the paper)\s+(?:says|states|recommends|discusses)\b/i.test(text)) {
     return decision("not_memory", 0.95, "temporary", text, ["quoted_or_third_party_guidance"]);

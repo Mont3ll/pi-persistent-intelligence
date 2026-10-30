@@ -131,7 +131,7 @@ describe("curation current-policy revalidation", () => {
     expect(selectInboxBatchApplyOpIds(patch, 0.75)).toEqual([]);
   });
 
-  test("keeps currently durable captured corrections auto-eligible", () => {
+  test("holds an unproven conditional capture even with two evidence references", () => {
     const dir = root();
     appendPersistedCaptureCandidate(
       dir,
@@ -148,7 +148,9 @@ describe("curation current-policy revalidation", () => {
 
     expect(patch.ops).toHaveLength(1);
     expect(patch.ops[0].candidate_id).toBe("cap_durable_control");
-    expect(patch.ops[0].default_selected).toBe(true);
-    expect(selectInboxBatchApplyOpIds(patch, 0.75)).toEqual([patch.ops[0].op_id]);
+    // This fabricated fixture has no original-turn proof and contains a condition.
+    // A reference count of two cannot grant automatic semantic authority.
+    expect(patch.ops[0].default_selected).toBe(false);
+    expect(selectInboxBatchApplyOpIds(patch, 0.75)).toEqual([]);
   });
 });
