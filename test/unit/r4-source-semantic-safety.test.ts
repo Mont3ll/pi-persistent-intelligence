@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assessOriginalTurnAutoEligibility, classifyCaptureIntent } from "../../src/capture-intent";
 import { processCaptureTurn } from "../../src/capture-coordinator";
+import { buildCaptureSourceAttribution } from "../../src/capture-provenance";
+import { verifyCandidateTranscriptSource } from "../../src/transcript-proof";
+import { scoreMemoryWorth } from "../../src/memory-worth";
 import { appendEvidenceRecord, readEvidenceRecords } from "../../src/evidence";
 import { writeDefaultConfig } from "../../src/config";
 import { curateInbox } from "../../src/curator";
@@ -70,6 +73,37 @@ function atEvidenceFloor(f: ReturnType<typeof isolatedOriginal>): void {
     ...candidate, evidence_refs: [first.id, second.id],
     evidence_ids: [first.id, second.id],
   }]);
+}
+
+/**
+ * Simulate an earlier source-captured candidate that was persisted before the
+ * task-only classification correction. Its original transcript remains real,
+ * authenticated and semantically task-only; the legacy metadata is positive.
+ */
+function earlierPersistedTaskOnlyOriginal(message: string) {
+  const f = isolatedOriginal(durableProjectControls[0]);
+  const original = listCandidates(f.root)[0];
+  expect(original).toBeDefined();
+  if (!original) throw new Error("Expected a persisted source fixture");
+  const excerpt = message.trim().slice(0, 300).replace(/\s+/g, " ");
+  const source = buildCaptureSourceAttribution("r4-original", "r4-runtime", message, excerpt);
+  replaceCandidates(f.root, [{
+    ...original, text: excerpt, capture_source: source,
+    capture_intent: "project_convention", worth_decision: "candidate",
+    promotion_eligibility: "auto_candidate",
+  }]);
+  const evidencePath = join(f.root, "memory", "evidence.jsonl");
+  const evidenceRows = readEvidenceRecords(f.root).map(row => ({
+    ...row, source_summary: excerpt,
+    source_message_sha256: source.original_message_sha256,
+  }));
+  writeFileSync(evidencePath, evidenceRows.map(row => JSON.stringify(row)).join("\n") + "\n");
+  const transcript = readFileSync(f.sessionFile, "utf8").trim().split("\n").map(row => JSON.parse(row));
+  const user = transcript.find(row => row.type === "message" && row.message?.role === "user");
+  if (!user) throw new Error("Missing fixture user turn");
+  user.message.content = [{ type: "text", text: message }];
+  writeFileSync(f.sessionFile, transcript.map(row => JSON.stringify(row)).join("\n") + "\n");
+  return f;
 }
 
 describe("R4 PR1 original-turn semantic authority safety", () => {
