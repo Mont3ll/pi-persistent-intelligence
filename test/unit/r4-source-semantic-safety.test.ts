@@ -207,6 +207,50 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     expect(loadActiveRecords(f.root)).toHaveLength(1);
   });
 
+  // Hold out unfamiliar contextual/temporal qualifications instead of
+  // teaching one more phrase to the old temporary-scope denylist.
+  for (const message of [
+    "For this project, always run the sapphire release audit for this test only for diagnostic purposes.",
+    "For this project, always run the sapphire release audit only within the current trial solely to collect diagnostics.",
+    "For this project, always run the sapphire release audit until the current trial has been completed.",
+    "For this project, always run the sapphire release audit for the rest of the current trial.",
+    "For this project, always run the sapphire release audit throughout the validation window.",
+    "For this project, always run the sapphire release audit pending approval.",
+  ]) {
+    test("unfamiliar qualified rule is captured for review, not auto-applied: " + message.slice(-36), () => {
+      const assessment = assessOriginalTurnAutoEligibility(message);
+      expect(assessment).toEqual({
+        eligible: false, reason: "qualified_rule_requires_manual_review",
+      });
+      const f = isolatedOriginal(message);
+      expect(f.captured.candidates_created).toBe(1);
+      const original = listCandidates(f.root)[0]!;
+      expect(original.promotion_eligibility).toBe("review_only");
+      atEvidenceFloor(f);
+      const patch = f.curate();
+      expect(patch.ops).toHaveLength(1);
+      expect(patch.ops[0]?.default_selected).toBe(false);
+      const attempted = applyPatch(f.root, patch, {
+        selectedOpIds: patch.ops.map(op => op.op_id),
+        now: "2026-10-30T15:40:00Z", trustedTranscriptOptions: f.trustedTranscriptOptions,
+      });
+      expect(attempted.applied_ops).toHaveLength(0);
+      expect(attempted.skipped_ops.some(op => op.reason === "capture_policy_hold")).toBe(true);
+      expect(loadActiveRecords(f.root)).toHaveLength(0);
+    });
+  }
+
+  test("the conservative authority envelope still admits simple lasting project rules", () => {
+    for (const message of [
+      "For this project, always run Bun tests before publishing.",
+      "This repository always uses Bun for integration tests.",
+      "For this project, never use stale manifests; they’re unreliable.",
+      "For this project, always use the signed-release-checklist before publishing.",
+    ]) {
+      expect(assessOriginalTurnAutoEligibility(message).eligible).toBe(true);
+    }
+  });
+
   for (const [index, message] of nondurableSourceControls.entries()) {
     test("nondurable source case " + (index + 1) + " never auto-applies", () => {
       const f = isolatedOriginal(message);
