@@ -86,4 +86,104 @@ describe("R4 semantic pilot infrastructure adversarial regression", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+  test("stateful quote getter cannot replace a checked quote before it is copied", () => {
+    const req = semanticRequest(source);
+    const candidate = proposal(req.source.hash);
+    let getterReads = 0;
+    Object.defineProperty(candidate.propositions[0], "quote", {
+      enumerable: true, configurable: true,
+      get() {
+        getterReads++;
+        return getterReads === 1 ? message : "Fabricated canonical source";
+      },
+    });
+    const result = validateSemanticProposal(req, candidate);
+    expect(result.status).toBe("abstain");
+    expect(result.canApply).toBe(false);
+    expect(getterReads).toBe(0);
+  });
+
+  test("stateful scope getter cannot introduce an invalid enum after validation", () => {
+    const req = semanticRequest(source);
+    const candidate = proposal(req.source.hash);
+    let getterReads = 0;
+    Object.defineProperty(candidate.propositions[0], "scope", {
+      enumerable: true, configurable: true,
+      get() {
+        getterReads++;
+        return getterReads === 1 ? "project" : "fabricated_scope";
+      },
+    });
+    expect(validateSemanticProposal(req, candidate).status).toBe("abstain");
+    expect(getterReads).toBe(0);
+  });
+
+  test("stateful propositions getter cannot switch twelve entries for thirteen", () => {
+    const req = semanticRequest(source);
+    const candidate = proposal(req.source.hash);
+    const valid = candidate.propositions[0]!;
+    let getterReads = 0;
+    Object.defineProperty(candidate, "propositions", {
+      enumerable: true, configurable: true,
+      get() {
+        getterReads++;
+        return Array.from({ length: getterReads === 1 ? 12 : 13 }, () => ({ ...valid }));
+      },
+    });
+    expect(validateSemanticProposal(req, candidate).status).toBe("abstain");
+    expect(getterReads).toBe(0);
+    const thirteen = proposal(req.source.hash);
+    thirteen.propositions = Array.from({ length: 13 }, () => ({ ...valid }));
+    expect(validateSemanticProposal(req, thirteen).status).toBe("abstain");
+  });
+
+  test("array element getter, proxies and exotic nested values cannot escape the snapshot", () => {
+    const req = semanticRequest(source);
+    const candidate = proposal(req.source.hash);
+    let reads = 0;
+    Object.defineProperty(candidate.propositions, "0", {
+      enumerable: true, configurable: true,
+      get() { reads++; return { ...proposal(req.source.hash).propositions[0] }; },
+    });
+    expect(validateSemanticProposal(req, candidate).status).toBe("abstain");
+    expect(reads).toBe(0);
+
+    const malicious = proposal(req.source.hash);
+    const proxy = new Proxy(malicious.propositions[0]!, {
+      get(_target, key) {
+        if (key === "quote") return "Invented policy";
+        return Reflect.get(_target, key);
+      },
+      getOwnPropertyDescriptor(_target, key) {
+        if (key === "quote") return {
+          configurable: true, enumerable: true, writable: true, value: "Invented policy",
+        };
+        return Reflect.getOwnPropertyDescriptor(_target, key);
+      },
+    });
+    malicious.propositions[0] = proxy;
+    const outcome = validateSemanticProposal(req, malicious);
+    expect(outcome.status).toBe("abstain");
+    expect(outcome.canApply).toBe(false);
+  });
+
+  test("returned propositions cannot carry adapter-owned objects or mutable extensions", () => {
+    const req = semanticRequest(source);
+    const candidate = proposal(req.source.hash);
+    const original = candidate.propositions[0]!;
+    Object.defineProperty(original, "injected", {
+      enumerable: true, value: { canApply: true }, configurable: true,
+    });
+    expect(validateSemanticProposal(req, candidate).status).toBe("abstain");
+    delete (original as Record<string, unknown>).injected;
+    const valid = validateSemanticProposal(req, candidate);
+    expect(valid.status).toBe("proposal_only");
+    if (valid.status !== "proposal_only") return;
+    const before = valid.result.propositions[0]!.quote;
+    original.quote = "Later mutable string";
+    expect(valid.result.propositions[0]!.quote).toBe(before);
+    expect(Object.isFrozen(valid.result.propositions[0])).toBe(true);
+    expect(Object.isFrozen(valid.result.propositions)).toBe(true);
+  });
+
 });
