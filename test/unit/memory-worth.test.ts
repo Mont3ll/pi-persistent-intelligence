@@ -47,6 +47,10 @@ describe("memory-worth scoring", () => {
     "For this project, always run the sapphire release audit only during the current trial.",
     "For this project, always run the sapphire release audit only within the current trial.",
     "For this project, always run the sapphire release audit within the current trial only.",
+    "For this project, always run the sapphire release audit only within the current trial in order to collect diagnostics.",
+    "For this project, always run the sapphire release audit for this test only so that we can collect diagnostics.",
+    "For this project, always run the sapphire release audit until the current trial has ended.",
+    "For this project, always run the sapphire release audit for the full duration of the current trial.",
   ]) {
     test("explicitly test-only scope outweighs a high durable score: " + observation.slice(-35), () => {
       const decision = scoreMemoryWorth({
