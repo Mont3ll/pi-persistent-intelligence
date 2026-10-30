@@ -175,12 +175,12 @@ describe("R4 semantic pilot infrastructure adversarial regression", () => {
       enumerable: true, value: { canApply: true }, configurable: true,
     });
     expect(validateSemanticProposal(req, candidate).status).toBe("abstain");
-    delete (original as Record<string, unknown>).injected;
-    const valid = validateSemanticProposal(req, candidate);
+    const clean = proposal(req.source.hash);
+    const valid = validateSemanticProposal(req, clean);
     expect(valid.status).toBe("proposal_only");
     if (valid.status !== "proposal_only") return;
     const before = valid.result.propositions[0]!.quote;
-    original.quote = "Later mutable string";
+    clean.propositions[0]!.quote = "Later mutable string";
     expect(valid.result.propositions[0]!.quote).toBe(before);
     expect(Object.isFrozen(valid.result.propositions[0])).toBe(true);
     expect(Object.isFrozen(valid.result.propositions)).toBe(true);
