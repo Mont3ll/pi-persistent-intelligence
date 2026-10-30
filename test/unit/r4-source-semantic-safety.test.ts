@@ -217,7 +217,8 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
     "For this project, always run the sapphire release audit throughout the validation window.",
     "For this project, always run the sapphire release audit pending approval.",
   ]) {
-    test("unfamiliar qualified rule is captured for review, not auto-applied: " + message.slice(-36), () => {
+    for (const referenceCount of [1, 2] as const) {
+      test("unfamiliar qualified rule is held at " + referenceCount + " ref(s): " + message.slice(-36), () => {
       const assessment = assessOriginalTurnAutoEligibility(message);
       expect(assessment).toEqual({
         eligible: false, reason: "qualified_rule_requires_manual_review",
@@ -230,6 +231,13 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
       const patch = f.curate();
       expect(patch.ops).toHaveLength(1);
       expect(patch.ops[0]?.default_selected).toBe(false);
+      if (referenceCount === 1) {
+        const persisted = listCandidates(f.root)[0]!;
+        replaceCandidates(f.root, [{
+          ...persisted, evidence_refs: persisted.evidence_refs.slice(0, 1),
+          evidence_ids: persisted.evidence_ids?.slice(0, 1),
+        }]);
+      }
       const attempted = applyPatch(f.root, patch, {
         selectedOpIds: patch.ops.map(op => op.op_id),
         now: "2026-10-30T15:40:00Z", trustedTranscriptOptions: f.trustedTranscriptOptions,
@@ -237,7 +245,8 @@ describe("R4 PR1 original-turn semantic authority safety", () => {
       expect(attempted.applied_ops).toHaveLength(0);
       expect(attempted.skipped_ops.some(op => op.reason === "capture_policy_hold")).toBe(true);
       expect(loadActiveRecords(f.root)).toHaveLength(0);
-    });
+      });
+    }
   }
 
   test("the conservative authority envelope still admits simple lasting project rules", () => {
