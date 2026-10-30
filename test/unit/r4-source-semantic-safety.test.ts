@@ -107,6 +107,82 @@ function earlierPersistedTaskOnlyOriginal(message: string) {
 }
 
 describe("R4 PR1 original-turn semantic authority safety", () => {
+  for (const message of [
+    "For this project, always run the sapphire release audit for this test only; this is a one-off instruction.",
+    "For this repository, always run sapphire verification in this test only; this is a single-use instruction.",
+    "For this project, always run sapphire verification just for this exercise.",
+  ]) {
+    test("task-only qualifier outranks native durable capture: " + message.slice(-36), () => {
+      const intent = classifyCaptureIntent(message);
+      expect(intent.intent).toBe("temporary_instruction");
+      expect(intent.durability).toBe("task");
+      expect(intent.reasons).toContain("explicit_task_only_scope");
+      expect(assessOriginalTurnAutoEligibility(message)).toEqual({
+        eligible: false, reason: "explicit_task_only_scope",
+      });
+      const score = scoreMemoryWorth({
+        observation: message, explicitUserRequest: true,
+        recurrenceCount: 4, evidenceStrength: 1, operationalImpact: 1,
+        scope: "project", durability: "project",
+      });
+      expect(score.decision).toBe("daily_only");
+      const f = isolatedOriginal(message);
+      expect(f.captured.daily_only).toBe(1);
+      expect(f.captured.candidates_created).toBe(0);
+      expect(listCandidates(f.root)).toHaveLength(0);
+      expect(f.curate().ops).toHaveLength(0);
+      expect(loadActiveRecords(f.root)).toHaveLength(0);
+    });
+    for (const referenceCount of [1, 2] as const) {
+      test("historical task-only candidate forced at " + referenceCount + " ref(s): " + message.slice(-23), () => {
+        const f = earlierPersistedTaskOnlyOriginal(message);
+        const candidate = listCandidates(f.root)[0]!;
+        const originalEvidence = readEvidenceRecords(f.root).find(e => e.id === candidate.evidence_refs[0])!;
+        const proof = verifyCandidateTranscriptSource(candidate, originalEvidence, f.trustedTranscriptOptions);
+        expect(proof.verified).toBe(true);
+        expect(proof.semantic_auto_eligible).toBe(false);
+        expect(proof.semantic_hold_reason).toBe("explicit_task_only_scope");
+        atEvidenceFloor(f);
+        const patch = f.curate();
+        expect(patch.ops).toHaveLength(1);
+        expect(patch.ops[0]?.default_selected).toBe(false);
+        if (referenceCount === 1) {
+          const previous = listCandidates(f.root)[0]!;
+          replaceCandidates(f.root, [{
+            ...previous,
+            evidence_refs: previous.evidence_refs.slice(0, 1),
+            evidence_ids: previous.evidence_ids?.slice(0, 1),
+          }]);
+        }
+        const result = applyPatch(f.root, patch, {
+          selectedOpIds: patch.ops.map(op => op.op_id),
+          now: "2026-10-30T09:00:00Z",
+          trustedTranscriptOptions: f.trustedTranscriptOptions,
+        });
+        expect(result.applied_ops).toHaveLength(0);
+        expect(result.skipped_ops.some(op => op.reason === "capture_policy_hold")).toBe(true);
+        expect(loadActiveRecords(f.root)).toHaveLength(0);
+      });
+    }
+  }
+
+  test("permanent project test workflow remains directly eligible", () => {
+    const message = "For this project, always run Bun tests before publishing.";
+    expect(assessOriginalTurnAutoEligibility(message).eligible).toBe(true);
+    const f = isolatedOriginal(message);
+    expect(f.captured.candidates_created).toBe(1);
+    const patch = f.curate();
+    expect(patch.ops).toHaveLength(1);
+    expect(patch.ops[0]?.default_selected).toBe(true);
+    const applied = applyPatch(f.root, patch, {
+      selectedOpIds: [patch.ops[0]!.op_id],
+      now: "2026-10-30T09:01:00Z",
+      trustedTranscriptOptions: f.trustedTranscriptOptions,
+    });
+    expect(applied.applied_ops).toEqual([patch.ops[0]!.op_id]);
+    expect(loadActiveRecords(f.root)).toHaveLength(1);
+  });
+
   for (const [index, message] of nondurableSourceControls.entries()) {
     test("nondurable source case " + (index + 1) + " never auto-applies", () => {
       const f = isolatedOriginal(message);
