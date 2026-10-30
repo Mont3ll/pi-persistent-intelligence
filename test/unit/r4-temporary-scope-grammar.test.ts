@@ -58,10 +58,25 @@ describe("R4 temporal qualifier grammar symmetry", () => {
     }
   });
 
+  test("a temporal restriction can end at a clause separator, not only sentence end", () => {
+    for (const suffix of [
+      "only within the current trial, then return to the normal workflow.",
+      "within this test only; not as a standing rule.",
+      "only for the current test and not for subsequent tests.",
+      "within the current trial only because this is a one-off exercise.",
+    ]) {
+      const message = "For this project, always verify the sapphire manifest " + suffix;
+      expect(hasExplicitTaskOnlyScope(message)).toBe(true);
+      expect(classifyCaptureIntent(message).durability).toBe("task");
+      expect(assessOriginalTurnAutoEligibility(message).eligible).toBe(false);
+    }
+  });
+
   test("qualifiers must be bounded by a temporary unit and an explicit only marker", () => {
     for (const phrase of [
       "for this test results", "only for this testing convention",
       "within the current test results", "only within the current test suite",
+      "only within the current trial results", "within the current test suite only verified",
       "only during the current release process",
       "in the current test artifacts", "for this one test suite",
     ]) {
