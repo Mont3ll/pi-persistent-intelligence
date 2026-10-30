@@ -17,8 +17,12 @@ const taskPeriod = String.raw`(?:test(?:\s+run)?|run|task|trial|fixture|exercise
 const determiner = String.raw`(?:(?:this|the)(?:\s+current)?|current)`;
 const unit = String.raw`${determiner}\s+(?:(?:single|one)\s+)?${taskPeriod}`;
 const preposition = String.raw`(?:for|in|during|within)`;
-const trailingOnly = new RegExp(String.raw`\b${preposition}\s+${unit}\s+only\b`, "i");
-const leadingOnly = new RegExp(String.raw`\b(?:just|only)\s+${preposition}\s+${unit}\b`, "i");
+// The unit must end at a clause boundary. Phrases like "only within the
+// current trial results" or "the current test suite" name documents/suites,
+// not necessarily a one-off runtime scope.
+const scopeEnd = String.raw`(?=$|[.,;:!?)]|\s+(?:and|but|because|if|unless|when|while|after|before|then)\b)`;
+const trailingOnly = new RegExp(String.raw`\b${preposition}\s+${unit}\s+only\b${scopeEnd}`, "i");
+const leadingOnly = new RegExp(String.raw`\b(?:just|only)\s+${preposition}\s+${unit}\b${scopeEnd}`, "i");
 
 export function hasExplicitTaskOnlyScope(text: string): boolean {
   return trailingOnly.test(text)
