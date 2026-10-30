@@ -20,13 +20,22 @@ const preposition = String.raw`(?:for|in|during|within)`;
 // The unit must end at a clause boundary. Phrases like "only within the
 // current trial results" or "the current test suite" name documents/suites,
 // not necessarily a one-off runtime scope.
-const scopeEnd = String.raw`(?=$|[.,;:!?)]|\s+(?:and|but|because|if|unless|when|while|after|before|then)\b)`;
+const scopeEnd = String.raw`(?=$|[.,;:!?)]|\s+(?:and|but|because|if|unless|when|while|after|before|then|to)\b)`;
 const trailingOnly = new RegExp(String.raw`\b${preposition}\s+${unit}\s+only\b${scopeEnd}`, "i");
 const leadingOnly = new RegExp(String.raw`\b(?:just|only)\s+${preposition}\s+${unit}\b${scopeEnd}`, "i");
+// Explicit finite-lifetime clauses convey task scope even without "only".
+// Require a bounded, current task period and an endpoint; mere mentions of
+// test results, suites or an ongoing permanent testing workflow are not enough.
+const forDuration = new RegExp(String.raw`\bfor\s+(?:the\s+)?duration\s+of\s+${unit}\b${scopeEnd}`, "i");
+const untilEnds = new RegExp(String.raw`\buntil\s+${unit}\s+(?:ends?|finishes?|concludes?|expires?|is\s+over)\b${scopeEnd}`, "i");
+const untilEndOf = new RegExp(String.raw`\buntil\s+the\s+end\s+of\s+${unit}\b${scopeEnd}`, "i");
 
 export function hasExplicitTaskOnlyScope(text: string): boolean {
   return trailingOnly.test(text)
     || leadingOnly.test(text)
+    || forDuration.test(text)
+    || untilEnds.test(text)
+    || untilEndOf.test(text)
     || /\b(?:this|that|it)\s+(?:is|was|remains)\s+(?:(?:just|only|merely)\s+)?(?:an?\s+)?(?:one[- ]off|one[- ]time|test[- ]only|temporary)(?:\s+(?:instruction|request|rule|change|exception|requirement|directive|task))?\b/i.test(text)
     || /\b(?:one[- ]off|one[- ]time|single[- ]use|test[- ]only)\s+(?:instruction|request|rule|change|exception|requirement|directive)\b/i.test(text);
 }
