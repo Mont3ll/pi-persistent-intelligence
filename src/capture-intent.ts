@@ -1,4 +1,5 @@
 import type { CaptureIntent } from "./types";
+import { hasExplicitTaskOnlyScope } from "./temporary-scope";
 
 export interface CaptureIntentDecision {
   intent: CaptureIntent;
@@ -126,6 +127,7 @@ export function assessOriginalTurnAutoEligibility(rawText: string): OriginalTurn
   const text = rawText.trim();
   const held = (reason: string): OriginalTurnAutoEligibility => ({ eligible: false, reason });
   if (hasExplicitMemoryOptOut(rawText)) return held("explicit_memory_opt_out");
+  if (hasExplicitTaskOnlyScope(rawText)) return held("explicit_task_only_scope");
   if (!text || text.length > 300 || /[\r\n]/.test(text)) return held("unextracted_or_mixed_turn");
   // Whole-turn prefix capture cannot safely extract one lasting statement
   // from a mixed multi-sentence message. Review until source-span extraction.
@@ -194,6 +196,9 @@ export function classifyCaptureIntent(rawText: string): CaptureIntentDecision {
 
   if (hasExplicitMemoryOptOut(rawText)) {
     return decision("not_memory", 0.99, "temporary", text, ["explicit_memory_opt_out"]);
+  }
+  if (hasExplicitTaskOnlyScope(rawText)) {
+    return decision("temporary_instruction", 0.99, "task", text, ["explicit_task_only_scope"]);
   }
   if (isSyntheticCaptureContext(rawText)) {
     return decision("not_memory", 0.99, "temporary", text, ["synthetic_harness_context"]);
