@@ -72,6 +72,37 @@ describe("R4 temporal qualifier grammar symmetry", () => {
     }
   });
 
+  test("purpose and expiry task-limits hold independently of memory-worth scoring", () => {
+    let checked = 0;
+    for (const determiner of ["this", "the", "current", "the current"]) {
+      for (const unit of ["test", "trial", "exercise", "experiment"]) {
+        const period = determiner + " " + unit;
+        const variants = [
+          "for " + period + " only to collect diagnostics",
+          "only within " + period + " to validate this experiment",
+          "for the duration of " + period,
+          "until " + period + " ends",
+          "until " + period + " is over",
+          "until the end of " + period,
+        ];
+        for (const suffix of variants) {
+          const text = "For this project, always run the sapphire audit " + suffix + ".";
+          expect(hasExplicitTaskOnlyScope(text)).toBe(true);
+          expect(classifyCaptureIntent(text).intent).toBe("temporary_instruction");
+          expect(assessOriginalTurnAutoEligibility(text).eligible).toBe(false);
+          const worth = scoreMemoryWorth({
+            observation: text, explicitUserRequest: true, recurrenceCount: 5,
+            operationalImpact: 1, evidenceStrength: 1,
+            durability: "project", scope: "project",
+          });
+          expect(worth.decision).toBe("daily_only");
+          checked++;
+        }
+      }
+    }
+    expect(checked).toBe(96);
+  });
+
   test("qualifiers must be bounded by a temporary unit and an explicit only marker", () => {
     for (const phrase of [
       "for this test results", "only for this testing convention",
