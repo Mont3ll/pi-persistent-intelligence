@@ -22,6 +22,8 @@ PI will **use LLM/agent reasoning to propose what a turn means**, while retainin
 - `src/semantic-assessment-command.ts`: explicit optional LLM command adapter, no shell, timeout and bounded output.
 - `test/unit/r4-semantic-assessment.test.ts`: schema/span/authority injection/failure tests.
 
+**External-process isolation caveat:** The optional command adapter has no PI store handle, but an operator-selected executable may still have ordinary OS filesystem/network privileges. For private real-session evaluation, use a sandboxed trusted command, restricted environment, explicit privacy review and isolated store snapshots; do not treat the adapter interface as a process security boundary.
+
 **No production capture integration or automatic promotion is enabled.** The pilot is read-only and has no model selected by default. An independently verified inference benchmark is required next.
 
 ## Jev/Laya decision-model option — retained
