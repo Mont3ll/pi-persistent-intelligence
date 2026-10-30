@@ -147,6 +147,11 @@ describe("R4 temporal qualifier grammar symmetry", () => {
       "For this project, always read the trial duration report.",
       "For this project, always document when the current trial ends.",
       "For this project, always run audits for the duration of the current trial results.",
+      "For this project, always run the audit so that diagnostics are collected.",
+      "For this project, always run the audit in order to collect diagnostics.",
+      "For this project, always document when the current trial has ended.",
+      "For this project, always run tests for the entire duration of each deployment.",
+      "For this project, always report until all required checks have passed.",
     ];
     for (const text of controls) {
       expect(hasExplicitTaskOnlyScope(text)).toBe(false);
