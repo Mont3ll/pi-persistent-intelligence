@@ -103,6 +103,22 @@ describe("R4 temporal qualifier grammar symmetry", () => {
     expect(checked).toBe(96);
   });
 
+  test("duration mentions and expiry conditions in lasting workflows are not one-off scope", () => {
+    const controls = [
+      "For this project, always collect diagnostics for the current test suite.",
+      "For this project, always validate the current experiment results.",
+      "For this project, always run the audit until all checks pass before publication.",
+      "For this project, always read the trial duration report.",
+      "For this project, always document when the current trial ends.",
+      "For this project, always run audits for the duration of the current trial results.",
+    ];
+    for (const text of controls) {
+      expect(hasExplicitTaskOnlyScope(text)).toBe(false);
+      expect(scoreMemoryWorth({ observation: text, explicitUserRequest: true,
+        scope: "project", durability: "project" }).reasons).not.toContain("explicit_task_only_scope");
+    }
+  });
+
   test("qualifiers must be bounded by a temporary unit and an explicit only marker", () => {
     for (const phrase of [
       "for this test results", "only for this testing convention",
