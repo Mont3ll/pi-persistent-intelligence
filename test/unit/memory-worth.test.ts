@@ -45,6 +45,8 @@ describe("memory-worth scoring", () => {
     "For this project, always run the sapphire release audit only for the current test.",
     "For this project, always run the sapphire release audit during the current trial only.",
     "For this project, always run the sapphire release audit only during the current trial.",
+    "For this project, always run the sapphire release audit only within the current trial.",
+    "For this project, always run the sapphire release audit within the current trial only.",
   ]) {
     test("explicitly test-only scope outweighs a high durable score: " + observation.slice(-35), () => {
       const decision = scoreMemoryWorth({
@@ -72,6 +74,12 @@ describe("memory-worth scoring", () => {
     });
     expect(currentRunConvention.decision).toBe("candidate");
     expect(currentRunConvention.reasons).not.toContain("explicit_task_only_scope");
+    const scopeVsContent = scoreMemoryWorth({
+      observation: "This repository always tests within the current working directory.",
+      explicitUserRequest: true, durability: "project", scope: "project",
+    });
+    expect(scopeVsContent.decision).toBe("candidate");
+    expect(scopeVsContent.reasons).not.toContain("explicit_task_only_scope");
   });
 
   test("high-confidence repeated workflow becomes candidate", () => {
