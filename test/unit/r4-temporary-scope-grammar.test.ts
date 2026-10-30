@@ -6,7 +6,7 @@ import { hasExplicitTaskOnlyScope } from "../../src/temporary-scope";
 describe("R4 temporal qualifier grammar symmetry", () => {
   test("leading and trailing only share prepositions, determiners, modifiers and temporal units", () => {
     let checked = 0;
-    for (const preposition of ["for", "in", "during"]) {
+    for (const preposition of ["for", "in", "during", "within"]) {
       for (const determiner of ["this", "the", "current", "the current"]) {
         for (const modifier of ["", "one ", "single "]) {
           for (const unit of ["test", "trial", "test run", "exercise"]) {
@@ -39,7 +39,7 @@ describe("R4 temporal qualifier grammar symmetry", () => {
         }
       }
     }
-    expect(checked).toBe(432);
+    expect(checked).toBe(576);
   });
 
   test("persistent project testing conventions are not marked task-only", () => {
@@ -61,6 +61,7 @@ describe("R4 temporal qualifier grammar symmetry", () => {
   test("qualifiers must be bounded by a temporary unit and an explicit only marker", () => {
     for (const phrase of [
       "for this test results", "only for this testing convention",
+      "within the current test results", "only within the current test suite",
       "only during the current release process",
       "in the current test artifacts", "for this one test suite",
     ]) {
