@@ -21,13 +21,18 @@ const validLabels: readonly string[] = ["durable", "temporary", "not_memory", "u
 const input = process.argv[2];
 const executable = process.env.PI_R4_MODEL_BIN;
 if (!input || !executable) throw new Error("Supply labelled JSONL path and PI_R4_MODEL_BIN");
-const args = process.env.PI_R4_MODEL_ARGS ? JSON.parse(process.env.PI_R4_MODEL_ARGS) as unknown : [];
+// Bun may include offending input in native JSON.parse error messages.
+function parseUntrustedJson(serialized: string): unknown {
+  try { return JSON.parse(serialized) as unknown; }
+  catch { throw new Error("invalid_semantic_eval_json"); }
+}
+const args = process.env.PI_R4_MODEL_ARGS ? parseUntrustedJson(process.env.PI_R4_MODEL_ARGS) : [];
 if (!Array.isArray(args) || !args.every(v => typeof v === "string")) throw new Error("Invalid model args");
 const adapter = commandSemanticAdapter(executable, args);
 
 const raw = readFileSync(input, "utf8");
 if (raw.length > 2_000_000) throw new Error("Labelled file too large");
-const rows: unknown[] = raw.split(/\r?\n/).filter(Boolean).map(row => JSON.parse(row));
+const rows: unknown[] = raw.split(/\r?\n/).filter(Boolean).map(row => parseUntrustedJson(row));
 if (rows.length === 0 || rows.length > 500) throw new Error("Require 1-500 labelled rows");
 
 function label(result: SemanticReview): Label {
