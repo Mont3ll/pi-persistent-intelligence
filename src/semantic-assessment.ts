@@ -46,7 +46,10 @@ const abstain = (reason: string): SemanticReview => Object.freeze({ status: "abs
  */
 function snapshotModelData(raw: unknown): unknown {
   const seen = new WeakSet<object>();
-  let remainingFields = 96;
+  // Envelope (4) + array length (1) + 12 * (index descriptor + 7 fields).
+  // The previous constant 96 silently abstained on a valid 12-proposition
+  // response; the 12-proposition limit is still enforced independently.
+  let remainingFields = 4 + 1 + 12 * (1 + 7);
   const copy = (value: unknown, depth: number): unknown => {
     if (value === null || typeof value === "string" || typeof value === "boolean") return value;
     if (typeof value === "number" && Number.isFinite(value)) return value;
