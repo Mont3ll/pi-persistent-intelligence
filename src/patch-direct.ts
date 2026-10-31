@@ -51,6 +51,14 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
       if (candidate.worth_decision && candidate.worth_decision !== "candidate") {
         return reject("capture_policy_hold", `Candidate ${candidate.id} has memory-worth decision ${candidate.worth_decision}; promotion is prohibited.`);
       }
+      // R4 proposition candidates are independently source-verifiable but
+      // their model interpretation is not yet a ratified automatic-authority
+      // policy. Neither forged metadata nor a second evidence reference may
+      // silently grant automatic application before the semantic benchmark.
+      if (candidate.capture_source?.version === 2 && (mode === "auto" || !explicitlySelected)) {
+        return reject("capture_policy_hold",
+          `Semantic proposition ${candidate.id} requires an explicitly reviewed governed operation; model assessments are not automatic write authority.`);
+      }
       if (candidate.capture_intent === "not_memory" || candidate.capture_intent === "temporary_instruction") {
         return reject("capture_policy_hold", `Candidate ${candidate.id} was captured as ${candidate.capture_intent}; promotion is prohibited.`);
       }
