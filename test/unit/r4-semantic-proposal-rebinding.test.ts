@@ -82,7 +82,8 @@ function relabelToTurnB(f: ReturnType<typeof fixture>) {
     source_ref: expectedRef,
   };
   writeJsonl(ensureMemoryDirs(f.store).memory.evidence, [tamperedEvidence]);
-  expect(verifyCandidateTranscriptSource(tamperedCandidate, tamperedEvidence, f.proofOptions).verified).toBe(true);
+  // V2 proof itself must now reject relabelled content-addressed identity.
+  expect(verifyCandidateTranscriptSource(tamperedCandidate, tamperedEvidence, f.proofOptions).verified).toBe(false);
   expect(semanticProposalSourceBindingMatches(tamperedCandidate, tamperedEvidence, f.patch.ops[0]!)).toBe(false);
   return { tamperedCandidate, tamperedEvidence };
 }
@@ -96,8 +97,8 @@ describe("R4 original proposal cannot be rebound from A to identical-text B", ()
       try {
         if (changedOriginal) transcript(f.sessionFile, f.project, true);
         else expect(verifyCandidateTranscriptSource(f.originalCandidate, f.originalEvidence, f.proofOptions).verified).toBe(true);
-        // The repro mutates both independent store representations. Merely
-        // re-checking the current transcript returns verified turn B.
+        // The repro mutates both stored representations. The old proof
+        // accepted genuine turn B, but the new source-ID invariant rejects it.
         const { tamperedCandidate } = relabelToTurnB(f);
         const source = tamperedCandidate.capture_source;
         if (!source || source.version !== 2) throw new Error("expected semantic-v2 fixture");
