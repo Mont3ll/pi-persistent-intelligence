@@ -20,6 +20,19 @@ Stacked on accepted PR #50 to preserve both accepted parents. Adds:
 
 **Not yet implemented on this branch:** production event integration, semantic model accuracy, a trusted semantic-auto-approval credential/capability, original-turn semantic re-evaluation at write time, automatic canonical application, live backlog migration, or later-session recall acceptance. This is not merge-ready until independently verified; don't call this an automatic-promotion fix yet.
 
+## PR #51 independent correction — recurrence and provenance (2026-10-31)
+
+The first PR #51 HEAD `8915a5ea59c830bf3071fe454d987e70d1a549ce` was independently **REJECTED** despite passing 960 tests, 67 evaluations, 4 stress tests and its installed SDK supervised happy path. The adversarial matrix had **25/30** passes, with four demonstrated failure classes: legacy recurrence promoted semantic evidence through two ordinary automatic L2 writes; removing v2 candidate metadata allowed another automatic write; retries duplicated evidence; and semantic v2 proof accepted a mismatched original turn ID. The local report is preserved by the verifier at `/tmp/pi-r4-semantic-capture.OoeWMN/PI_R4_SEMANTIC_CAPTURE_VERIFICATION.md`; that path is not part of the repository.
+
+The correction branch now:
+- Separates semantic proposition recurrence from ordinary legacy equivalence, maintaining distinct candidate IDs and never incrementing evidence on exact semantic replay.
+- Uses a separately named, deterministic `ev_sem_` evidence identity and `appendEvidenceRecordIfMissing` for semantic and ordinary captures.
+- Enforces a **semantic review lineage deny gate** derived from v2 source, candidate ID and independently stored semantic evidence (including a formerly merged legacy candidate), at evidence-floor eligibility, curator selection and governed patch application. Deleting `capture_source` cannot silently grant auto authority. Corrupt/missing v2 proof also prevents supervised application.
+- Requires the authenticated original message's specific turn ID **and** full original text hash. Identical statements on different genuine user turns may be distinguished by ID; mismatched source IDs reject.
+- Adds regression fixtures for both recurrence orders, metadata erasure, above-floor legacy contaminants, forged auto patches, idempotent retries and changed transcript identity at apply.
+
+**This correction has not yet received independent verification**. Passing it would accept the supervised semantic capture path only, not semantic-model accuracy, production event integration, automatic L2 promotion or release readiness. The two previously reported automatic writes are safety regressions to prevent, not functionality to preserve.
+
 ## Next implementation gates (release-blocking)
 
 1. **Functional semantic capture acceptance:** independent exact-SHA local tests on isolated Pi SDK sessions: durable propositions that appear after 300 characters become distinct candidates with transcript-source verification; temporary/quoted/third-party material never auto-promotes; no duplicate evidence on retries.
