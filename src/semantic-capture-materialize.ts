@@ -117,9 +117,10 @@ export function materializeSemanticCaptureCandidates(
       source_session_ids: [original.sessionId],
       source_turn_ids: [`${original.sessionId}:${original.turnId}`],
     };
-    appendOrReinforceCandidate(root, candidate);
+    const persisted = appendOrReinforceCandidate(root, candidate);
     current.add(id);
-    result.created++;
+    if (persisted.action === "created") result.created++;
+    else result.already_present++;
   }
   return result;
 }
