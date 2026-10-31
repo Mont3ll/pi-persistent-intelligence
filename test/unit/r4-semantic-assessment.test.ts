@@ -77,6 +77,32 @@ describe("R4 source-grounded semantic assessment (proposal-only pilot)", () => {
     expect((await proposeSemanticReview(source, { assess: async () => "not json" })).status).toBe("abstain");
     expect((await proposeSemanticReview({ ...source, text: "" }, { assess: async () => null })).status).toBe("abstain");
   });
+  test("exactly twelve independent source propositions are accepted; thirteen abstain", () => {
+    const phrases = Array.from({ length: 13 }, (_, i) => "Rule " + i + " applies.");
+    const allText = phrases.join(" ");
+    const full = semanticRequest({ sessionId: "s-limit", turnId: "t-limit", text: allText });
+    const spans = phrases.map(phrase => {
+      const start = allText.indexOf(phrase);
+      return { start, end: start + phrase.length, quote: phrase,
+        disposition: "durable", endorsement: "direct_user",
+        duration: "standing", scope: "project" };
+    });
+    const twelve = validateSemanticProposal(full, {
+      version: 1, sourceHash: full.source.hash, outcome: "proposed",
+      propositions: spans.slice(0, 12),
+    });
+    expect(twelve.status).toBe("proposal_only");
+    expect(twelve.canApply).toBe(false);
+    if (twelve.status === "proposal_only") expect(twelve.result.propositions).toHaveLength(12);
+
+    const thirteen = validateSemanticProposal(full, {
+      version: 1, sourceHash: full.source.hash, outcome: "proposed",
+      propositions: spans,
+    });
+    expect(thirteen.status).toBe("abstain");
+    expect(thirteen.canApply).toBe(false);
+  });
+
   test("valid output does not become an authorized memory write", async () => {
     const result = await proposeSemanticReview(source, { assess: async () =>
       wrap([span("For this project, always use Bun.")]) });
