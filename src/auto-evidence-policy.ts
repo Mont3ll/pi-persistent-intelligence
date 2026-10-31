@@ -1,6 +1,7 @@
 import type { PiMemoryConfig } from "./config";
 import type { CaptureCandidate, EvidenceRecord } from "./types";
 import { assessSourceEvidence } from "./source-evidence-assessment";
+import { hasSemanticReviewLineage } from "./semantic-lineage";
 import { verifyCandidateTranscriptSource, type TranscriptProofOptions } from "./transcript-proof";
 
 export type AutoEvidenceDecision = {
@@ -23,6 +24,11 @@ export function decideAutoEvidenceEligibility(
   evidenceRecords: readonly EvidenceRecord[],
   curatorConfig: Pick<PiMemoryConfig["curator"], "minEvidenceCount" | "sourceAwareAuto">,
 ): AutoEvidenceDecision {
+  // A model-derived semantic proposition cannot inherit the generic
+  // two-reference auto floor or source-aware bypass via legacy recurrence.
+  if (hasSemanticReviewLineage(candidate, evidenceRecords)) {
+    return { eligible: false, basis: "below_configured_evidence_floor" };
+  }
   if (candidate.evidence_refs.length >= curatorConfig.minEvidenceCount) {
     return { eligible: true, basis: "configured_reference_floor" };
   }
@@ -89,6 +95,9 @@ export function decideTrustedAutoEvidenceEligibility(
   curatorConfig: Pick<PiMemoryConfig["curator"], "minEvidenceCount" | "sourceAwareAuto">,
   trustedOptions: TranscriptProofOptions = {},
 ): AutoEvidenceDecision {
+  if (hasSemanticReviewLineage(candidate, evidenceRecords)) {
+    return { eligible: false, basis: "below_configured_evidence_floor" };
+  }
   if (candidate.evidence_refs.length >= curatorConfig.minEvidenceCount
     || curatorConfig.sourceAwareAuto === "off") {
     return decideAutoEvidenceEligibility(candidate, evidenceRecords, curatorConfig);
