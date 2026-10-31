@@ -21,6 +21,14 @@ An independent local verification of the initial PR #50 implementation rejected 
 
 **New acceptance gate:** install the actual Pi 1.4.0 SDK peers in an isolated fixture and exercise the *unmodified* worker end-to-end using a known model catalog entry, a dedicated synthetic key and a loopback/mock model response. Verify that it reaches session creation, has zero active tools/discovered resources, produces a JSON semantic proposal, and leaves no Pi store writes. This is not satisfied by a separate diagnostic harness that reconstructs a similar session. If an API mismatch remains, REJECT with the exact failing call.
 
+## Aborted-stream completion gate (2026-10-31)
+
+An independent real-SDK verifier **REJECTED** the earlier worker at `da615a2f689a7280f041e917cb3b44222ad30546` (tree `bfd4930f1abbdcfe2913291faa129872cdaf06d2`): a mock endpoint emitted complete JSON but held the stream open until the worker's 15-second SDK abort. Pi finalized the buffered assistant text with `stopReason: "aborted"`; the old worker incorrectly emitted it and exited 0. SDK model lookup, in-memory isolation and loopback inference already passed on that SHA.
+
+The worker now **requires a successful final assistant `stopReason: "stop"`, no SDK error, non-streaming state, and a deadline latch that was never triggered** before parsing/emitting JSON. An aborted/error/length-limited/deferred/pending assistant turn must fail with sanitized stderr and nonzero exit, even if its text is valid JSON and `prompt()` resolves normally. The outer command adapter's SIGKILL deadline remains independent.
+
+The independent verifier must exercise the **unmodified worker and full evaluator-to-worker chain** against a synthetic loopback endpoint that emits valid JSON but never finishes the stream. Expected: no JSON on stdout, worker nonzero, evaluator abstains, no PI writes. Separately verify an ordinary finished stream still produces an immutable validated proposal. Unit checks on `src/semantic-completion.ts` are necessary but insufficient.
+
 ## Manual opt-in model experiment
 
 Run only in a trusted/sandboxed machine with the supported Pi SDK peers installed, and **only** a privacy-reviewed synthetic/labelled corpus. The worker inherits normal OS permissions. Prefer a separate sandboxed user or container without access to live PI stores. Environment variables set by the operator:
