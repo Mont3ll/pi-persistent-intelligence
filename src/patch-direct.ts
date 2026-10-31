@@ -9,6 +9,7 @@ import { loadConfig } from "./config";
 import { attachVerification } from "./verifier";
 import { applyCandidateMatch } from "./matching";
 import { isAutoApplyEligibleCandidate } from "./trust";
+import { hasSemanticReviewLineage } from "./semantic-lineage";
 import { renderMemoryToDisk } from "./render";
 import { ensureMemoryDirs } from "./paths";
 import { writeVaultPromotionReport } from "./vaultPromotion";
@@ -55,12 +56,15 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
       // their model interpretation is not yet a ratified automatic-authority
       // policy. Neither forged metadata nor a second evidence reference may
       // silently grant automatic application before the semantic benchmark.
-      if (candidate.capture_source?.version === 2 && (mode === "auto" || !explicitlySelected)) {
+      const currentEvidence = readEvidenceRecords(root);
+      const semanticLineage = hasSemanticReviewLineage(candidate, currentEvidence);
+      if (semanticLineage && (mode === "auto" || !explicitlySelected
+        || candidate.capture_source?.version !== 2)) {
         return reject("capture_policy_hold",
-          `Semantic proposition ${candidate.id} requires an explicitly reviewed governed operation; model assessments are not automatic write authority.`);
+          `Semantic proposition ${candidate.id} requires intact v2 provenance and an explicitly selected supervised governed operation; mutable flags or recurrence cannot authorize automatic writes.`);
       }
-      if (candidate.capture_source?.version === 2) {
-        const evidence = readEvidenceRecords(root).find((record) =>
+      if (semanticLineage) {
+        const evidence = currentEvidence.find((record) =>
           record.id === candidate.evidence_refs[0]);
         const freshProof = evidence && verifyCandidateTranscriptSource(
           candidate, evidence, proofOptions);
