@@ -59,6 +59,12 @@ describe("R4 Pi-hosted LLM evaluation worker (no model calls)", () => {
       "getActiveToolNames().length !== 0", "session?.dispose()",
       "setRuntimeApiKey(provider, apiKey)",
     ]) expect(source).toContain(boundary);
+    expect(source).toContain("modelRuntime.getModel(provider, modelId)");
+    expect(source).toContain("if (model.provider !== provider || model.id !== modelId)");
+    expect(source).not.toContain("ai.getModel(");
+    expect(source).not.toContain('await import("@earendil-works/pi-ai")');
+    expect(source.indexOf("modelRuntime.getModel(provider, modelId)"))
+      .toBeGreaterThan(source.indexOf("setRuntimeApiKey(provider, apiKey)"));
     expect(source).not.toContain("process.env.HOME");
   });
 });
