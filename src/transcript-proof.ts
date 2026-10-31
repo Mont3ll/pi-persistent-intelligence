@@ -322,17 +322,17 @@ export function verifyCandidateTranscriptSource(
     // Project identity must be derived independently from the trusted Pi
     // session header, not from the candidate's proposed target alone.
     if (resolveProjectIdentity(resolve(transcript.cwd)).project_id !== target.project) return held("scope_mismatch");
+    // v2 binds BOTH message contents and original turn ID. Two distinct
+    // user turns may legitimately repeat the same instruction; reject only
+    // ambiguous matches for the *specified* ID/hash pair. v1 retains the
+    // historical unique-text fallback for transcripts with no reliable ID.
     const turns = transcript.userTurns.filter((turn) =>
-      (source.version === 2 ? exactHash(turn.text) : hash(turn.text))
-        === source.original_message_sha256);
+      source.version === 2
+        ? turn.turnId === source.turn_id
+          && exactHash(turn.text) === source.original_message_sha256
+        : hash(turn.text) === source.original_message_sha256);
     if (turns.length === 0) return held("user_turn_missing");
     if (turns.length > 1) return held("ambiguous_user_turn");
-    // Historical v1 can legitimately lack a reliable message ID and retains
-    // unique full-message-hash fallback. Semantic v2, however, confers a
-    // specific proposition-to-turn binding: do not accept merely because an
-    // unrelated user turn happens to contain identical source bytes.
-    if (source.version === 2 && (!turns[0]!.turnId
-      || turns[0]!.turnId !== source.turn_id)) return held("user_turn_missing");
     const full = source.version === 2 ? turns[0]!.text : turns[0]!.text.trim();
     const excerpt = source.version === 2
       ? full.slice(source.proposition_start, source.proposition_end)
