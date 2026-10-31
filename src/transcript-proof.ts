@@ -327,6 +327,12 @@ export function verifyCandidateTranscriptSource(
         === source.original_message_sha256);
     if (turns.length === 0) return held("user_turn_missing");
     if (turns.length > 1) return held("ambiguous_user_turn");
+    // Historical v1 can legitimately lack a reliable message ID and retains
+    // unique full-message-hash fallback. Semantic v2, however, confers a
+    // specific proposition-to-turn binding: do not accept merely because an
+    // unrelated user turn happens to contain identical source bytes.
+    if (source.version === 2 && (!turns[0]!.turnId
+      || turns[0]!.turnId !== source.turn_id)) return held("user_turn_missing");
     const full = source.version === 2 ? turns[0]!.text : turns[0]!.text.trim();
     const excerpt = source.version === 2
       ? full.slice(source.proposition_start, source.proposition_end)
