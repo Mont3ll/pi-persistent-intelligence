@@ -57,11 +57,11 @@ async function run(): Promise<void> {
 
   // Optional SDK import: not loaded in normal PI extension/runtime paths.
   const sdkPackage = "@earendil-works/pi-coding-agent";
-  const aiPackage = "@earendil-works/pi-ai";
+  // Pi 1.4.0 removed getModel() from the pi-ai root entrypoint.
+  // Use the same isolated ModelRuntime that creates the SDK session;
+  // its getModel() is the supported catalog lookup and avoids the legacy
+  // pi-ai/compat shim and a second, potentially divergent model registry.
   const sdk = await import(sdkPackage);
-  const ai = await import(aiPackage);
-  const model = ai.getModel(provider, modelId);
-  if (!model) throw new Error("model_unavailable");
 
   const sandbox = mkdtempSync(join(tmpdir(), "pi-r4-llm-eval-"));
   const agentDir = join(sandbox, "agent");
@@ -89,6 +89,10 @@ async function run(): Promise<void> {
       authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json"),
     });
     await modelRuntime.setRuntimeApiKey(provider, apiKey);
+    const model = modelRuntime.getModel(provider, modelId);
+    if (!model) throw new Error("model_unavailable");
+    if (model.provider !== provider || model.id !== modelId)
+      throw new Error("model_identity_mismatch");
     const created = await sdk.createAgentSession({
       cwd: sandbox, agentDir, model, thinkingLevel: "off", modelRuntime,
       noTools: "all", tools: [], customTools: [],
