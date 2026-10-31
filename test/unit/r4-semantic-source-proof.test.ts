@@ -148,6 +148,32 @@ describe("R4 source-spanned semantic candidate / transcript proof (isolated)", (
       expect(blocked.skipped_ops.some(skip => skip.reason === "capture_policy_hold")).toBe(true);
       expect(loadActiveRecords(store)).toHaveLength(0);
 
+      // The source was valid at proposal time; replacing the *turn identity*
+      // before apply must not let supervised selection reuse stale proof.
+      writeFileSync(sessionFile, [
+        JSON.stringify({ type: "session", id: original.sessionId, cwd: project }),
+        JSON.stringify({ type: "message", id: "wrong-turn-at-apply", message: {
+          role: "user", content: [{ type: "text", text: original.text }],
+        } }),
+        "",
+      ].join("\n"));
+      const staleProof = applyPatch(store, { ...patch,
+        patch_id: patch.patch_id + "_changed_turn" }, {
+        selectedOpIds: [patch.ops[0]!.op_id],
+        now: "2026-10-31T08:03:30.000Z",
+        trustedTranscriptOptions: { trustedSessionDirs: [sessions] },
+      });
+      expect(staleProof.applied_ops).toHaveLength(0);
+      expect(staleProof.skipped_ops.some(skip => skip.reason === "capture_policy_hold")).toBe(true);
+      expect(loadActiveRecords(store)).toHaveLength(0);
+      writeFileSync(sessionFile, [
+        JSON.stringify({ type: "session", id: original.sessionId, cwd: project }),
+        JSON.stringify({ type: "message", id: original.turnId, message: {
+          role: "user", content: [{ type: "text", text: original.text }],
+        } }),
+        "",
+      ].join("\n"));
+
       const applied = applyPatch(store, patch, {
         selectedOpIds: [patch.ops[0]!.op_id],
         now: "2026-10-31T08:04:00.000Z",
