@@ -19,6 +19,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SemanticRequest } from "../src/semantic-assessment";
+import { assertSuccessfulSemanticCompletion } from "../src/semantic-completion";
 
 const MAX_REQUEST_BYTES = 36_000;
 const MAX_MODEL_OUTPUT = 64 * 1024;
@@ -66,8 +67,17 @@ async function run(): Promise<void> {
   const sandbox = mkdtempSync(join(tmpdir(), "pi-r4-llm-eval-"));
   const agentDir = join(sandbox, "agent");
   mkdirSync(agentDir, { recursive: true });
-  let session: { prompt(msg: string): Promise<void>; getLastAssistantText(): string | undefined;
-    getActiveToolNames(): string[]; dispose(): void; abort(): void } | undefined;
+  let session: {
+    prompt(msg: string): Promise<void>;
+    getLastAssistantText(): string | undefined;
+    getActiveToolNames(): string[];
+    agent: { state: { messages: Array<{ role: string; stopReason?: string; errorMessage?: string }>;
+      errorMessage?: string; isStreaming?: boolean } };
+    isStreaming: boolean;
+    dispose(): void;
+    abort(): Promise<void> | void;
+  } | undefined;
+  let deadlineExpired = false;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
     const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false } });
@@ -101,9 +111,23 @@ async function run(): Promise<void> {
     });
     session = created.session;
     if (session.getActiveToolNames().length !== 0) throw new Error("tools_not_disabled");
-    deadline = setTimeout(() => session?.abort(), MODEL_TIMEOUT_MS);
+    deadline = setTimeout(() => {
+      // An SDK prompt() may resolve normally with a partial assistant message
+      // after abort. Latch the deadline independently of its return status.
+      deadlineExpired = true;
+      try { void Promise.resolve(session?.abort()).catch(() => {}); }
+      catch { /* the deadline remains latched */ }
+    }, MODEL_TIMEOUT_MS);
     await session.prompt(JSON.stringify(parsed));
     if (!session) throw new Error("missing_session");
+    // Pi's completed assistant message carries stopReason. A buffered JSON
+    // string from an aborted/error/deferred/length-limited stream is NOT a
+    // successful inference, irrespective of parseability.
+    assertSuccessfulSemanticCompletion({
+      messages: session.agent.state.messages,
+      errorMessage: session.agent.state.errorMessage,
+      isStreaming: session.isStreaming,
+    }, deadlineExpired);
     const result = session.getLastAssistantText();
     if (!result || Buffer.byteLength(result) > MAX_MODEL_OUTPUT) throw new Error("invalid_model_output");
     let output: unknown;
