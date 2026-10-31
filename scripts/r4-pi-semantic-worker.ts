@@ -46,6 +46,8 @@ async function run(): Promise<void> {
   const provider = process.env.PI_R4_PI_PROVIDER?.trim();
   const modelId = process.env.PI_R4_PI_MODEL?.trim();
   if (!provider || !modelId) throw new Error("explicit_model_required");
+  const apiKey = process.env.PI_R4_PI_API_KEY?.trim();
+  if (!apiKey) throw new Error("explicit_model_credential_required");
   const input = readFileSync(0, "utf8");
   if (Buffer.byteLength(input) > MAX_REQUEST_BYTES) throw new Error("request_too_large");
   let parsed: unknown;
@@ -81,8 +83,14 @@ async function run(): Promise<void> {
       || resourceLoader.getAgentsFiles().agentsFiles.length !== 0) {
       throw new Error("unexpected_discovered_resources");
     }
+    // Use only an explicitly provided ephemeral credential, never read the
+    // operator's real ~/.pi/agent auth store during private evaluation.
+    const modelRuntime = await sdk.ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json"),
+    });
+    await modelRuntime.setRuntimeApiKey(provider, apiKey);
     const created = await sdk.createAgentSession({
-      cwd: sandbox, agentDir, model, thinkingLevel: "off",
+      cwd: sandbox, agentDir, model, thinkingLevel: "off", modelRuntime,
       noTools: "all", tools: [], customTools: [],
       sessionManager: sdk.SessionManager.inMemory(),
       settingsManager, resourceLoader,
