@@ -10,6 +10,7 @@ import { attachVerification } from "./verifier";
 import { applyCandidateMatch } from "./matching";
 import { isAutoApplyEligibleCandidate } from "./trust";
 import { hasSemanticReviewLineage } from "./semantic-lineage";
+import { semanticProposalSourceBindingMatches } from "./semantic-source-binding";
 import { renderMemoryToDisk } from "./render";
 import { ensureMemoryDirs } from "./paths";
 import { writeVaultPromotionReport } from "./vaultPromotion";
@@ -66,9 +67,21 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
       if (semanticLineage) {
         const evidence = currentEvidence.find((record) =>
           record.id === candidate.evidence_refs[0]);
+        // The source A -> identical-text source B attack can rewrite BOTH
+        // current candidate and stored evidence. Proof of the new B claim
+        // does not authorize applying an unchanged proposal selected for A.
+        // Recompute capture-derived IDs, compare the original proposal's
+        // evidence snapshot, and only then reopen the trusted Pi transcript.
+        if (!semanticProposalSourceBindingMatches(candidate, evidence, op)) {
+          return reject("capture_policy_hold",
+            `Semantic proposition ${candidate.id} is not bound to its original proposal and captured source identity.`);
+        }
         const freshProof = evidence && verifyCandidateTranscriptSource(
           candidate, evidence, proofOptions);
-        if (!freshProof?.verified) {
+        if (!freshProof?.verified
+          || freshProof.source_hash !== candidate.capture_source?.original_message_sha256
+          || freshProof.matched_session_id !== candidate.capture_source?.session_id
+          || freshProof.matched_user_turn_id !== candidate.capture_source?.turn_id) {
           return reject("capture_policy_hold",
             `Semantic proposition ${candidate.id} lacks fresh original-turn transcript proof at governed apply.`);
         }
