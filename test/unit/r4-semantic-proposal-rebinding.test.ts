@@ -99,7 +99,8 @@ describe("R4 original proposal cannot be rebound from A to identical-text B", ()
         // The repro mutates both independent store representations. Merely
         // re-checking the current transcript returns verified turn B.
         const { tamperedCandidate } = relabelToTurnB(f);
-        const source = tamperedCandidate.capture_source!;
+        const source = tamperedCandidate.capture_source;
+        if (!source || source.version !== 2) throw new Error("expected semantic-v2 fixture");
         expect(tamperedCandidate.id).not.toBe(semanticCandidateId(
           source.session_id, source.turn_id, source.original_message_sha256,
           source.proposition_start, source.proposition_end, f.projectId,
@@ -121,7 +122,8 @@ describe("R4 original proposal cannot be rebound from A to identical-text B", ()
   test("source A still applies with unchanged A proposal while same-text B exists", () => {
     const f = fixture();
     try {
-      const source = f.originalCandidate.capture_source!;
+      const source = f.originalCandidate.capture_source;
+      if (!source || source.version !== 2) throw new Error("expected semantic-v2 fixture");
       const expectedCandidateId = semanticCandidateId(
         source.session_id, source.turn_id, source.original_message_sha256,
         source.proposition_start, source.proposition_end, f.projectId,
