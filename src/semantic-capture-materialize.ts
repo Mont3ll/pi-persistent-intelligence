@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { buildSemanticCaptureSourceAttribution } from "./capture-provenance";
-import { appendEvidenceRecord } from "./evidence";
+import { appendEvidenceRecordIfMissing } from "./evidence";
 import { appendOrReinforceCandidate, normalizedPreferenceKey } from "./capture-recurrence";
 import { listCandidates } from "./inbox";
 import { scoreMemoryWorth } from "./memory-worth";
@@ -76,8 +76,13 @@ export function materializeSemanticCaptureCandidates(
     const capturedSource = buildSemanticCaptureSourceAttribution(
       original.sessionId, original.turnId, original.text, entry.start, entry.end);
     const sourceRef = `session:${original.sessionId}:turn:${original.turnId}`;
-    const ev = appendEvidenceRecord(root, {
-      id: "", resource_id: "curation", profile_id: "legacy-default",
+    const evidenceId = "ev_sem_" + createHash("sha256")
+      .update(JSON.stringify([id, fullHash, entry.start, entry.end])).digest("hex").slice(0, 24);
+    // The semantic evidence namespace cannot collide with a legacy source
+    // summary from the same turn. Interrupted/retried capture reuses the
+    // exact evidence record instead of appending duplicates.
+    const ev = appendEvidenceRecordIfMissing(root, {
+      id: evidenceId, resource_id: "curation", profile_id: "legacy-default",
       created_at: now, source_kind: "conversation",
       source_session_id: original.sessionId, source_turn_id: original.turnId,
       source_message_sha256: fullHash,
