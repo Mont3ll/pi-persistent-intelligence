@@ -119,6 +119,9 @@ async function run(): Promise<void> {
       catch { /* the deadline remains latched */ }
     }, MODEL_TIMEOUT_MS);
     await session.prompt(JSON.stringify(parsed));
+    // The inference lifetime ends with prompt completion, not with JSON
+    // serialization; preserve any deadline already latched by the timer.
+    if (deadline) { clearTimeout(deadline); deadline = undefined; }
     if (!session) throw new Error("missing_session");
     // Pi's completed assistant message carries stopReason. A buffered JSON
     // string from an aborted/error/deferred/length-limited stream is NOT a
