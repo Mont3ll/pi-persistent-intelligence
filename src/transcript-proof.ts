@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { semanticCandidateId, semanticEvidenceId } from "./semantic-source-binding";
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
@@ -201,6 +202,22 @@ function validSource(candidate: CaptureCandidate, evidence: EvidenceRecord): boo
     || !source.session_id || source.session_id === "current-session"
     || !source.turn_id || !/^[a-f0-9]{64}$/.test(source.original_message_sha256)) return false;
   const expectedRef = `session:${source.session_id}:turn:${source.turn_id}`;
+  // Provenance V2 carries a content-derived candidate/evidence identity.
+  // Changing the current source A metadata to identical-text turn B must
+  // invalidate the claim even before a curator patch is considered.
+  if (source.version === 2) {
+    const scope = candidate.scope_targets?.length === 1 ? candidate.scope_targets[0] : undefined;
+    if (scope?.type !== "project" || !scope.project) return false;
+    const expectedCandidate = semanticCandidateId(
+      source.session_id, source.turn_id, source.original_message_sha256,
+      source.proposition_start, source.proposition_end, scope.project,
+    );
+    const expectedEvidence = semanticEvidenceId(
+      expectedCandidate, source.original_message_sha256,
+      source.proposition_start, source.proposition_end,
+    );
+    if (candidate.id !== expectedCandidate || evidence.id !== expectedEvidence) return false;
+  }
   return candidate.status === "new"
     && candidate.evidence_refs.length === 1
     && candidate.evidence_ids?.length === 1
