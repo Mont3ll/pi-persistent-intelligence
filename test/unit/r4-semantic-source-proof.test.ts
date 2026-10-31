@@ -10,6 +10,8 @@ import { readEvidenceRecords } from "../../src/evidence";
 import { resolveProjectIdentity } from "../../src/profile";
 import { verifyCandidateTranscriptSource } from "../../src/transcript-proof";
 import { loadActiveRecords } from "../../src/store";
+import { curateInbox } from "../../src/curator";
+import { applyPatch } from "../../src/patch";
 
 function makeReview(original: {sessionId:string;turnId:string;text:string}, phrase: string,
   duration: "standing" | "bounded" = "standing") {
@@ -81,6 +83,23 @@ describe("R4 source-spanned semantic candidate / transcript proof (isolated)", (
       expect(materializeSemanticCaptureCandidates(store, changed, badPlan, projectId,
         "2026-10-31T08:02:00.000Z").created).toBe(0);
       expect(loadActiveRecords(store)).toHaveLength(0);
+
+      // A single verified semantic source is actionable in supervised review,
+      // despite the default two-reference auto floor and auto mode OFF.
+      const patch = curateInbox(store, {
+        now: "2026-10-31T08:03:00.000Z", mode: "supervised",
+        trustedTranscriptOptions: { trustedSessionDirs: [sessions] },
+      });
+      expect(patch.ops).toHaveLength(1);
+      expect(patch.ops[0]!.default_selected).toBe(false);
+      const applied = applyPatch(store, patch, {
+        selectedOpIds: [patch.ops[0]!.op_id],
+        now: "2026-10-31T08:04:00.000Z",
+        trustedTranscriptOptions: { trustedSessionDirs: [sessions] },
+      });
+      expect(applied.applied_ops).toEqual([patch.ops[0]!.op_id]);
+      expect(loadActiveRecords(store)).toHaveLength(1);
+      expect(loadActiveRecords(store)[0]?.statement).toBe(policy);
     } finally { rmSync(temp, { recursive: true, force: true }); }
   });
 
