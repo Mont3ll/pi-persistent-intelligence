@@ -33,6 +33,19 @@ The correction branch now:
 
 **This correction has not yet received independent verification**. Passing it would accept the supervised semantic capture path only, not semantic-model accuracy, production event integration, automatic L2 promotion or release readiness. The two previously reported automatic writes are safety regressions to prevent, not functionality to preserve.
 
+## PR #51 second independent rejection — original proposal source rebinding
+
+At HEAD `38bcfa2da7dfcd5b06701b5e7b9c450edb679c53` (independent tree `80581fcb14d530d1f886521317b89fe0afb9bb52`), the local verifier **REJECTED** PR #51 after reproducing a remaining **supervised original-source rebinding**. All 30 original controls passed, but expanded/diagnostic controls were **54/56**. A real curator patch selected for original user turn A applied after candidate AND independent evidence metadata were relabelled to identical-text turn B; the same exploit worked when A's transcript was subsequently changed. The unchanged proposal's `supportingEvidence` still named A. This is **not** an observed automatic-promotion bypass. Full Bun 963/963, eval 67/67, stress 4/4, release audit and 172-file parity passed on the rejected SHA, but those results do not override the source-binding failure.
+
+The attached independent report is `PI_R4_PR51_RECURRENCE_PROVENANCE_REVERIFICATION.md`. The correction now:
+
+- Centralizes the exact source-bound `cap_sem_` and `ev_sem_` identity formulas in `src/semantic-source-binding.ts`, shared by candidate materialization, transcript source verification and apply-time validation.
+- Fails source-v2 transcript proof when source identity no longer recomputes to the original candidate/evidence IDs, even if the substituted turn has identical text and genuinely exists.
+- In governed application, additionally requires the original proposal's `supportingEvidence` source snapshot to agree with the current candidate/evidence, checks the original proposal candidate ID, statement, scope and evidence reference, and requires a freshly proven matching original turn before committing.
+- Adds full governed regression tests: original A + identical B positive; relabel A→B negative; changed A + B retained negative; proposal source snapshot removed negative. Each unsuccessful application must cause zero canonical L2 adds and zero generation advancement.
+
+**The correction HEAD is not independently verified.** Legacy v1 behavior, previous recurrence/idempotence protections and the accepted PR #49/#50 commits remain unchanged. The verifier must reproduce this report's two remaining controls *and* repeat the original matrix against the precise corrected HEAD. This milestone remains supervised-semantic integrity only. Automatic semantic promotion and the next release stay blocked.
+
 ## Next implementation gates (release-blocking)
 
 1. **Functional semantic capture acceptance:** independent exact-SHA local tests on isolated Pi SDK sessions: durable propositions that appear after 300 characters become distinct candidates with transcript-source verification; temporary/quoted/third-party material never auto-promotes; no duplicate evidence on retries.
