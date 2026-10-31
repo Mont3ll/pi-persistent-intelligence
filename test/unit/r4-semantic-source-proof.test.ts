@@ -70,6 +70,26 @@ describe("R4 source-spanned semantic candidate / transcript proof (isolated)", (
       });
       expect(proof.verified).toBe(true);
       expect(proof.source_hash).toBe(candidate.capture_source?.original_message_sha256);
+      // Exact source bytes alone are insufficient for v2. The message ID
+      // must identify the very user turn that furnished the proposition.
+      const sessionFile = join(sessions, "actual-session.jsonl");
+      writeFileSync(sessionFile, [
+        JSON.stringify({ type: "session", id: original.sessionId, cwd: project }),
+        JSON.stringify({ type: "message", id: "different-turn-id", message: {
+          role: "user", content: [{ type: "text", text: original.text }],
+        } }),
+        "",
+      ].join("\n"));
+      expect(verifyCandidateTranscriptSource(candidate, evidence!, {
+        trustedSessionDirs: [sessions],
+      }).verified).toBe(false);
+      writeFileSync(sessionFile, [
+        JSON.stringify({ type: "session", id: original.sessionId, cwd: project }),
+        JSON.stringify({ type: "message", id: original.turnId, message: {
+          role: "user", content: [{ type: "text", text: original.text }],
+        } }),
+        "",
+      ].join("\n"));
       const repeated = materializeSemanticCaptureCandidates(store, original, plan, projectId,
         "2026-10-31T08:01:00.000Z");
       expect(repeated).toMatchObject({ created: 0, already_present: 1, canonical_writes: 0 });
