@@ -75,6 +75,45 @@ describe("R4 semantic evidence lineage cannot launder automatic authority", () =
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
+  test("semantic capture arriving after a legacy candidate cannot be merged into it", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-semantic-legacy-first-"));
+    try {
+      const request = semanticRequest(original);
+      const assessment = validateSemanticProposal(request, {
+        version: 1, sourceHash: request.source.hash, outcome: "proposed",
+        propositions: [{ start: 0, end: text.length, quote: text,
+          disposition: "durable", endorsement: "direct_user",
+          duration: "standing", scope: "project" }],
+      });
+      const plan = planSemanticCapture(original, assessment, projectId);
+      const baseline: CaptureCandidate = {
+        id: "cap_pref_existing_first", created_at: now,
+        source: { type: "direct_user_instruction", ref: "session:legacy:turn:first" },
+        text, tags: ["capture", "project_convention"], evidence_refs: ["ev_base"],
+        evidence_ids: ["ev_base"], confidence: 0.9, status: "new",
+        ruleType: "convention", memory_kind: "instruction",
+        worth_decision: "candidate", primary_trust_class: "direct_user_instruction",
+        durability_signal: "project", promotion_eligibility: "auto_candidate",
+        capture_intent: "project_convention",
+        scope_targets: [{ type: "project", project: projectId,
+          confidence: 0.9, basis: ["explicit_project_scope"] }],
+        normalized_preference_key: "project_convention:for this project run the lapis integrity audit",
+      };
+      appendOrReinforceCandidate(root, baseline);
+      const result = materializeSemanticCaptureCandidates(root, original, plan, projectId, now);
+      expect(result).toMatchObject({ created: 1, canonical_writes: 0 });
+      const all = listCandidates(root);
+      expect(all).toHaveLength(2);
+      const old = all.find(x => x.id === baseline.id)!;
+      const semantic = all.find(x => x.id.startsWith("cap_sem_"))!;
+      expect(old.evidence_refs).toEqual(["ev_base"]);
+      expect(semantic.evidence_refs).toHaveLength(1);
+      expect(semantic.promotion_eligibility).toBe("review_only");
+      expect(readEvidenceRecords(root)).toHaveLength(1);
+      expect(loadActiveRecords(root)).toHaveLength(0);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   test("merged semantic evidence and erased v2 metadata both block forged automatic L2", () => {
     const root = mkdtempSync(join(tmpdir(), "pi-semantic-taint-"));
     try {
