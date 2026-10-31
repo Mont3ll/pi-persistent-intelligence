@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { semanticRequest, validateSemanticProposal } from "../../src/semantic-assessment";
 import { planSemanticCapture } from "../../src/semantic-capture-plan";
 import { materializeSemanticCaptureCandidates } from "../../src/semantic-capture-materialize";
-import { appendOrReinforceCandidate } from "../../src/capture-recurrence";
+import { appendOrReinforceCandidate, normalizedPreferenceKey } from "../../src/capture-recurrence";
 import { listCandidates, replaceCandidates } from "../../src/inbox";
 import { readEvidenceRecords } from "../../src/evidence";
 import { curateInbox } from "../../src/curator";
@@ -97,7 +97,7 @@ describe("R4 semantic evidence lineage cannot launder automatic authority", () =
         capture_intent: "project_convention",
         scope_targets: [{ type: "project", project: projectId,
           confidence: 0.9, basis: ["explicit_project_scope"] }],
-        normalized_preference_key: "project_convention:for this project run the lapis integrity audit",
+        normalized_preference_key: normalizedPreferenceKey(text, "project_convention"),
       };
       appendOrReinforceCandidate(root, baseline);
       const result = materializeSemanticCaptureCandidates(root, original, plan, projectId, now);
@@ -133,6 +133,12 @@ describe("R4 semantic evidence lineage cannot launder automatic authority", () =
       rows.push(legacy);
       replaceCandidates(root, rows);
       expect(hasSemanticReviewLineage(legacy, readEvidenceRecords(root))).toBe(true);
+      // Even removing the evidence ID cannot transform the same authenticated
+      // semantic source turn into generic memory authority.
+      const stripped = { ...legacy, id: "cap_pref_mislabelled_source",
+        evidence_refs: ["ev_unrelated"], evidence_ids: ["ev_unrelated"],
+        source: { ...semantic.source } };
+      expect(hasSemanticReviewLineage(stripped, readEvidenceRecords(root))).toBe(true);
       const automatic = curateInbox(root, { mode: "auto", now });
       expect(automatic.ops).toHaveLength(0);
       expect(loadActiveRecords(root)).toHaveLength(0);
