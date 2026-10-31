@@ -13,6 +13,7 @@ import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
 import { createInquiryFromCandidate } from "./inquiries";
 import { readEvidenceRecords } from "./evidence";
+import { hasSemanticReviewLineage } from "./semantic-lineage";
 import { resolveEvidenceReference } from "./evidence-resolution";
 import { getDerivedRecordMemoryKeyV2, isStructuralMemoryKey } from "./memory-key";
 import type { CaptureCandidate, CaptureScopeTarget, EvidenceRecord, MemoryPatch, MemoryRecord, MemoryScope, PatchOp } from "./types";
@@ -221,7 +222,7 @@ function withCurationDiscovery(root: string, options: CurateOptions): CurateOpti
   // single-source evidence count, even with source-aware AUTO disabled.
   const semanticReviewPending = options.mode !== "auto"
     && listCandidates(root).some((candidate) =>
-      candidate.status === "new" && candidate.capture_source?.version === 2);
+      candidate.status === "new" && hasSemanticReviewLineage(candidate, readEvidenceRecords(root)));
   if (config.sourceAwareAuto !== "transcript-verified-direct-user"
     && !semanticReviewPending) return options;
   // Avoid scanning the session archive without a relevant NEW candidate.
@@ -248,8 +249,10 @@ function eligibleCandidates(
   const evidence = readEvidenceRecords(root);
   return listCandidates(root).filter((candidate) => {
     if (candidate.status !== "new" || (candidate.confidence ?? 0) < minConfidence) return false;
-    if (candidate.capture_source?.version === 2) {
-      if (options.mode === "auto") return false;
+    if (hasSemanticReviewLineage(candidate, evidence)) {
+      // Treat semantic evidence as review-only even when mutable v2 capture
+      // metadata has been erased or legacy recurrence contaminated it.
+      if (options.mode === "auto" || candidate.capture_source?.version !== 2) return false;
       const source = evidence.find((item) => item.id === candidate.evidence_refs[0]);
       // Only a real source-verified semantic proposition can reach supervised
       // review; candidate flags and model claims do not count as proof.
@@ -379,7 +382,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
         ?? decideTrustedAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig, options.trustedTranscriptOptions);
       const evidenceCountMeetsConfiguredFloor = evidenceDecision.eligible;
       const autoApplyEligible = evidenceCountMeetsConfiguredFloor
-        && candidate.capture_source?.version !== 2 // semantic model output is review-only until separate authority gate
+        && !hasSemanticReviewLineage(candidate, existingEvidence) // include independently persisted evidence taint
         && !isGlobalPreference
         && currentPolicyAllowsAutoApply(candidate)
         && isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
