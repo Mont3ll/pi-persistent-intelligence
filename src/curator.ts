@@ -365,6 +365,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
         ?? decideTrustedAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig, options.trustedTranscriptOptions);
       const evidenceCountMeetsConfiguredFloor = evidenceDecision.eligible;
       const autoApplyEligible = evidenceCountMeetsConfiguredFloor
+        && candidate.capture_source?.version !== 2 // semantic model output is review-only until separate authority gate
         && !isGlobalPreference
         && currentPolicyAllowsAutoApply(candidate)
         && isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");
