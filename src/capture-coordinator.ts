@@ -7,7 +7,7 @@ import { appendOrReinforceCandidate, findExactActiveCanonical, normalizedPrefere
 import { resolveCaptureScopes } from "./capture-scope";
 import { loadConfig } from "./config";
 import { appendDailyLog } from "./daily";
-import { appendEvidenceRecord } from "./evidence";
+import { appendEvidenceRecordIfMissing } from "./evidence";
 import { readJsonl, writeJsonl } from "./jsonl";
 import { scoreMemoryWorth } from "./memory-worth";
 import { ensureMemoryDirs } from "./paths";
@@ -160,7 +160,7 @@ export function processCaptureTurn(root: string, input: CaptureTurnInput): Captu
         const sourceRef = `session:${input.session_id}:turn:${input.turn_id}`;
         const capturedText = input.message.trim().slice(0, 300).replace(/\s+/g, " ");
         const captureSource = buildCaptureSourceAttribution(input.session_id, input.turn_id, input.message, capturedText);
-        const evidence = appendEvidenceRecord(root, {
+        const evidence = appendEvidenceRecordIfMissing(root, {
           id: "",
           resource_id: "curation",
           profile_id: "legacy-default",
