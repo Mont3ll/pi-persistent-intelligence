@@ -4,7 +4,7 @@ import { addMemoryRecordFromPatch, loadAllRecords, PATCH_APPLY_CONTEXT, updateMe
 import { listCandidates, updateCandidateStatus } from "./inbox";
 import { classifyCaptureIntent } from "./capture-intent";
 import { decideTrustedAutoEvidenceEligibility } from "./auto-evidence-policy";
-import type { TranscriptProofOptions } from "./transcript-proof";
+import { verifyCandidateTranscriptSource, type TranscriptProofOptions } from "./transcript-proof";
 import { loadConfig } from "./config";
 import { attachVerification } from "./verifier";
 import { applyCandidateMatch } from "./matching";
@@ -58,6 +58,16 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
       if (candidate.capture_source?.version === 2 && (mode === "auto" || !explicitlySelected)) {
         return reject("capture_policy_hold",
           `Semantic proposition ${candidate.id} requires an explicitly reviewed governed operation; model assessments are not automatic write authority.`);
+      }
+      if (candidate.capture_source?.version === 2) {
+        const evidence = readEvidenceRecords(root).find((record) =>
+          record.id === candidate.evidence_refs[0]);
+        const freshProof = evidence && verifyCandidateTranscriptSource(
+          candidate, evidence, proofOptions);
+        if (!freshProof?.verified) {
+          return reject("capture_policy_hold",
+            `Semantic proposition ${candidate.id} lacks fresh original-turn transcript proof at governed apply.`);
+        }
       }
       if (candidate.capture_intent === "not_memory" || candidate.capture_intent === "temporary_instruction") {
         return reject("capture_policy_hold", `Candidate ${candidate.id} was captured as ${candidate.capture_intent}; promotion is prohibited.`);
