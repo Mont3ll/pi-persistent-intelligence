@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { semanticCandidateId, semanticEvidenceId } from "./semantic-source-binding";
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
@@ -53,6 +54,9 @@ export interface TranscriptProofOptions {
 
 function hash(text: string): string {
   return createHash("sha256").update(text.trim()).digest("hex");
+}
+function exactHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 function extractUserText(content: unknown): string {
@@ -183,11 +187,37 @@ function trustedTranscriptPath(file: string, roots: readonly string[]): boolean 
 
 function validSource(candidate: CaptureCandidate, evidence: EvidenceRecord): boolean {
   const source = candidate.capture_source;
-  if (!source || source.version !== 1 || source.policy_version !== "capture-intent-v1"
+  const validPolicy = source && (source.version === 1
+    ? source.policy_version === "capture-intent-v1"
+    : source.version === 2 && source.policy_version === "capture-semantic-v1"
+      && Number.isSafeInteger(source.proposition_start)
+      && Number.isSafeInteger(source.proposition_end)
+      && source.proposition_start >= 0
+      && source.proposition_end > source.proposition_start
+      && source.proposition_end <= source.original_character_count
+      && source.proposition_end - source.proposition_start === candidate.text.length
+      && candidate.text.length <= 300);
+  if (!source || !validPolicy
     || source.identity_quality !== "observed_session_id"
     || !source.session_id || source.session_id === "current-session"
     || !source.turn_id || !/^[a-f0-9]{64}$/.test(source.original_message_sha256)) return false;
   const expectedRef = `session:${source.session_id}:turn:${source.turn_id}`;
+  // Provenance V2 carries a content-derived candidate/evidence identity.
+  // Changing the current source A metadata to identical-text turn B must
+  // invalidate the claim even before a curator patch is considered.
+  if (source.version === 2) {
+    const scope = candidate.scope_targets?.length === 1 ? candidate.scope_targets[0] : undefined;
+    if (scope?.type !== "project" || !scope.project) return false;
+    const expectedCandidate = semanticCandidateId(
+      source.session_id, source.turn_id, source.original_message_sha256,
+      source.proposition_start, source.proposition_end, scope.project,
+    );
+    const expectedEvidence = semanticEvidenceId(
+      expectedCandidate, source.original_message_sha256,
+      source.proposition_start, source.proposition_end,
+    );
+    if (candidate.id !== expectedCandidate || evidence.id !== expectedEvidence) return false;
+  }
   return candidate.status === "new"
     && candidate.evidence_refs.length === 1
     && candidate.evidence_ids?.length === 1
@@ -197,7 +227,7 @@ function validSource(candidate: CaptureCandidate, evidence: EvidenceRecord): boo
     && (candidate.source.type === "direct_user_instruction"
       || candidate.source.type === "user_correction")
     && evidence.source_kind === "conversation"
-    && evidence.notes === "capture_evidence_v1"
+    && evidence.notes === (source.version === 2 ? "capture_evidence_semantic_v1" : "capture_evidence_v1")
     && evidence.source_ref === expectedRef
     && evidence.source_session_id === source.session_id
     && evidence.source_turn_id === source.turn_id
@@ -309,12 +339,21 @@ export function verifyCandidateTranscriptSource(
     // Project identity must be derived independently from the trusted Pi
     // session header, not from the candidate's proposed target alone.
     if (resolveProjectIdentity(resolve(transcript.cwd)).project_id !== target.project) return held("scope_mismatch");
+    // v2 binds BOTH message contents and original turn ID. Two distinct
+    // user turns may legitimately repeat the same instruction; reject only
+    // ambiguous matches for the *specified* ID/hash pair. v1 retains the
+    // historical unique-text fallback for transcripts with no reliable ID.
     const turns = transcript.userTurns.filter((turn) =>
-      hash(turn.text) === source.original_message_sha256);
+      source.version === 2
+        ? turn.turnId === source.turn_id
+          && exactHash(turn.text) === source.original_message_sha256
+        : hash(turn.text) === source.original_message_sha256);
     if (turns.length === 0) return held("user_turn_missing");
     if (turns.length > 1) return held("ambiguous_user_turn");
-    const full = turns[0]!.text.trim();
-    const excerpt = full.slice(0, 300).replace(/\s+/g, " ");
+    const full = source.version === 2 ? turns[0]!.text : turns[0]!.text.trim();
+    const excerpt = source.version === 2
+      ? full.slice(source.proposition_start, source.proposition_end)
+      : full.slice(0, 300).replace(/\s+/g, " ");
     if (full.length !== source.original_character_count
       || excerpt !== candidate.text
       || excerpt.length !== source.persisted_excerpt_character_count
