@@ -220,13 +220,16 @@ function withCurationDiscovery(root: string, options: CurateOptions): CurateOpti
   const config = loadConfig(root).curator;
   // Review-only semantic propositions must remain usable at the ordinary
   // single-source evidence count, even with source-aware AUTO disabled.
+  const candidates = listCandidates(root);
+  const evidence = readEvidenceRecords(root);
   const semanticReviewPending = options.mode !== "auto"
-    && listCandidates(root).some((candidate) =>
-      candidate.status === "new" && hasSemanticReviewLineage(candidate, readEvidenceRecords(root)));
+    && candidates.some((candidate) =>
+      candidate.status === "new" && candidate.capture_source?.version === 2
+      && hasSemanticReviewLineage(candidate, evidence));
   if (config.sourceAwareAuto !== "transcript-verified-direct-user"
     && !semanticReviewPending) return options;
   // Avoid scanning the session archive without a relevant NEW candidate.
-  const hasUnderfloor = semanticReviewPending || listCandidates(root).some((candidate) =>
+  const hasUnderfloor = semanticReviewPending || candidates.some((candidate) =>
     candidate.status === "new" && candidate.evidence_refs.length < config.minEvidenceCount);
   if (!hasUnderfloor) return options;
   return {
