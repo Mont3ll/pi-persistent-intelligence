@@ -73,6 +73,21 @@ describe("R4 source-spanned semantic candidate / transcript proof (isolated)", (
       // Exact source bytes alone are insufficient for v2. The message ID
       // must identify the very user turn that furnished the proposition.
       const sessionFile = join(sessions, "actual-session.jsonl");
+      // Repeated identical user text on a *different* turn is legitimate:
+      // the authenticated v2 turn ID disambiguates it from the source turn.
+      writeFileSync(sessionFile, [
+        JSON.stringify({ type: "session", id: original.sessionId, cwd: project }),
+        JSON.stringify({ type: "message", id: original.turnId, message: {
+          role: "user", content: [{ type: "text", text: original.text }],
+        } }),
+        JSON.stringify({ type: "message", id: "other-turn-with-same-text", message: {
+          role: "user", content: [{ type: "text", text: original.text }],
+        } }),
+        "",
+      ].join("\n"));
+      expect(verifyCandidateTranscriptSource(candidate, evidence!, {
+        trustedSessionDirs: [sessions],
+      }).verified).toBe(true);
       writeFileSync(sessionFile, [
         JSON.stringify({ type: "session", id: original.sessionId, cwd: project }),
         JSON.stringify({ type: "message", id: "different-turn-id", message: {
