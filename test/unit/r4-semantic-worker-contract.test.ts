@@ -65,6 +65,16 @@ describe("R4 Pi-hosted LLM evaluation worker (no model calls)", () => {
     expect(source).not.toContain('await import("@earendil-works/pi-ai")');
     expect(source.indexOf("modelRuntime.getModel(provider, modelId)"))
       .toBeGreaterThan(source.indexOf("setRuntimeApiKey(provider, apiKey)"));
+    // Parseable output from an aborted provider stream is not success.
+    expect(source).toContain("deadlineExpired = true");
+    expect(source).toContain("assertSuccessfulSemanticCompletion({");
+    expect(source).toContain("messages: session.agent.state.messages");
+    expect(source).toContain("errorMessage: session.agent.state.errorMessage");
+    expect(source).toContain("isStreaming: session.isStreaming");
+    expect(source.indexOf("assertSuccessfulSemanticCompletion({"))
+      .toBeLessThan(source.indexOf("const result = session.getLastAssistantText()"));
+    expect(source.indexOf("assertSuccessfulSemanticCompletion({"))
+      .toBeLessThan(source.indexOf("process.stdout.write(JSON.stringify(output)"));
     expect(source).not.toContain("process.env.HOME");
   });
 });
