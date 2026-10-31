@@ -92,6 +92,27 @@ describe("R4 source-spanned semantic candidate / transcript proof (isolated)", (
       });
       expect(patch.ops).toHaveLength(1);
       expect(patch.ops[0]!.default_selected).toBe(false);
+      // Neither curating in auto mode nor rewriting a proposal into an
+      // auto-selected operation may promote unratified semantic evidence.
+      const automatic = curateInbox(store, {
+        now: "2026-10-31T08:03:10.000Z", mode: "auto",
+        minEvidenceCount: 1, trustedTranscriptOptions: { trustedSessionDirs: [sessions] },
+      });
+      expect(automatic.ops).toHaveLength(0);
+      const forgedAuto = {
+        ...patch, patch_id: patch.patch_id + "_forged_auto",
+        mode: "auto" as const,
+        ops: patch.ops.map(op => ({ ...op, default_selected: true })),
+      };
+      const blocked = applyPatch(store, forgedAuto, {
+        now: "2026-10-31T08:03:20.000Z",
+        selectedOpIds: [patch.ops[0]!.op_id],
+        trustedTranscriptOptions: { trustedSessionDirs: [sessions] },
+      });
+      expect(blocked.applied_ops).toHaveLength(0);
+      expect(blocked.skipped_ops.some(skip => skip.reason === "capture_policy_hold")).toBe(true);
+      expect(loadActiveRecords(store)).toHaveLength(0);
+
       const applied = applyPatch(store, patch, {
         selectedOpIds: [patch.ops[0]!.op_id],
         now: "2026-10-31T08:04:00.000Z",
