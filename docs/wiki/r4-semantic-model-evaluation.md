@@ -15,6 +15,12 @@ The independent verifier **ACCEPTED** PR #49's read-only infrastructure boundary
 - The existing `commandSemanticAdapter` is the outer hard-deadline, hard-kill boundary. In-process Pi SDK cancellation is **not** by itself a security boundary.
 - `test/unit/r4-semantic-worker-contract.test.ts` covers missing configuration and sanitized failure without a real provider request. Actual SDK resource-disable behavior must be independently witnessed on the exact installed host version before any private user transcript is evaluated.
 
+## Pi 1.4.0 model catalog compatibility
+
+An independent local verification of the initial PR #50 implementation rejected it: `@earendil-works/pi-ai` no longer exports `getModel` from its root. The legacy helper exists under `@earendil-works/pi-ai/compat`, but the updated worker instead resolves `modelRuntime.getModel(provider, modelId)` **after** configuring the dedicated runtime key. This keeps catalog lookup and session inference on one isolated `ModelRuntime`, without relying on the temporary compatibility entrypoint.
+
+**New acceptance gate:** install the actual Pi 1.4.0 SDK peers in an isolated fixture and exercise the *unmodified* worker end-to-end using a known model catalog entry, a dedicated synthetic key and a loopback/mock model response. Verify that it reaches session creation, has zero active tools/discovered resources, produces a JSON semantic proposal, and leaves no Pi store writes. This is not satisfied by a separate diagnostic harness that reconstructs a similar session. If an API mismatch remains, REJECT with the exact failing call.
+
 ## Manual opt-in model experiment
 
 Run only in a trusted/sandboxed machine with the supported Pi SDK peers installed, and **only** a privacy-reviewed synthetic/labelled corpus. The worker inherits normal OS permissions. Prefer a separate sandboxed user or container without access to live PI stores. Environment variables set by the operator:
