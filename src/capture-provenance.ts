@@ -19,6 +19,43 @@ export interface CaptureSourceAttribution {
   persisted_excerpt_character_count: number;
 }
 
+/** Exact proposition span inside one original user turn (not its first 300 chars).
+ * An LLM-proposed span is not proof of authorship or durability; the trusted
+ * Pi session file must still be independently reopened at promotion.
+ */
+export interface SemanticCaptureSourceAttribution {
+  version: 2;
+  policy_version: "capture-semantic-v1";
+  session_id: string;
+  turn_id: string;
+  identity_quality: CaptureSourceIdentityQuality;
+  original_message_sha256: string;
+  transcript_verification: "unverified";
+  original_character_count: number;
+  persisted_excerpt_character_count: number;
+  proposition_start: number;
+  proposition_end: number;
+}
+
+export function buildSemanticCaptureSourceAttribution(
+  sessionId: string, turnId: string, originalMessage: string,
+  start: number, end: number,
+): SemanticCaptureSourceAttribution {
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)
+    || start < 0 || end <= start || end > originalMessage.length
+    || end - start > 300) throw new Error("invalid_semantic_source_span");
+  return {
+    version: 2, policy_version: "capture-semantic-v1",
+    session_id: sessionId, turn_id: turnId,
+    identity_quality: validSessionId(sessionId) ? "observed_session_id" : "unresolved",
+    original_message_sha256: createHash("sha256").update(originalMessage).digest("hex"),
+    transcript_verification: "unverified",
+    original_character_count: originalMessage.length,
+    persisted_excerpt_character_count: end - start,
+    proposition_start: start, proposition_end: end,
+  };
+}
+
 type CaptureSessionManager = { getSessionId?: () => unknown };
 type CaptureEvent = { session_id?: unknown; sessionId?: unknown };
 type CaptureContext = { sessionManager?: CaptureSessionManager } | undefined;

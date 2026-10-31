@@ -1,4 +1,6 @@
 import { listCandidates, replaceCandidates } from "./inbox";
+import { readEvidenceRecords } from "./evidence";
+import { hasSemanticReviewLineage } from "./semantic-lineage";
 import { loadActiveRecords } from "./store";
 import { detectTaskCategories } from "./capture-applicability";
 import { negativeScopeProcessor, positiveApplicabilityProcessor } from "./processors";
@@ -96,10 +98,17 @@ export function findExactActiveCanonical(
   }) ?? null;
 }
 
-export function findEquivalentCandidate(root: string, key: string, scopes: CaptureScopeTarget[] | undefined): CaptureCandidate | null {
+export function findEquivalentCandidate(
+  root: string, key: string, scopes: CaptureScopeTarget[] | undefined,
+): CaptureCandidate | null {
   const expectedScopes = canonicalScopes(scopes);
+  const evidence = readEvidenceRecords(root);
+  // Generic recurrence must never absorb a review-only semantic source.
+  // Otherwise a source-v2 reference becomes a second ordinary reference
+  // and silently crosses the configured auto-apply floor.
   return listCandidates(root).find((candidate) =>
     candidate.status === "new"
+    && !hasSemanticReviewLineage(candidate, evidence)
     && candidate.normalized_preference_key === key
     && canonicalScopes(candidate.scope_targets) === expectedScopes
   ) ?? null;
@@ -108,9 +117,15 @@ export function findEquivalentCandidate(root: string, key: string, scopes: Captu
 export function appendOrReinforceCandidate(root: string, incoming: CaptureCandidate): { action: "created" | "reinforced"; candidate: CaptureCandidate } {
   const key = incoming.normalized_preference_key ?? normalizedPreferenceKey(incoming.text, incoming.capture_intent ?? "behavior_correction");
   const rows = listCandidates(root);
+  const evidence = readEvidenceRecords(root);
+  const semanticIncoming = hasSemanticReviewLineage(incoming, evidence);
   const exactNew = rows.find((candidate) => candidate.id === incoming.id && candidate.status === "new");
   const exactTerminal = rows.find((candidate) => candidate.id === incoming.id && candidate.status !== "new");
-  const existing = exactNew ?? exactTerminal ?? findEquivalentCandidate(root, key, incoming.scope_targets);
+  // Source-v2 candidates are proposition-specific; a textual recurrence
+  // equivalence cannot authorize merging them with generic legacy memory.
+  // An exact retry is a no-op, not additional independent evidence.
+  const existing = exactNew ?? exactTerminal
+    ?? (semanticIncoming ? null : findEquivalentCandidate(root, key, incoming.scope_targets));
   if (!existing) {
     const candidate = { ...incoming, normalized_preference_key: key, recurrence_count: incoming.recurrence_count ?? 1 };
     rows.push(candidate);
@@ -119,6 +134,13 @@ export function appendOrReinforceCandidate(root: string, incoming: CaptureCandid
   }
 
   if (existing.status !== "new") return { action: "reinforced", candidate: existing };
+  if (semanticIncoming || hasSemanticReviewLineage(existing, evidence)) {
+    if (existing.id !== incoming.id) {
+      throw new Error("semantic_lineage_recurring_source_mismatch");
+    }
+    // Never increment recurrence_count or append evidence on replay.
+    return { action: "reinforced", candidate: existing };
+  }
 
   const updated: CaptureCandidate = {
     ...existing,

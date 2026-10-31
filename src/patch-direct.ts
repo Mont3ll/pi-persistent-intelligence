@@ -4,11 +4,12 @@ import { addMemoryRecordFromPatch, loadAllRecords, PATCH_APPLY_CONTEXT, updateMe
 import { listCandidates, updateCandidateStatus } from "./inbox";
 import { classifyCaptureIntent } from "./capture-intent";
 import { decideTrustedAutoEvidenceEligibility } from "./auto-evidence-policy";
-import type { TranscriptProofOptions } from "./transcript-proof";
+import { verifyCandidateTranscriptSource, type TranscriptProofOptions } from "./transcript-proof";
 import { loadConfig } from "./config";
 import { attachVerification } from "./verifier";
 import { applyCandidateMatch } from "./matching";
 import { isAutoApplyEligibleCandidate } from "./trust";
+import { hasSemanticReviewLineage } from "./semantic-lineage";
 import { renderMemoryToDisk } from "./render";
 import { ensureMemoryDirs } from "./paths";
 import { writeVaultPromotionReport } from "./vaultPromotion";
@@ -50,6 +51,27 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
     if (candidate) {
       if (candidate.worth_decision && candidate.worth_decision !== "candidate") {
         return reject("capture_policy_hold", `Candidate ${candidate.id} has memory-worth decision ${candidate.worth_decision}; promotion is prohibited.`);
+      }
+      // R4 proposition candidates are independently source-verifiable but
+      // their model interpretation is not yet a ratified automatic-authority
+      // policy. Neither forged metadata nor a second evidence reference may
+      // silently grant automatic application before the semantic benchmark.
+      const currentEvidence = readEvidenceRecords(root);
+      const semanticLineage = hasSemanticReviewLineage(candidate, currentEvidence);
+      if (semanticLineage && (mode === "auto" || !explicitlySelected
+        || candidate.capture_source?.version !== 2)) {
+        return reject("capture_policy_hold",
+          `Semantic proposition ${candidate.id} requires intact v2 provenance and an explicitly selected supervised governed operation; mutable flags or recurrence cannot authorize automatic writes.`);
+      }
+      if (semanticLineage) {
+        const evidence = currentEvidence.find((record) =>
+          record.id === candidate.evidence_refs[0]);
+        const freshProof = evidence && verifyCandidateTranscriptSource(
+          candidate, evidence, proofOptions);
+        if (!freshProof?.verified) {
+          return reject("capture_policy_hold",
+            `Semantic proposition ${candidate.id} lacks fresh original-turn transcript proof at governed apply.`);
+        }
       }
       if (candidate.capture_intent === "not_memory" || candidate.capture_intent === "temporary_instruction") {
         return reject("capture_policy_hold", `Candidate ${candidate.id} was captured as ${candidate.capture_intent}; promotion is prohibited.`);

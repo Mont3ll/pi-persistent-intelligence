@@ -8,11 +8,12 @@ import { isAutoApplyEligibleCandidate } from "./trust";
 import { classifyCaptureIntent } from "./capture-intent";
 import { loadConfig } from "./config";
 import { decideTrustedAutoEvidenceEligibility, type AutoEvidenceDecision } from "./auto-evidence-policy";
-import { createTranscriptDiscoveryIndex, type TranscriptProofOptions } from "./transcript-proof";
+import { createTranscriptDiscoveryIndex, verifyCandidateTranscriptSource, type TranscriptProofOptions } from "./transcript-proof";
 import { applyCandidateMatch } from "./matching";
 import { attachVerification } from "./verifier";
 import { createInquiryFromCandidate } from "./inquiries";
 import { readEvidenceRecords } from "./evidence";
+import { hasSemanticReviewLineage } from "./semantic-lineage";
 import { resolveEvidenceReference } from "./evidence-resolution";
 import { getDerivedRecordMemoryKeyV2, isStructuralMemoryKey } from "./memory-key";
 import type { CaptureCandidate, CaptureScopeTarget, EvidenceRecord, MemoryPatch, MemoryRecord, MemoryScope, PatchOp } from "./types";
@@ -217,9 +218,15 @@ function candidateToRecord(candidate: CaptureCandidate, now: string, target?: Ca
 function withCurationDiscovery(root: string, options: CurateOptions): CurateOptions {
   if (options.trustedTranscriptOptions?.discoveryIndex) return options;
   const config = loadConfig(root).curator;
-  if (config.sourceAwareAuto !== "transcript-verified-direct-user") return options;
-  // Avoid scanning the session archive when no under-floor NEW candidate exists.
-  const hasUnderfloor = listCandidates(root).some((candidate) =>
+  // Review-only semantic propositions must remain usable at the ordinary
+  // single-source evidence count, even with source-aware AUTO disabled.
+  const semanticReviewPending = options.mode !== "auto"
+    && listCandidates(root).some((candidate) =>
+      candidate.status === "new" && hasSemanticReviewLineage(candidate, readEvidenceRecords(root)));
+  if (config.sourceAwareAuto !== "transcript-verified-direct-user"
+    && !semanticReviewPending) return options;
+  // Avoid scanning the session archive without a relevant NEW candidate.
+  const hasUnderfloor = semanticReviewPending || listCandidates(root).some((candidate) =>
     candidate.status === "new" && candidate.evidence_refs.length < config.minEvidenceCount);
   if (!hasUnderfloor) return options;
   return {
@@ -242,6 +249,16 @@ function eligibleCandidates(
   const evidence = readEvidenceRecords(root);
   return listCandidates(root).filter((candidate) => {
     if (candidate.status !== "new" || (candidate.confidence ?? 0) < minConfidence) return false;
+    if (hasSemanticReviewLineage(candidate, evidence)) {
+      // Treat semantic evidence as review-only even when mutable v2 capture
+      // metadata has been erased or legacy recurrence contaminated it.
+      if (options.mode === "auto" || candidate.capture_source?.version !== 2) return false;
+      const source = evidence.find((item) => item.id === candidate.evidence_refs[0]);
+      // Only a real source-verified semantic proposition can reach supervised
+      // review; candidate flags and model claims do not count as proof.
+      return !!source && verifyCandidateTranscriptSource(
+        candidate, source, options.trustedTranscriptOptions).verified;
+    }
     if (candidate.evidence_refs.length >= minEvidenceCount) return true;
     const decision = decideTrustedAutoEvidenceEligibility(
       candidate, evidence, config, options.trustedTranscriptOptions);
@@ -365,6 +382,7 @@ function buildPatch(root: string, options: CurateOptions, llmContradictions = ne
         ?? decideTrustedAutoEvidenceEligibility(candidate, existingEvidence, curatorConfig, options.trustedTranscriptOptions);
       const evidenceCountMeetsConfiguredFloor = evidenceDecision.eligible;
       const autoApplyEligible = evidenceCountMeetsConfiguredFloor
+        && !hasSemanticReviewLineage(candidate, existingEvidence) // include independently persisted evidence taint
         && !isGlobalPreference
         && currentPolicyAllowsAutoApply(candidate)
         && isAutoApplyEligibleCandidate(candidate, options.governanceMode ?? "compatibility");

@@ -54,6 +54,9 @@ export interface TranscriptProofOptions {
 function hash(text: string): string {
   return createHash("sha256").update(text.trim()).digest("hex");
 }
+function exactHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
 
 function extractUserText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -183,7 +186,17 @@ function trustedTranscriptPath(file: string, roots: readonly string[]): boolean 
 
 function validSource(candidate: CaptureCandidate, evidence: EvidenceRecord): boolean {
   const source = candidate.capture_source;
-  if (!source || source.version !== 1 || source.policy_version !== "capture-intent-v1"
+  const validPolicy = source && (source.version === 1
+    ? source.policy_version === "capture-intent-v1"
+    : source.version === 2 && source.policy_version === "capture-semantic-v1"
+      && Number.isSafeInteger(source.proposition_start)
+      && Number.isSafeInteger(source.proposition_end)
+      && source.proposition_start >= 0
+      && source.proposition_end > source.proposition_start
+      && source.proposition_end <= source.original_character_count
+      && source.proposition_end - source.proposition_start === candidate.text.length
+      && candidate.text.length <= 300);
+  if (!source || !validPolicy
     || source.identity_quality !== "observed_session_id"
     || !source.session_id || source.session_id === "current-session"
     || !source.turn_id || !/^[a-f0-9]{64}$/.test(source.original_message_sha256)) return false;
@@ -197,7 +210,7 @@ function validSource(candidate: CaptureCandidate, evidence: EvidenceRecord): boo
     && (candidate.source.type === "direct_user_instruction"
       || candidate.source.type === "user_correction")
     && evidence.source_kind === "conversation"
-    && evidence.notes === "capture_evidence_v1"
+    && evidence.notes === (source.version === 2 ? "capture_evidence_semantic_v1" : "capture_evidence_v1")
     && evidence.source_ref === expectedRef
     && evidence.source_session_id === source.session_id
     && evidence.source_turn_id === source.turn_id
@@ -310,11 +323,20 @@ export function verifyCandidateTranscriptSource(
     // session header, not from the candidate's proposed target alone.
     if (resolveProjectIdentity(resolve(transcript.cwd)).project_id !== target.project) return held("scope_mismatch");
     const turns = transcript.userTurns.filter((turn) =>
-      hash(turn.text) === source.original_message_sha256);
+      (source.version === 2 ? exactHash(turn.text) : hash(turn.text))
+        === source.original_message_sha256);
     if (turns.length === 0) return held("user_turn_missing");
     if (turns.length > 1) return held("ambiguous_user_turn");
-    const full = turns[0]!.text.trim();
-    const excerpt = full.slice(0, 300).replace(/\s+/g, " ");
+    // Historical v1 can legitimately lack a reliable message ID and retains
+    // unique full-message-hash fallback. Semantic v2, however, confers a
+    // specific proposition-to-turn binding: do not accept merely because an
+    // unrelated user turn happens to contain identical source bytes.
+    if (source.version === 2 && (!turns[0]!.turnId
+      || turns[0]!.turnId !== source.turn_id)) return held("user_turn_missing");
+    const full = source.version === 2 ? turns[0]!.text : turns[0]!.text.trim();
+    const excerpt = source.version === 2
+      ? full.slice(source.proposition_start, source.proposition_end)
+      : full.slice(0, 300).replace(/\s+/g, " ");
     if (full.length !== source.original_character_count
       || excerpt !== candidate.text
       || excerpt.length !== source.persisted_excerpt_character_count
