@@ -80,6 +80,7 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
         // transaction workspace. A model only assesses original user text,
         // not conflicts already stored in canonical memory.
         && semanticAutoCurrentStateAllowsNewAdd(root, candidate)
+        && typeof semanticAutoExpectedGeneration === "number"
         && permitsSemanticAutoOperation(semanticAutoPermit, op, candidate,
           semanticAutoExpectedGeneration);
       if (semanticLineage && (!semanticAutoAllowed && (mode === "auto" || !explicitlySelected)
