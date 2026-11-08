@@ -18,6 +18,7 @@ const permits = new WeakMap<object, Readonly<{
   sessionId: string;
   turnId: string;
   projectId: string;
+  proposalGeneration: number;
   issuedAtMs: number;
 }>>();
 const MAX_PERMIT_AGE_MS = 60_000;
@@ -37,10 +38,11 @@ export function issueSemanticAutoPermit(input: {
   candidate: CaptureCandidate;
   evidence: EvidenceRecord;
   projectId: string;
+  proposalGeneration: number;
   patch: MemoryPatch;
   op: PatchOp;
 }): SemanticAutoPermit | null {
-  const { original, first, second, candidate, evidence, projectId, patch, op } = input;
+  const { original, first, second, candidate, evidence, projectId, proposalGeneration, patch, op } = input;
   const hash = createHash("sha256").update(original.text).digest("hex");
   const expectedPlan = (plan: SemanticCapturePlan): boolean => {
     const entry = plan.entries[0];
@@ -55,7 +57,8 @@ export function issueSemanticAutoPermit(input: {
       && entry.automaticPromotionAuthorized === false
       && original.text.slice(entry.start, entry.end) === entry.quote;
   };
-  if (!expectedPlan(first) || !expectedPlan(second)
+  if (!Number.isSafeInteger(proposalGeneration) || proposalGeneration < 0
+    || !expectedPlan(first) || !expectedPlan(second)
     || JSON.stringify(first.entries) !== JSON.stringify(second.entries)
     || patch.generated_by !== "curator" || patch.mode !== "auto"
     || patch.ops.length !== 1 || patch.ops[0] !== op
@@ -78,7 +81,7 @@ export function issueSemanticAutoPermit(input: {
   permits.set(permit, Object.freeze({
     opDigest: opDigest(op), candidateId: candidate.id,
     sourceHash: hash, sessionId: original.sessionId,
-    turnId: original.turnId, projectId,
+    turnId: original.turnId, projectId, proposalGeneration,
     issuedAtMs: Date.now(),
   }));
   return permit;
@@ -89,6 +92,7 @@ export function permitsSemanticAutoOperation(
   permit: SemanticAutoPermit | undefined,
   op: PatchOp,
   candidate: CaptureCandidate,
+  canonicalGeneration: number,
 ): boolean {
   if (!permit || typeof permit !== "object") return false;
   const issued = permits.get(permit);
@@ -96,7 +100,8 @@ export function permitsSemanticAutoOperation(
   if (!issued || !source || source.version !== 2
     || Date.now() < issued.issuedAtMs
     || Date.now() - issued.issuedAtMs > MAX_PERMIT_AGE_MS) return false;
-  return issued.opDigest === opDigest(op)
+  return issued.proposalGeneration === canonicalGeneration
+    && issued.opDigest === opDigest(op)
     && issued.candidateId === candidate.id
     && issued.sessionId === source.session_id
     && issued.turnId === source.turn_id
