@@ -28,6 +28,24 @@ The next release must demonstrate working automatic retention and subsequent-ses
 - No historical backlog auto-reconciliation or live-store writes.
 - No claim of general zero-false-positive performance from deterministic fixtures.
 
+## Independent verifier R1: REJECT — conflict and proposal-generation authority (2026-11-08)
+
+At original PR #52 HEAD `a35371b20005dad9041f898f6b093c44cdb7d5b3`, independently reconstructed tree `61df3979b6d430deda38700f8fddf675b2d9145c`, engineering and **the genuine installed SDK happy path passed**, including an actual automatic L2 write, duplicate prevention and next-session recall. But independent verifier **REJECTED** automatic authority: 32/38 new expected outcomes passed, with two distinct defects reproduced as real governed writes:
+
+1. Existing same-key conflicting/ambiguous owner rules caused the genuine curator to say manual merge/review (and verification review hold), but `src/semantic-auto-promote.ts` promoted any low-risk `add` anyway. One opposed rule returned `strengthens_existing`; that also requires review rather than another automatic record.
+2. While awaiting the second model assessment, an independent governed owner transaction advanced canonical generation. The coordinator sampled the newer generation **after** the await and applied the old proposal, including against an opposed rule. The lock correctly rejected a deliberately stale `expectedGeneration`; the coordinator failed to preserve the proposal generation.
+
+Previous evidence: `PI_R4_PR52_GUARDED_AUTO_PROMOTION_VERIFICATION.md`. All 322 accepted-parent independent controls, 991 full Bun, 67 eval, 4 stress, typecheck/release audit and 177-file parity passed on the **rejected old SHA**, not the correction.
+
+### New correction to verify independently
+
+- `src/semantic-auto-current-state.ts` recomputes canonical match and deterministic verification **against currently active records**, without relying on stored `normalized_key`, `match_kind`, curator prose or low risk. Only a genuinely new project rule with a supported and verified candidate can enter automatic L2; duplicate, strengthens, updates, opposed, supersession, ambiguity and verification-review states hold.
+- `src/semantic-auto-promote.ts` captures `proposalGeneration` **before** curator proposal and asynchronous second model assessment; an intervening owner write invalidates the pending automatic proposal, including unrelated writes. It supplies the original generation to `applyPatch` rather than replacing it with a later reading.
+- `src/semantic-auto-permit.ts` binds the short-lived capability to that exact proposal generation. `src/patch.ts` carries the writer-lock-validated expected generation into `src/patch-direct.ts`, whose workspace intentionally has no generation ledger. Apply independently rechecks current match and verification, then requires permit generation agreement. An owner update cannot be made legitimate by changing `expectedGeneration` at the caller.
+- `test/unit/r4-semantic-conflict-fence.test.ts` creates **actual manually governed owner L2 writes** using real curator-derived record schemas and identity keys. It tests two conflicting owner records with explicit `ambiguous` rationale, one opposed rule, both an unrelated and an opposed write at the second-assessment await boundary, invalidation of an already issued permit, automatic promotion at generation 1 when an unrelated rule existed **before** curation, and the clean positive path.
+
+The verification must show a **genuine automatic happy-path write and next-session recall** while no new automatic governed L2 write occurs in the conflict/race controls. The old 322/322 parent controls and SDK 5/5 must remain passing. All edits on this corrected HEAD are **UNVERIFIED**; do not present old-run passing tests as new-run evidence.
+
 ## Run in an isolated store only
 
 A fixture can write `curator.semanticAuto = "guarded-project"` and inject a deterministic `SemanticAdapter` into `promoteSemanticTurnAutomatically`. This tests real source → assessment → candidate → independent proof → curator → transient permit → governed L2 → next-session recall, without external inference or live paths.
