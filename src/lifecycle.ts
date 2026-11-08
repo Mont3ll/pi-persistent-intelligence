@@ -23,6 +23,9 @@ import { createInboxReviewComponent, buildInboxNotification, shouldPromptForInbo
 import { maybeCorrectionSignal } from "./corrections";
 import { actionsFromAgentMessages } from "./capture-activity";
 import { processCaptureTurn } from "./capture-coordinator";
+import { promoteSemanticTurnAutomatically } from "./semantic-auto-promote";
+import { configuredSemanticAutoAdapter, resolvePersistedSemanticUserTurn, type SemanticSessionManager } from "./semantic-host-capture";
+import { resolveProjectIdentity } from "./profile";
 import { isSyntheticCaptureContext } from "./capture-intent";
 import { resolveCaptureSessionIdentity } from "./capture-provenance";
 import { buildInboxRejectionPatch } from "./inbox-rejection";
@@ -76,8 +79,12 @@ type LifecycleDependencies = {
 };
 
 export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState, dependencies: LifecycleDependencies) {
+  // No repeated provider calls for the same persisted message in one
+  // extension lifetime; normal candidate/evidence replays remain idempotent.
+  const semanticTurnsSeen = new Set<string>();
   return {
     sessionStart: async (_event: any, ctx: CommandUiContext) => {
+      semanticTurnsSeen.clear();
       // Resolve state.root from cwd settings.json (localPath cascade)
       const newRoot = resolveRoot(ctx.cwd);
       if (newRoot !== state.root) {
@@ -429,12 +436,14 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
         },
       };
     },
-    agentEnd: async (event: any, ctx?: CommandUiContext & { sessionManager?: { getSessionId?: () => unknown } }) => {
+    agentEnd: async (event: any, ctx?: CommandUiContext & { sessionManager?: SemanticSessionManager }) => {
       let sawObservableOutcome = false;
       const eventMessages = (event.messages as any[]) ?? [];
       const captureActions = actionsFromAgentMessages(eventMessages, state.sessionCwd);
       const identity = resolveCaptureSessionIdentity(event, ctx);
       const captureSessionId = identity.session_id;
+      const semanticEnabled = loadConfig(state.root).curator.semanticAuto === "guarded-project";
+      const semanticAdapter = semanticEnabled ? configuredSemanticAutoAdapter() : null;
       for (const [messageIndex, msg] of eventMessages.entries()) {
         if (msg.role === "user" && !msg.customType) {
           const text = dependencies.extractText(msg.content);
@@ -443,14 +452,47 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
             if (state.pendingUserMessages.length > 60) state.pendingUserMessages.shift();
 
             const messageTurnId = String(msg.id ?? msg.messageId ?? msg.timestamp ?? (event as any).turn_id ?? (event as any).turnId ?? (event as any).id ?? `user-${messageIndex}`);
-            processCaptureTurn(state.root, {
-              session_id: captureSessionId,
-              turn_id: messageTurnId,
-              message: text,
-              launch_cwd: state.sessionCwd,
-              actions: captureActions,
-              now: dependencies.nowIso(),
-            });
+            const persistedTurn = semanticEnabled && semanticAdapter
+              && identity.identity_quality === "observed_session_id"
+              ? resolvePersistedSemanticUserTurn(ctx?.sessionManager, msg) : null;
+            const semanticKey = persistedTurn ? `${captureSessionId}:${persistedTurn.turnId}` : "";
+            const semanticAttempted = Boolean(semanticKey && semanticAdapter);
+            if (semanticAttempted && !semanticTurnsSeen.has(semanticKey)) {
+              semanticTurnsSeen.add(semanticKey);
+              try {
+                const result = await promoteSemanticTurnAutomatically({
+                  root: state.root,
+                  original: { sessionId: captureSessionId, turnId: persistedTurn!.turnId,
+                    text: persistedTurn!.text },
+                  projectId: resolveProjectIdentity(state.sessionCwd).project_id,
+                  now: dependencies.nowIso(), adapter: semanticAdapter!,
+                });
+                if (result.applied_ops > 0) {
+                  syncFtsIndex(state.root, state.ftsIndex);
+                  await updateQmd();
+                }
+              } catch {
+                // Source/model/store failures never cause a fallback automatic
+                // v1 promotion. Keep diagnostics generic and private.
+                appendRuntimeEvent(state.root, {
+                  type: "warn", severity: "medium", component: "curation",
+                  message: "Guarded semantic capture held after a source or assessor failure.",
+                });
+              }
+            }
+            if (!semanticAttempted) {
+              // Without an explicitly authorized model or a real persisted
+              // Pi entry ID, retain the legacy inbox route for manual review.
+              // Generic v1 auto-curation is disabled below in semantic mode.
+              processCaptureTurn(state.root, {
+                session_id: captureSessionId,
+                turn_id: messageTurnId,
+                message: text,
+                launch_cwd: state.sessionCwd,
+                actions: captureActions,
+                now: dependencies.nowIso(),
+              });
+            }
 
             if (maybeCorrectionSignal(text)) {
               try {
@@ -547,7 +589,10 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
       const autoCurate = cfg.curator.autoCurate ?? "high-only";
       const highThreshold = cfg.curator.autoCurateHighThreshold ?? 0.85;
 
-      if (autoCurate !== "off") {
+      // Guarded semantic mode only applies its own source-bound operation
+      // at agentEnd. Never let generic v1 recurrence/bulk auto curation
+      // authorize a semantic turn through the legacy evidence floor.
+      if (autoCurate !== "off" && cfg.curator.semanticAuto === "off") {
         try {
           const vaultPath = cfg.vault.path ?? process.env.PI_VAULT_PATH;
           const patch = curateInbox(state.root, { now: dependencies.nowIso(), mode: "auto", vaultPath, governanceMode: cfg.governance.mode });

@@ -6,6 +6,7 @@ import { assertGovernanceRecoveryClear, recoverGovernanceTransactions } from "./
 import { readTransactionManifest, runGovernanceTransaction, validatePrivacyHistoricalInventory, type GovernanceTransactionStage } from "./governance-transaction";
 import type { MemoryPatch, PatchOp } from "./types";
 import type { TranscriptProofOptions } from "./transcript-proof";
+import type { SemanticAutoPermit } from "./semantic-auto-permit";
 
 export { listPatchFiles, readPatchFile, writePatchFile } from "./patch-direct";
 
@@ -16,6 +17,8 @@ export interface ApplyPatchOptions {
   faultAfterStage?: GovernanceTransactionStage;
   /** Trusted Pi transcript roots for gated verification/test harness. */
   trustedTranscriptOptions?: TranscriptProofOptions;
+  /** Ephemeral, source-bound R4 auto permit; never persisted in patch/receipt. */
+  semanticAutoPermit?: SemanticAutoPermit;
 }
 
 function validatePatchId(patchId: string): void {
@@ -188,6 +191,11 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
       trustedTranscriptOptions: options.trustedTranscriptOptions
         ? { trustedSessionDirs: options.trustedTranscriptOptions.trustedSessionDirs }
         : undefined,
+      semanticAutoPermit: options.semanticAutoPermit,
+      // The governance writer lock validates this expected live generation
+      // before cloning workspace. Workspace snapshots omit the ledger, so
+      // pass the validated proposal generation through rather than reread.
+      semanticAutoExpectedGeneration: options.expectedGeneration,
     }),
   );
 }
