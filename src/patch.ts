@@ -192,6 +192,10 @@ export function applyPatch(root: string, patch: MemoryPatch, options: ApplyPatch
         ? { trustedSessionDirs: options.trustedTranscriptOptions.trustedSessionDirs }
         : undefined,
       semanticAutoPermit: options.semanticAutoPermit,
+      // The governance writer lock validates this expected live generation
+      // before cloning workspace. Workspace snapshots omit the ledger, so
+      // pass the validated proposal generation through rather than reread.
+      semanticAutoExpectedGeneration: options.expectedGeneration,
     }),
   );
 }
