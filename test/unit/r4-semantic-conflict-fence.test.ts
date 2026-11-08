@@ -84,7 +84,10 @@ function seedCandidate(f: ReturnType<typeof setup>) {
  * then commit owner rules through genuine governed transactions. A fabricated
  * memory array or ungoverned direct write cannot stand in for this test.
  */
-function ownerWrite(f: ReturnType<typeof setup>, id: string, statement: string) {
+function ownerWrite(
+  f: ReturnType<typeof setup>, id: string, statement: string,
+  sameKey = true,
+) {
   const draft = curateInbox(f.root, {
     now, mode: "supervised", minEvidenceCount: 1,
     trustedTranscriptOptions: { trustedSessionDirs: [f.sessions] },
@@ -94,7 +97,7 @@ function ownerWrite(f: ReturnType<typeof setup>, id: string, statement: string) 
   const record: MemoryRecord = {
     ...template, id, statement,
     // Match the candidate's canonical identity while changing its instruction.
-    normalized_key: template.normalized_key,
+    normalized_key: sameKey ? template.normalized_key : `independent-owner-topic:${id}`,
     evidence: [{ type: "manual", ref: `owner:${id}`, note: "Independent approved owner rule" }],
   };
   const patch: MemoryPatch = {
@@ -181,6 +184,20 @@ describe("R4 semantic auto conflict and proposal generation fencing", () => {
       } finally { rmSync(f.tmp, { recursive: true, force: true }); }
     });
   }
+
+  test("automatic L2 succeeds at canonical generation one with an unrelated prior owner rule", async () => {
+    const f = setup();
+    try {
+      seedCandidate(f);
+      ownerWrite(f, "mem_owner_other_topic", "The cobalt maintenance schedule is reviewed weekly.", false);
+      expect(readCanonicalGeneration(f.root)).toBe(1);
+      const result = await promoteSemanticTurnAutomatically(options(f));
+      expect(result.applied_ops).toBe(1);
+      expect(result.status).toBe("applied");
+      expect(loadActiveRecords(f.root)).toHaveLength(2);
+      expect(readCanonicalGeneration(f.root)).toBe(2);
+    } finally { rmSync(f.tmp, { recursive: true, force: true }); }
+  });
 
   test("fresh source with no matching canonical rules retains the positive automatic L2 path", async () => {
     const f = setup();
