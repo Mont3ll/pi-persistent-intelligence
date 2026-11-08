@@ -12,6 +12,7 @@ import { isAutoApplyEligibleCandidate } from "./trust";
 import { hasSemanticReviewLineage } from "./semantic-lineage";
 import { permitsSemanticAutoOperation, type SemanticAutoPermit } from "./semantic-auto-permit";
 import { semanticAutoCurrentStateAllowsNewAdd } from "./semantic-auto-current-state";
+import { readCanonicalGeneration } from "./governance-generation";
 import { semanticProposalSourceBindingMatches } from "./semantic-source-binding";
 import { renderMemoryToDisk } from "./render";
 import { ensureMemoryDirs } from "./paths";
