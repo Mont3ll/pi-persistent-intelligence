@@ -528,7 +528,7 @@ export interface CaptureCandidate {
   capture_group_id?: string;
   capture_intent?: CaptureIntent;
   /** Additive source attribution; historical records may not have this field. */
-  capture_source?: import("./capture-provenance").CaptureSourceAttribution;
+  capture_source?: import("./capture-provenance").CaptureSourceAttribution | import("./capture-provenance").SemanticCaptureSourceAttribution;
   scope_targets?: CaptureScopeTarget[];
   normalized_preference_key?: string;
   recurrence_count?: number;
