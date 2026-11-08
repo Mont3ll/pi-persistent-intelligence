@@ -11,6 +11,7 @@ import { applyCandidateMatch } from "./matching";
 import { isAutoApplyEligibleCandidate } from "./trust";
 import { hasSemanticReviewLineage } from "./semantic-lineage";
 import { permitsSemanticAutoOperation, type SemanticAutoPermit } from "./semantic-auto-permit";
+import { semanticAutoCurrentStateAllowsNewAdd } from "./semantic-auto-current-state";
 import { semanticProposalSourceBindingMatches } from "./semantic-source-binding";
 import { renderMemoryToDisk } from "./render";
 import { ensureMemoryDirs } from "./paths";
@@ -74,7 +75,12 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
           || (candidate.confidence ?? 0) >= semanticConfig.curator.autoCurateHighThreshold)
         && candidate.promotion_eligibility === "review_only"
         && candidate.poisoning_risk !== "high"
-        && permitsSemanticAutoOperation(semanticAutoPermit, op, candidate);
+        // Canonical match/verification is freshly computed in the governed
+        // transaction workspace. A model only assesses original user text,
+        // not conflicts already stored in canonical memory.
+        && semanticAutoCurrentStateAllowsNewAdd(root, candidate)
+        && permitsSemanticAutoOperation(semanticAutoPermit, op, candidate,
+          readCanonicalGeneration(root));
       if (semanticLineage && (!semanticAutoAllowed && (mode === "auto" || !explicitlySelected)
         || candidate.capture_source?.version !== 2)) {
         return reject("capture_policy_hold",
