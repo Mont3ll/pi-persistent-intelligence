@@ -10,6 +10,7 @@ import { listCandidates } from "../../src/inbox";
 import { readEvidenceRecords } from "../../src/evidence";
 import { loadActiveRecords } from "../../src/store";
 import { readCanonicalGeneration } from "../../src/governance-generation";
+import { buildRetrievalContext } from "../../src/retriever";
 import { resolveProjectIdentity } from "../../src/profile";
 import { curateInbox } from "../../src/curator";
 import { applyPatch } from "../../src/patch";
@@ -95,6 +96,16 @@ describe("R4 opt-in semantic auto L2 guarded end-to-end (isolated stores)", () =
       expect(loadActiveRecords(f.root)).toHaveLength(1);
       expect(loadActiveRecords(f.root)[0]?.statement).toBe(instruction);
       expect(readCanonicalGeneration(f.root)).toBe(1);
+
+      // Simulate a different session, without reusing the original message.
+      const recall = await buildRetrievalContext(f.root, {
+        cwd: f.project, today: "2026-11-09",
+        threadId: "session-after-automatic-promotion",
+        prompt: "Before the next release, what lapis integrity check should we perform?",
+        useQmd: false,
+      });
+      expect(recall.selectedMemory.some(item => item.statement === instruction)).toBe(true);
+      expect(recall.markdown).toContain(instruction);
 
       const repeated = await run();
       expect(repeated.applied_ops).toBe(0);
