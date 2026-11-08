@@ -6,7 +6,9 @@ const MAX_STDOUT_BYTES = 64 * 1024;
 /**
  * Optional operator-selected local adapter. This is NOT an OS sandbox:
  * the executable retains ambient filesystem/network privileges.
- * Never launch automatically from production capture.
+ * Production capture may invoke this only through explicit model/provider,
+ * credential and data-transmission opt-in with guarded semantic mode enabled.
+ * This module does not itself authorize canonical writes.
  */
 export function commandSemanticAdapter(
   executable: string,
