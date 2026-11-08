@@ -10,7 +10,7 @@ import { listCandidates } from "../../src/inbox";
 import { readEvidenceRecords } from "../../src/evidence";
 import { loadActiveRecords } from "../../src/store";
 import { readCanonicalGeneration } from "../../src/governance-generation";
-import { verifyCandidateTranscriptSource } from "../../src/transcript-proof";
+import { resolveProjectIdentity } from "../../src/profile";
 import { curateInbox } from "../../src/curator";
 import { applyPatch } from "../../src/patch";
 import type { SemanticAdapter, OriginalTurn, SemanticRequest } from "../../src/semantic-assessment";
@@ -28,8 +28,7 @@ function fixture(enabled: boolean) {
   const root = join(tmp, "store"), project = join(tmp, "project"), sessions = join(tmp, "sessions");
   mkdirSync(project, { recursive: true });
   mkdirSync(sessions, { recursive: true });
-  const projectId = (require("../../src/profile") as typeof import("../../src/profile"))
-    .resolveProjectIdentity(project).project_id;
+  const projectId = resolveProjectIdentity(project).project_id;
   const storePaths = ensureMemoryDirs(root);
   writeFileSync(storePaths.config, JSON.stringify({
     ...defaultConfig, curator: { ...defaultConfig.curator,
