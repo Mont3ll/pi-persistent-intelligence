@@ -47,11 +47,11 @@ function sourceSnapshotMatchesStoredEvidence(
   targetRecordId: string,
 ): boolean {
   if (!Array.isArray(snapshot.related_memory_ids)
-    || !snapshot.related_memory_ids.includes(targetRecordId)
-    || !Array.isArray(stored.related_memory_ids)
-    || stored.related_memory_ids.some(id => !snapshot.related_memory_ids.includes(id))) {
-    return false;
-  }
+    || !Array.isArray(stored.related_memory_ids)) return false;
+  const expectedLinks = [...new Set([...stored.related_memory_ids, targetRecordId])].sort();
+  const actualLinks = [...new Set(snapshot.related_memory_ids)].sort();
+  if (actualLinks.length !== snapshot.related_memory_ids.length
+    || JSON.stringify(actualLinks) !== JSON.stringify(expectedLinks)) return false;
   const withoutLinks = (value: EvidenceRecord): string => JSON.stringify(
     Object.keys(value).filter(key => key !== "related_memory_ids").sort()
       .map(key => [key, value[key as keyof EvidenceRecord]]),
