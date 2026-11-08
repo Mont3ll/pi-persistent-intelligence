@@ -46,6 +46,12 @@ The attached independent report is `PI_R4_PR51_RECURRENCE_PROVENANCE_REVERIFICAT
 
 **The correction HEAD is not independently verified.** Legacy v1 behavior, previous recurrence/idempotence protections and the accepted PR #49/#50 commits remain unchanged. The verifier must reproduce this report's two remaining controls *and* repeat the original matrix against the precise corrected HEAD. This milestone remains supervised-semantic integrity only. Automatic semantic promotion and the next release stay blocked.
 
+## PR #51 third independent rejection — snapshot authority fields (2026-11-08)
+
+Verifier REJECT at HEAD `6e1dcb813441f08da30ac0dca12874a08850190c`, reconstructed tree `10d42b9af20aa98516cc8bca44e035ff83b73348`: **all 56 frozen source-rebinding controls pass**; 34/36 additional controls pass. The two remaining failures change **only the proposal's retained `supportingEvidence` snapshot**: `source_identity_quality: "unresolved"` or `trust_class: "agent_inference"`. The original candidate, stored evidence and Pi transcript still authenticate user turn A, but the changed proposal was nevertheless applied as L2. This is incomplete proposal-snapshot validation, not a new rebinding failure or automatic promotion bypass. Old-head full Bun 967/967, eval 67/67, stress 4/4, docs/audit/173-file parity/SDK smoke passed. Live state was unchanged at generation 24 / NEW 55.
+
+The correction in `src/semantic-source-binding.ts` requires the proposed source snapshot to match **every independently persisted evidence attribute**, including quality, trust, polarity, source identity, redaction, scope and resource/profile attribution. The **only permitted difference** is that a genuine curator snapshot additionally includes the target memory ID in `related_memory_ids`; unrelated or missing relationship IDs reject. The verifier should explicitly mutate each authority field in the *proposal only*, retain a valid original turn A, and require the real governed operation to skip without any L2/generation change. Keep positive supervised A behavior, identical-text B safety, 56/56 frozen controls and the prior recurrence/idempotence guards. These edits are NOT independently verified.
+
 ## Next implementation gates (release-blocking)
 
 1. **Functional semantic capture acceptance:** independent exact-SHA local tests on isolated Pi SDK sessions: durable propositions that appear after 300 characters become distinct candidates with transcript-source verification; temporary/quoted/third-party material never auto-promotes; no duplicate evidence on retries.
