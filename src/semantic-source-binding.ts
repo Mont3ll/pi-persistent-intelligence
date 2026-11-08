@@ -128,8 +128,6 @@ export function semanticProposalSourceBindingMatches(
     || evidence.source_kind !== "conversation"
     || evidence.notes !== "capture_evidence_semantic_v1"
     || evidence.polarity !== "supports"
-    || evidence.redaction_status === "deleted"
-    || evidence.redaction_status === "redacted"
     || op.op !== "add"
     || !op.record || op.record.statement !== candidate.text
     || op.record.scope.type !== "project"
