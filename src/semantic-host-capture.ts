@@ -28,7 +28,7 @@ function userText(content: unknown): string {
 export function resolvePersistedSemanticUserTurn(
   manager: SemanticSessionManager | undefined,
   runtimeMessage: { id?: unknown; messageId?: unknown; timestamp?: unknown; content?: unknown },
-): string | null {
+): { turnId: string; text: string } | null {
   if (!manager?.getEntries) return null;
   const target = userText(runtimeMessage.content);
   if (!target.trim()) return null;
@@ -42,12 +42,16 @@ export function resolvePersistedSemanticUserTurn(
     && userText(entry.message.content) === target);
   const runtimeId = runtimeMessage.id ?? runtimeMessage.messageId;
   const byId = matches.filter(entry => entry.id === runtimeId);
-  if (typeof runtimeId === "string" && byId.length === 1) return byId[0]!.id as string;
+  if (typeof runtimeId === "string" && byId.length === 1)
+    return { turnId: byId[0]!.id as string, text: userText(byId[0]!.message?.content) };
   const byTime = matches.filter(entry =>
     typeof runtimeMessage.timestamp === "number"
     && entry.message?.timestamp === runtimeMessage.timestamp);
-  if (byTime.length === 1) return byTime[0]!.id as string;
-  return matches.length === 1 ? matches[0]!.id as string : null;
+  if (byTime.length === 1)
+    return { turnId: byTime[0]!.id as string, text: userText(byTime[0]!.message?.content) };
+  return matches.length === 1
+    ? { turnId: matches[0]!.id as string, text: userText(matches[0]!.message?.content) }
+    : null;
 }
 
 /**
