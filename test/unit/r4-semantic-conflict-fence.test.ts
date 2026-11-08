@@ -11,6 +11,8 @@ import { semanticRequest, validateSemanticProposal, type OriginalTurn, type Sema
 import { planSemanticCapture } from "../../src/semantic-capture-plan";
 import { materializeSemanticCaptureCandidates } from "../../src/semantic-capture-materialize";
 import { curateInbox } from "../../src/curator";
+import { readEvidenceRecords } from "../../src/evidence";
+import { issueSemanticAutoPermit } from "../../src/semantic-auto-permit";
 import { applyPatch } from "../../src/patch";
 import { readCanonicalGeneration } from "../../src/governance-generation";
 import { listCandidates } from "../../src/inbox";
@@ -184,6 +186,49 @@ describe("R4 semantic auto conflict and proposal generation fencing", () => {
       } finally { rmSync(f.tmp, { recursive: true, force: true }); }
     });
   }
+
+  test("a genuine generation-zero permit cannot be relabelled to generation one after a governed owner write", () => {
+    const f = setup();
+    try {
+      const candidate = seedCandidate(f);
+      const firstReq = semanticRequest(original);
+      const validated = validateSemanticProposal(firstReq, proposal());
+      const firstPlan = planSemanticCapture(original, validated, f.projectId);
+      const curatorPatch = curateInbox(f.root, {
+        now, mode: "supervised", minEvidenceCount: 1,
+        trustedTranscriptOptions: { trustedSessionDirs: [f.sessions] },
+      });
+      const selected = curatorPatch.ops.find(op => op.candidate_id === candidate.id)!;
+      expect(selected).toBeDefined();
+      const op = { ...selected, default_selected: true };
+      const patch: MemoryPatch = {
+        ...curatorPatch, patch_id: curatorPatch.patch_id + "_issued_at_generation_zero",
+        mode: "auto", ops: [op],
+      };
+      const evidence = readEvidenceRecords(f.root)[0]!;
+      const permit = issueSemanticAutoPermit({
+        original, first: firstPlan, second: firstPlan,
+        candidate, evidence, projectId: f.projectId,
+        proposalGeneration: 0, patch, op,
+      });
+      expect(permit).not.toBeNull();
+      ownerWrite(f, "mem_independent_owner_during_permit",
+        "The unrelated cobalt maintenance schedule must be reviewed weekly.", false);
+      expect(readCanonicalGeneration(f.root)).toBe(1);
+      const apply = (expectedGeneration: number) => applyPatch(f.root, patch, {
+        now, selectedOpIds: [op.op_id], expectedGeneration,
+        semanticAutoPermit: permit!,
+        trustedTranscriptOptions: { trustedSessionDirs: [f.sessions] },
+      });
+      expect(() => apply(0)).toThrow();
+      const forgedFreshGeneration = apply(1);
+      expect(forgedFreshGeneration.applied_ops).toHaveLength(0);
+      expect(forgedFreshGeneration.skipped_ops.some(x => x.reason === "capture_policy_hold"))
+        .toBe(true);
+      expect(loadActiveRecords(f.root)).toHaveLength(1);
+      expect(readCanonicalGeneration(f.root)).toBe(1);
+    } finally { rmSync(f.tmp, { recursive: true, force: true }); }
+  });
 
   test("automatic L2 succeeds at canonical generation one with an unrelated prior owner rule", async () => {
     const f = setup();
