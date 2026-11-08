@@ -166,6 +166,11 @@ describe("R4 original proposal cannot be rebound from A to identical-text B", ()
       change: row => ({ ...row, tags: ["agent-inference"] }) },
     { label: "additional unexpected proposal evidence field",
       change: row => ({ ...row, source_file: "/forged/source.txt" }) },
+    { label: "unexpected related memory reference added",
+      change: row => ({ ...row,
+        related_memory_ids: [...row.related_memory_ids, "mem_unrelated_injection"] }) },
+    { label: "target memory reference removed",
+      change: row => ({ ...row, related_memory_ids: [] }) },
   ];
 
   for (const change of changedSnapshotCases) {
