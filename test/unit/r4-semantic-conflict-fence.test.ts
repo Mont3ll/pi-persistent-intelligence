@@ -173,7 +173,8 @@ describe("R4 semantic auto conflict and proposal generation fencing", () => {
         const adapter: SemanticAdapter = {
           assess: async () => {
             calls++;
-            if (calls === 2) ownerWrite(f, `mem_owner_race_${scenario.label}`, scenario.statement);
+            if (calls === 2) ownerWrite(f, `mem_owner_race_${scenario.label}`,
+              scenario.statement, scenario.label === "opposed");
             return proposal();
           },
         };
