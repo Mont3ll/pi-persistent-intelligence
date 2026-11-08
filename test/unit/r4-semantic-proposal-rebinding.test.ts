@@ -16,6 +16,7 @@ import { applyPatch } from "../../src/patch";
 import { readCanonicalGeneration } from "../../src/governance-generation";
 import { loadActiveRecords } from "../../src/store";
 import { semanticCandidateId, semanticEvidenceId, semanticProposalSourceBindingMatches } from "../../src/semantic-source-binding";
+import type { EvidenceRecord } from "../../src/types";
 
 const now = "2026-10-31T14:00:00.000Z";
 const message = "For this project, always verify the lapis release manifest.";
@@ -144,6 +145,61 @@ describe("R4 original proposal cannot be rebound from A to identical-text B", ()
       expect(readCanonicalGeneration(f.store)).toBe(1);
     } finally { rmSync(f.root, { recursive: true, force: true }); }
   });
+
+  const changedSnapshotCases: Array<{
+    label: string;
+    change: (original: EvidenceRecord) => EvidenceRecord;
+  }> = [
+    { label: "source_identity_quality changed to unresolved",
+      change: row => ({ ...row, source_identity_quality: "unresolved" }) },
+    { label: "trust_class changed to agent_inference",
+      change: row => ({ ...row, trust_class: "agent_inference" }) },
+    { label: "source kind replaced with generated_content",
+      change: row => ({ ...row, source_kind: "generated_content" }) },
+    { label: "polarity changed from supports",
+      change: row => ({ ...row, polarity: "qualifies" }) },
+    { label: "evidence redaction status changed",
+      change: row => ({ ...row, redaction_status: "redacted" }) },
+    { label: "resource identity changed",
+      change: row => ({ ...row, resource_id: "other-resource" }) },
+    { label: "tags replaced with untrusted evidence",
+      change: row => ({ ...row, tags: ["agent-inference"] }) },
+    { label: "additional unexpected proposal evidence field",
+      change: row => ({ ...row, source_file: "/forged/source.txt" }) },
+  ];
+
+  for (const change of changedSnapshotCases) {
+    test("altered proposal snapshot " + change.label + " cannot authorize governed L2", () => {
+      const f = fixture();
+      try {
+        const op = f.patch.ops[0]!;
+        const evidenceSnapshot = op.supportingEvidence?.[0];
+        expect(evidenceSnapshot).toBeDefined();
+        const changed = change.change(evidenceSnapshot!);
+        const patch = {
+          ...f.patch, patch_id: f.patch.patch_id + "_snapshot_" +
+            change.label.replace(/[^a-z0-9]+/gi, "_"),
+          ops: [{ ...op, supportingEvidence: [changed] }],
+        };
+        expect(semanticProposalSourceBindingMatches(f.originalCandidate,
+          f.originalEvidence, patch.ops[0]!)).toBe(false);
+        // Unmodified source A remains independently authentic; only the
+        // retained source snapshot attached to the proposal was weakened.
+        expect(verifyCandidateTranscriptSource(f.originalCandidate,
+          f.originalEvidence, f.proofOptions).verified).toBe(true);
+        const applied = applyPatch(f.store, patch, {
+          selectedOpIds: [op.op_id],
+          now: "2026-10-31T14:04:00.000Z",
+          trustedTranscriptOptions: f.proofOptions,
+        });
+        expect(applied.applied_ops).toHaveLength(0);
+        expect(applied.skipped_ops.some(item => item.reason === "capture_policy_hold"))
+          .toBe(true);
+        expect(loadActiveRecords(f.store)).toHaveLength(0);
+        expect(readCanonicalGeneration(f.store)).toBe(0);
+      } finally { rmSync(f.root, { recursive: true, force: true }); }
+    });
+  }
 
   test("a proposal without the original supporting-source snapshot cannot apply", () => {
     const f = fixture();
