@@ -8,6 +8,8 @@ export interface PiMemoryConfig {
     minEvidenceCount: number;
     /** Explicit opt-in; off retains the configured reference-count floor. */
     sourceAwareAuto: "off" | "transcript-verified-direct-user";
+    /** R4 automatic project L2 path; OFF until real semantic accuracy acceptance. */
+    semanticAuto: "off" | "guarded-project";
     mode: "propose" | "supervised" | "auto";
     /**
      * Tiered auto-curation at session end.
@@ -65,6 +67,7 @@ export const defaultConfig: PiMemoryConfig = {
     minConfidence: 0.75,
     minEvidenceCount: 2,
     sourceAwareAuto: "off",
+    semanticAuto: "off",
     mode: "propose",
     autoCurate: "high-only",
     autoCurateHighThreshold: 0.85,
@@ -148,6 +151,7 @@ export function loadConfig(root: string): PiMemoryConfig {
       merged.privacy.persistPromptExcerpts = defaultConfig.privacy.persistPromptExcerpts;
     }
     if (!["off", "transcript-verified-direct-user"].includes(merged.curator.sourceAwareAuto)) merged.curator.sourceAwareAuto = "off";
+    if (!["off", "guarded-project"].includes(merged.curator.semanticAuto)) merged.curator.semanticAuto = "off";
     if (!Number.isInteger(merged.capture.activityRetentionCount) || merged.capture.activityRetentionCount < 10 || merged.capture.activityRetentionCount > 10000) merged.capture.activityRetentionCount = defaultConfig.capture.activityRetentionCount;
     if (!Number.isInteger(merged.capture.activityRetentionDays) || merged.capture.activityRetentionDays < 1 || merged.capture.activityRetentionDays > 365) merged.capture.activityRetentionDays = defaultConfig.capture.activityRetentionDays;
     if (!Number.isInteger(merged.capture.implicitConsolidationTurnInterval) || merged.capture.implicitConsolidationTurnInterval < 3 || merged.capture.implicitConsolidationTurnInterval > 200) merged.capture.implicitConsolidationTurnInterval = defaultConfig.capture.implicitConsolidationTurnInterval;
