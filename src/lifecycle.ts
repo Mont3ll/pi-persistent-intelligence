@@ -452,17 +452,18 @@ export function createLifecycleHandlers(pi: LifecycleApi, state: LifecycleState,
             if (state.pendingUserMessages.length > 60) state.pendingUserMessages.shift();
 
             const messageTurnId = String(msg.id ?? msg.messageId ?? msg.timestamp ?? (event as any).turn_id ?? (event as any).turnId ?? (event as any).id ?? `user-${messageIndex}`);
-            const persistedTurnId = semanticEnabled && semanticAdapter
+            const persistedTurn = semanticEnabled && semanticAdapter
               && identity.identity_quality === "observed_session_id"
               ? resolvePersistedSemanticUserTurn(ctx?.sessionManager, msg) : null;
-            const semanticKey = persistedTurnId ? `${captureSessionId}:${persistedTurnId}` : "";
+            const semanticKey = persistedTurn ? `${captureSessionId}:${persistedTurn.turnId}` : "";
             const semanticAttempted = Boolean(semanticKey && semanticAdapter);
             if (semanticAttempted && !semanticTurnsSeen.has(semanticKey)) {
               semanticTurnsSeen.add(semanticKey);
               try {
                 const result = await promoteSemanticTurnAutomatically({
                   root: state.root,
-                  original: { sessionId: captureSessionId, turnId: persistedTurnId!, text },
+                  original: { sessionId: captureSessionId, turnId: persistedTurn!.turnId,
+                    text: persistedTurn!.text },
                   projectId: resolveProjectIdentity(state.sessionCwd).project_id,
                   now: dependencies.nowIso(), adapter: semanticAdapter!,
                 });
