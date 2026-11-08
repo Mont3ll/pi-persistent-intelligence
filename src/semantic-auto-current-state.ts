@@ -25,13 +25,23 @@ export function semanticAutoCurrentStateAllowsNewAdd(
     || !candidate.scope_targets[0].project) return false;
 
   const active = loadActiveRecords(root);
-  const match = matchCandidateToRecords(candidate, active);
+  // Stored match metadata and an attacker-supplied normalized_key are not
+  // authorization. Re-derive the key and matching state from the authenticated
+  // proposition and the currently active canonical records.
+  const forMatch: CaptureCandidate = {
+    ...candidate,
+    normalized_key: undefined,
+    match_kind: undefined,
+    matched_memory_ids: undefined,
+    match_reasons: undefined,
+  };
+  const match = matchCandidateToRecords(forMatch, active);
   // Even strengthens_existing / updates_existing are review paths:
   // similarity is not independent permission to add a second rule.
   if (match.match_kind !== "new"
     || match.matched_memory_ids.length !== 0) return false;
 
-  const checked = verifyCandidate(root, { ...candidate, ...match });
+  const checked = verifyCandidate(root, { ...forMatch, ...match });
   return checked.supported
     && checked.verification_status === "verified"
     && checked.requires_human_review === false
