@@ -12,7 +12,6 @@ import { isAutoApplyEligibleCandidate } from "./trust";
 import { hasSemanticReviewLineage } from "./semantic-lineage";
 import { permitsSemanticAutoOperation, type SemanticAutoPermit } from "./semantic-auto-permit";
 import { semanticAutoCurrentStateAllowsNewAdd } from "./semantic-auto-current-state";
-import { readCanonicalGeneration } from "./governance-generation";
 import { semanticProposalSourceBindingMatches } from "./semantic-source-binding";
 import { renderMemoryToDisk } from "./render";
 import { ensureMemoryDirs } from "./paths";
@@ -28,6 +27,7 @@ export interface ApplyPatchDirectOptions {
   now: string;
   trustedTranscriptOptions?: TranscriptProofOptions;
   semanticAutoPermit?: SemanticAutoPermit;
+  semanticAutoExpectedGeneration?: number;
 }
 
 function isSelected(op: PatchOp, selected?: string[]): boolean { return selected ? selected.includes(op.op_id) : op.default_selected; }
@@ -37,7 +37,7 @@ function hasInvalidatedEvidence(root: string, op: PatchOp): boolean { const ids 
 type ApplyDecision = { ok: true } | { ok: false; reason: PatchSkipReason; detail: string };
 function reject(reason: PatchSkipReason, detail: string): ApplyDecision { return { ok: false, reason, detail }; }
 
-function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["generated_by"], mode: MemoryPatch["mode"], explicitlySelected: boolean, proofOptions?: TranscriptProofOptions, semanticAutoPermit?: SemanticAutoPermit): ApplyDecision {
+function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["generated_by"], mode: MemoryPatch["mode"], explicitlySelected: boolean, proofOptions?: TranscriptProofOptions, semanticAutoPermit?: SemanticAutoPermit, semanticAutoExpectedGeneration?: number): ApplyDecision {
   const records = loadAllRecords(root); const byId = new Map(records.map((record) => [record.id, record]));
   if (op.op === "add" && !op.record) return reject("malformed_operation", `Add operation ${op.op_id} is missing its record.`);
   if (op.op === "supersede" && (!op.target_id || !op.to_record)) return reject("malformed_operation", `Supersede operation ${op.op_id} is missing its target or replacement record.`);
@@ -81,7 +81,7 @@ function applyDecision(root: string, op: PatchOp, generatedBy: MemoryPatch["gene
         // not conflicts already stored in canonical memory.
         && semanticAutoCurrentStateAllowsNewAdd(root, candidate)
         && permitsSemanticAutoOperation(semanticAutoPermit, op, candidate,
-          readCanonicalGeneration(root));
+          semanticAutoExpectedGeneration);
       if (semanticLineage && (!semanticAutoAllowed && (mode === "auto" || !explicitlySelected)
         || candidate.capture_source?.version !== 2)) {
         return reject("capture_policy_hold",
@@ -229,7 +229,7 @@ export function applyPatchDirect(root: string, patch: MemoryPatch, options: Appl
   writePatchFile(root, redactPrivacyPatchForPersistence(patch, persistencePrivacyTargets, correlatedCandidateIds));
   for (const targetId of privacyTargets) purgeCorrelatedPrivacyArtifacts(root, targetId);
   const applied_ops: string[] = []; const skipped_ops: PatchSkip[] = [];
-  for (const op of executionPatch.ops) { const selected = isSelected(op, options.selectedOpIds); const decision = selected ? applyDecision(root, op, executionPatch.generated_by, executionPatch.mode, options.selectedOpIds?.includes(op.op_id) === true, options.trustedTranscriptOptions, options.semanticAutoPermit) : reject("not_selected", `Operation ${op.op_id} was not selected for application.`); if (decision.ok) { applyOp(root, patch.patch_id, op, options.now); applied_ops.push(op.op_id); } else skipped_ops.push({ op_id: op.op_id, ...(op.candidate_id ? { candidate_id: op.candidate_id } : {}), reason: decision.reason, detail: decision.detail }); }
+  for (const op of executionPatch.ops) { const selected = isSelected(op, options.selectedOpIds); const decision = selected ? applyDecision(root, op, executionPatch.generated_by, executionPatch.mode, options.selectedOpIds?.includes(op.op_id) === true, options.trustedTranscriptOptions, options.semanticAutoPermit, options.semanticAutoExpectedGeneration) : reject("not_selected", `Operation ${op.op_id} was not selected for application.`); if (decision.ok) { applyOp(root, patch.patch_id, op, options.now); applied_ops.push(op.op_id); } else skipped_ops.push({ op_id: op.op_id, ...(op.candidate_id ? { candidate_id: op.candidate_id } : {}), reason: decision.reason, detail: decision.detail }); }
   const candidateIds = [...new Set(executionPatch.ops.flatMap((op) => op.candidate_id ? [op.candidate_id] : []))];
   for (const candidateId of candidateIds) { const candidateOps = executionPatch.ops.filter((op) => op.candidate_id === candidateId); const appliedCount = candidateOps.filter((op) => applied_ops.includes(op.op_id)).length; const selectedCount = candidateOps.filter((op) => isSelected(op, options.selectedOpIds)).length; if (appliedCount === candidateOps.length) markCandidateIfNew(root, candidateId, "patched"); else if (selectedCount > 0 && appliedCount === 0) { const selectedSkips = skipped_ops.filter((skip) => skip.candidate_id === candidateId && candidateOps.some((op) => op.op_id === skip.op_id)); if (!selectedSkips.every((skip) => skip.reason === "unresolved_evidence" || skip.reason === "capture_policy_hold")) markCandidateIfNew(root, candidateId, "rejected"); } }
   const status: MemoryPatch["status"] = applied_ops.length === 0 && skipped_ops.length > 0 ? "rejected_at_apply" : skipped_ops.length > 0 ? "partially_applied" : "applied";
