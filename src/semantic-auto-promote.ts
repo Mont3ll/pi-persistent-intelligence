@@ -9,6 +9,7 @@ import { materializeSemanticCaptureCandidates } from "./semantic-capture-materia
 import { proposeSemanticCapturePlan } from "./semantic-capture-plan";
 import { semanticCandidateId } from "./semantic-source-binding";
 import { issueSemanticAutoPermit } from "./semantic-auto-permit";
+import { semanticAutoCurrentStateAllowsNewAdd } from "./semantic-auto-current-state";
 import { verifyCandidateTranscriptSource, type TranscriptProofOptions } from "./transcript-proof";
 import type { OriginalTurn, SemanticAdapter } from "./semantic-assessment";
 import type { MemoryPatch } from "./types";
@@ -75,6 +76,13 @@ export async function promoteSemanticTurnAutomatically(
     candidate, evidence, options.trustedTranscriptOptions).verified)
     return held("original_transcript_unverified", created);
 
+  // A curator proposal is bound to the current canonical generation.
+  // A model call below may yield to an independent owner transaction.
+  // Never sample a newer generation as if this older proposal were fresh.
+  const proposalGeneration = readCanonicalGeneration(root);
+  if (!semanticAutoCurrentStateAllowsNewAdd(root, candidate))
+    return held("canonical_match_or_verification_requires_review", created);
+
   // Curation is deliberately supervised here: generic auto curation is
   // never allowed to select semantic candidates. This runner selects only
   // its own specifically proven low-risk proposal, then changes to auto
@@ -89,7 +97,11 @@ export async function promoteSemanticTurnAutomatically(
   if (selected.op !== "add" || selected.risk !== "low"
     || selected.default_selected !== false || selected.record?.layer !== "L2"
     || selected.record.statement !== firstEntry.quote
-    || selected.record.scope.type !== "project" || selected.record.scope.project !== projectId)
+    || selected.record.scope.type !== "project" || selected.record.scope.project !== projectId
+    // Recheck the match/verification decision separately from curator risk:
+    // curator can produce risk=low with a manual merge/review rationale.
+    || !semanticAutoCurrentStateAllowsNewAdd(root, candidate)
+    || readCanonicalGeneration(root) !== proposalGeneration)
     return held("curator_requires_review", created);
 
   // Freshly recheck semantic attribution before making a governed attempt.
@@ -98,6 +110,10 @@ export async function promoteSemanticTurnAutomatically(
   if (second.outcome !== "proposed" || second.entries.length !== 1
     || JSON.stringify(first.entries) !== JSON.stringify(second.entries))
     return held("fresh_semantic_review_disagreed", created);
+  if (readCanonicalGeneration(root) !== proposalGeneration)
+    return held("canonical_generation_changed_after_proposal", created);
+  if (!semanticAutoCurrentStateAllowsNewAdd(root, candidate))
+    return held("canonical_match_or_verification_requires_review", created);
   const autoOp = { ...selected, default_selected: true };
   const autoPatch: MemoryPatch = {
     ...proposal,
@@ -108,7 +124,8 @@ export async function promoteSemanticTurnAutomatically(
     summary: "Single source-grounded R4 semantic project L2 candidate",
   };
   const permit = issueSemanticAutoPermit({
-    original, first, second, candidate, evidence, projectId, patch: autoPatch, op: autoOp,
+    original, first, second, candidate, evidence, projectId,
+    proposalGeneration, patch: autoPatch, op: autoOp,
   });
   if (!permit) return held("semantic_authorization_not_issued", created);
 
@@ -118,7 +135,7 @@ export async function promoteSemanticTurnAutomatically(
   // intervening canonical mutation.
   const receipt = applyPatch(root, autoPatch, {
     now, selectedOpIds: [autoOp.op_id],
-    expectedGeneration: readCanonicalGeneration(root),
+    expectedGeneration: proposalGeneration,
     trustedTranscriptOptions: options.trustedTranscriptOptions,
     semanticAutoPermit: permit,
   });
